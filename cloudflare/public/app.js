@@ -223,3 +223,136 @@ document.addEventListener('visibilitychange', () => {
 
 loadLibrary();
 scheduleLibraryRefresh();
+
+// Loop: control automated Railway loop via API
+const LOOP_POLL_MS = 20000;
+let loopPollTimer = null;
+
+const loopEnabled = document.getElementById('loop-enabled');
+const loopStatusBadge = document.getElementById('loop-status-badge');
+const loopDelay = document.getElementById('loop-delay');
+const loopExploit = document.getElementById('loop-exploit');
+const loopExploitLabel = document.getElementById('loop-exploit-label');
+const loopSave = document.getElementById('loop-save');
+const loopRunCount = document.getElementById('loop-run-count');
+const loopGoodCount = document.getElementById('loop-good-count');
+const loopLastRun = document.getElementById('loop-last-run');
+const loopLastPrompt = document.getElementById('loop-last-prompt');
+const loopRecent = document.getElementById('loop-recent');
+
+function formatLoopDate(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  const now = new Date();
+  const diffMs = now - d;
+  if (diffMs < 60000) return 'Just now';
+  if (diffMs < 3600000) return `${Math.floor(diffMs / 60000)}m ago`;
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+async function loadLoopStatus() {
+  try {
+    const res = await fetch(`${API_BASE}/api/loop/status`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to load loop status');
+
+    const cfg = data.config || {};
+    loopEnabled.checked = cfg.enabled !== false;
+    loopStatusBadge.textContent = cfg.enabled !== false ? 'Running' : 'Paused';
+    loopStatusBadge.className = 'loop-badge ' + (cfg.enabled !== false ? 'running' : 'paused');
+
+    loopDelay.value = typeof cfg.delay_seconds === 'number' ? cfg.delay_seconds : 30;
+    const ratio = typeof cfg.exploit_ratio === 'number' ? cfg.exploit_ratio : 0.7;
+    loopExploit.value = Math.round(ratio * 100);
+    loopExploitLabel.textContent = `${Math.round(ratio * 100)}% exploit`;
+
+    loopRunCount.textContent = `Runs: ${typeof data.run_count === 'number' ? data.run_count : 0}`;
+    loopGoodCount.textContent = `Good prompts: ${typeof data.good_prompts_count === 'number' ? data.good_prompts_count : 0}`;
+    loopLastRun.textContent = `Last run: ${formatLoopDate(data.last_run_at)}`;
+
+    if (data.last_prompt) {
+      loopLastPrompt.textContent = `"${data.last_prompt}"`;
+      loopLastPrompt.hidden = false;
+    } else {
+      loopLastPrompt.hidden = true;
+    }
+
+    const runs = data.recent_runs || [];
+    loopRecent.innerHTML = runs.length
+      ? runs.map((r) => `<li><a href="${window.location.origin}/api/jobs/${r.id}/download" download>${escapeHtml(r.prompt || r.id)}</a> · ${formatLoopDate(r.updated_at)}</li>`).join('')
+      : '<li>No recent runs</li>';
+  } catch (e) {
+    loopStatusBadge.textContent = 'Error';
+    loopStatusBadge.className = 'loop-badge error';
+    loopRunCount.textContent = '—';
+    loopGoodCount.textContent = '—';
+    loopLastRun.textContent = '—';
+    loopLastPrompt.hidden = true;
+    loopRecent.innerHTML = '<li>Could not load status</li>';
+  }
+}
+
+function scheduleLoopPoll() {
+  if (document.visibilityState !== 'visible') return;
+  loopPollTimer = setTimeout(() => {
+    loadLoopStatus();
+    scheduleLoopPoll();
+  }, LOOP_POLL_MS);
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden' && loopPollTimer) {
+    clearTimeout(loopPollTimer);
+    loopPollTimer = null;
+  } else if (document.visibilityState === 'visible') {
+    loadLoopStatus();
+    scheduleLoopPoll();
+  }
+});
+
+loopExploit?.addEventListener('input', () => {
+  const v = parseInt(loopExploit.value, 10);
+  loopExploitLabel.textContent = `${v}% exploit`;
+});
+
+loopSave?.addEventListener('click', async () => {
+  const enabled = loopEnabled.checked;
+  const delay_seconds = Math.max(0, Math.min(600, parseInt(loopDelay.value, 10) || 30));
+  const exploit_ratio = Math.max(0, Math.min(1, parseInt(loopExploit.value, 10) / 100));
+
+  try {
+    const res = await fetch(`${API_BASE}/api/loop/config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled, delay_seconds, exploit_ratio }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to save config');
+    loadLoopStatus();
+  } catch (e) {
+    alert(e.message || 'Could not save loop settings');
+  }
+});
+
+loopEnabled?.addEventListener('change', async () => {
+  const enabled = loopEnabled.checked;
+  try {
+    const res = await fetch(`${API_BASE}/api/loop/config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to update');
+    loopStatusBadge.textContent = enabled ? 'Running' : 'Paused';
+    loopStatusBadge.className = 'loop-badge ' + (enabled ? 'running' : 'paused');
+  } catch (e) {
+    loopEnabled.checked = !enabled;
+    alert(e.message || 'Could not update loop');
+  }
+});
+
+if (loopEnabled) {
+  loadLoopStatus();
+  scheduleLoopPoll();
+}

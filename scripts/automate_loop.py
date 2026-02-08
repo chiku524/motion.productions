@@ -20,8 +20,8 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-EXPLOIT_RATIO = 0.70
-EXPLORE_RATIO = 0.30
+DEFAULT_EXPLOIT_RATIO = 0.70
+DEFAULT_DELAY_SECONDS = 30
 
 # "Good" outcome thresholds (from analysis)
 CONSISTENCY_MAX = 20.0  # brightness_std_over_time lower = more consistent
@@ -52,14 +52,14 @@ def is_good_outcome(analysis: dict) -> bool:
     )
 
 
-def pick_prompt(state: dict) -> str:
-    """70% exploit (good prompts), 30% explore (new)."""
+def pick_prompt(state: dict, exploit_ratio: float = DEFAULT_EXPLOIT_RATIO) -> str:
+    """Exploit (good prompts) vs explore (new) based on exploit_ratio."""
     from src.automation import generate_procedural_prompt
 
     good = state.get("good_prompts", [])
     recent = set(state.get("recent_prompts", [])[-100:])
 
-    if random.random() < EXPLOIT_RATIO and good:
+    if random.random() < exploit_ratio and good:
         return random.choice(good)
     return generate_procedural_prompt(avoid=recent) or random.choice(good) if good else generate_procedural_prompt()
 
@@ -85,6 +85,19 @@ def _save_state(api_base: str, state: dict) -> None:
         api_request(api_base, "POST", "/api/loop/state", data={"state": state})
     except Exception:
         pass
+
+
+def _load_loop_config(api_base: str) -> dict:
+    """Load user-controlled loop config from API (controls Railway loop)."""
+    try:
+        data = api_request(api_base, "GET", "/api/loop/config")
+        return {
+            "enabled": data.get("enabled", True),
+            "delay_seconds": int(data.get("delay_seconds", DEFAULT_DELAY_SECONDS)),
+            "exploit_ratio": float(data.get("exploit_ratio", DEFAULT_EXPLOIT_RATIO)),
+        }
+    except Exception:
+        return {"enabled": True, "delay_seconds": DEFAULT_DELAY_SECONDS, "exploit_ratio": DEFAULT_EXPLOIT_RATIO}
 
 
 def duration_for_run(run_count: int, base: float) -> float:
@@ -123,22 +136,27 @@ def run() -> None:
     from src.creation import build_spec_from_instruction
 
     config = load_config(args.config)
-    out_cfg = config.get("output", {})
-    generator = ProceduralVideoGenerator(
-        width=out_cfg.get("width", 512),
-        height=out_cfg.get("height", 512),
-        fps=out_cfg.get("fps", 24),
-    )
+    config = {**config, "api_base": args.api_base}
+    generator = ProceduralVideoGenerator(config=config)
     out_dir = Path(config.get("output", {}).get("dir", "output"))
     out_dir.mkdir(parents=True, exist_ok=True)
 
     state = _load_state(args.api_base)
-    print("Starting self-feeding loop (70% exploit / 30% explore)")
+    print("Starting self-feeding loop (config from API; respects webapp controls)")
     print(f"State: run_count={state['run_count']}, good_prompts={len(state.get('good_prompts', []))}, recent={len(state.get('recent_prompts', []))}")
-    print("Each output triggers the next run. State persisted to API.\n")
+    print("Each output triggers the next run. Toggle loop in webapp to pause.\n")
 
     while True:
-        prompt = pick_prompt(state)
+        loop_config = _load_loop_config(args.api_base)
+        if not loop_config.get("enabled", True):
+            print("Loop paused (disabled in webapp). Rechecking in 30s...")
+            time.sleep(30)
+            continue
+
+        delay_seconds = loop_config.get("delay_seconds") or (args.delay if args.delay is not None else float(os.environ.get("LOOP_DELAY_SECONDS", "0")) or 0)
+        exploit_ratio = loop_config.get("exploit_ratio", DEFAULT_EXPLOIT_RATIO)
+
+        prompt = pick_prompt(state, exploit_ratio=exploit_ratio)
         if not prompt:
             state["recent_prompts"] = []
             continue
@@ -177,7 +195,7 @@ def run() -> None:
 
             instruction = interpret_user_prompt(prompt, default_duration=duration)
             from src.knowledge import get_knowledge_for_creation
-            spec = build_spec_from_instruction(instruction, knowledge=get_knowledge_for_creation(config))
+            spec = build_spec_from_instruction(instruction, knowledge=get_knowledge_for_creation(config, api_base=args.api_base))
             analysis = analyze_video(path)
             analysis_dict = analysis.to_dict()
 
@@ -217,6 +235,9 @@ def run() -> None:
 
         state["run_count"] += 1
         state["recent_prompts"] = (state.get("recent_prompts", []) + [prompt])[-200:]
+        state["last_run_at"] = __import__("datetime").datetime.utcnow().isoformat() + "Z"
+        state["last_prompt"] = (prompt or "")[:80] + ("…" if len(prompt or "") > 80 else "")
+        state["last_job_id"] = job_id
 
         _save_state(args.api_base, state)
 

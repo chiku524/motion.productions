@@ -119,6 +119,49 @@
         </div>
       </section>
 
+      <section class="loop motion-fade-in-up" id="loop-section">
+        <div class="loop-header">
+          <h2 class="loop-title">Automated loop</h2>
+          <p class="loop-sub">Control the continuous generation loop running on Railway — these settings apply live.</p>
+        </div>
+        <div class="loop-controls">
+          <div class="loop-toggle-row">
+            <label class="loop-toggle-label">
+              <span>Loop</span>
+              <span id="loop-status-badge" class="loop-badge">Loading…</span>
+            </label>
+            <label class="toggle">
+              <input type="checkbox" id="loop-enabled" checked>
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="loop-fields">
+            <div class="loop-field">
+              <label class="label" for="loop-delay">Pace (delay between runs, sec)</label>
+              <input type="number" id="loop-delay" min="0" max="600" step="5" value="30" class="loop-input">
+            </div>
+            <div class="loop-field">
+              <label class="label" for="loop-exploit">Exploit / Explore ratio (0–100%)</label>
+              <input type="range" id="loop-exploit" min="0" max="100" value="70" class="loop-slider">
+              <span id="loop-exploit-label" class="loop-slider-label">70% exploit</span>
+            </div>
+          </div>
+          <button type="button" id="loop-save" class="btn btn-secondary btn-sm">Apply settings</button>
+        </div>
+        <div class="loop-status">
+          <div class="loop-stats">
+            <span id="loop-run-count" class="loop-stat">—</span>
+            <span id="loop-good-count" class="loop-stat">—</span>
+            <span id="loop-last-run" class="loop-stat loop-stat-muted">—</span>
+          </div>
+          <p id="loop-last-prompt" class="loop-last-prompt" hidden></p>
+          <details class="loop-activity">
+            <summary>Recent activity</summary>
+            <ul id="loop-recent" class="loop-recent-list"></ul>
+          </details>
+        </div>
+      </section>
+
       <section class="library motion-fade-in-up" id="library-section">
         <div class="library-header">
           <div>

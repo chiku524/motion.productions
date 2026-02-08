@@ -266,6 +266,70 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       return json({ ok: true });
     }
 
+    // GET /api/loop/config — user-controlled loop config (enabled, delay, exploit_ratio)
+    if (path === "/api/loop/config" && request.method === "GET") {
+      const raw = await env.MOTION_KV.get("loop_config");
+      const config = raw
+        ? (JSON.parse(raw) as { enabled?: boolean; delay_seconds?: number; exploit_ratio?: number })
+        : { enabled: true, delay_seconds: 30, exploit_ratio: 0.7 };
+      return json({
+        enabled: config.enabled !== false,
+        delay_seconds: typeof config.delay_seconds === "number" ? config.delay_seconds : 30,
+        exploit_ratio: typeof config.exploit_ratio === "number" ? config.exploit_ratio : 0.7,
+      });
+    }
+
+    // POST /api/loop/config — update loop config (controls Railway loop)
+    if (path === "/api/loop/config" && request.method === "POST") {
+      let body: { enabled?: boolean; delay_seconds?: number; exploit_ratio?: number };
+      try {
+        body = (await request.json()) as typeof body;
+      } catch {
+        return err("Invalid JSON");
+      }
+      const raw = await env.MOTION_KV.get("loop_config");
+      const current = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+      if (typeof body.enabled === "boolean") current.enabled = body.enabled;
+      if (typeof body.delay_seconds === "number") current.delay_seconds = Math.max(0, Math.min(600, body.delay_seconds));
+      if (typeof body.exploit_ratio === "number") current.exploit_ratio = Math.max(0, Math.min(1, body.exploit_ratio));
+      await env.MOTION_KV.put("loop_config", JSON.stringify(current));
+      return json({ ok: true, config: current });
+    }
+
+    // GET /api/loop/status — config + state + recent activity for webapp display
+    if (path === "/api/loop/status" && request.method === "GET") {
+      const configRaw = await env.MOTION_KV.get("loop_config");
+      const config = configRaw
+        ? (JSON.parse(configRaw) as { enabled?: boolean; delay_seconds?: number; exploit_ratio?: number })
+        : { enabled: true, delay_seconds: 30, exploit_ratio: 0.7 };
+      const stateRaw = await env.MOTION_KV.get("loop_state");
+      const state = stateRaw ? (JSON.parse(stateRaw) as Record<string, unknown>) : {};
+      const rows = await env.DB.prepare(
+        "SELECT id, prompt, duration_seconds, updated_at FROM jobs WHERE status = 'completed' AND r2_key IS NOT NULL ORDER BY updated_at DESC LIMIT 10"
+      )
+        .all<{ id: string; prompt: string; duration_seconds: number | null; updated_at: string }>();
+      const recent_runs = (rows.results || []).map((r) => ({
+        id: r.id,
+        prompt: (r.prompt || "").slice(0, 60) + ((r.prompt?.length ?? 0) > 60 ? "…" : ""),
+        duration_seconds: r.duration_seconds,
+        updated_at: r.updated_at,
+        download_url: `/api/jobs/${r.id}/download`,
+      }));
+      return json({
+        config: {
+          enabled: config.enabled !== false,
+          delay_seconds: typeof config.delay_seconds === "number" ? config.delay_seconds : 30,
+          exploit_ratio: typeof config.exploit_ratio === "number" ? config.exploit_ratio : 0.7,
+        },
+        run_count: typeof state.run_count === "number" ? state.run_count : 0,
+        good_prompts_count: Array.isArray(state.good_prompts) ? state.good_prompts.length : 0,
+        last_run_at: state.last_run_at ?? null,
+        last_prompt: state.last_prompt ?? null,
+        last_job_id: state.last_job_id ?? null,
+        recent_runs,
+      });
+    }
+
     // POST /api/events — log user interaction for learning
     if (path === "/api/events" && request.method === "POST") {
       let body: { event_type: string; job_id?: string; payload?: Record<string, unknown> };
@@ -514,6 +578,42 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       if (!key) return err("key required");
       const row = await env.DB.prepare("SELECT color_key FROM learned_colors WHERE color_key = ?").bind(key).first();
       return json({ exists: !!row });
+    }
+
+    // GET /api/knowledge/for-creation — learned colors and motion for creation (closes the loop)
+    if (path === "/api/knowledge/for-creation" && request.method === "GET") {
+      const limit = Math.min(parseInt(new URL(request.url).searchParams.get("limit") || "500", 10), 2000);
+      const colorRows = await env.DB.prepare(
+        "SELECT color_key, r, g, b, count, sources_json, name FROM learned_colors ORDER BY count DESC LIMIT ?"
+      )
+        .bind(limit)
+        .all<{ color_key: string; r: number; g: number; b: number; count: number; sources_json: string | null; name: string }>();
+      const colors: Record<string, { r: number; g: number; b: number; count: number; sources: string[]; name: string }> = {};
+      for (const r of colorRows.results || []) {
+        colors[r.color_key] = {
+          r: r.r,
+          g: r.g,
+          b: r.b,
+          count: r.count,
+          sources: r.sources_json ? (JSON.parse(r.sources_json) as string[]) : [],
+          name: r.name,
+        };
+      }
+      const motionRows = await env.DB.prepare(
+        "SELECT profile_key, motion_level, motion_std, motion_trend, count, sources_json, name FROM learned_motion ORDER BY count DESC LIMIT ?"
+      )
+        .bind(limit)
+        .all<{ profile_key: string; motion_level: number; motion_std: number; motion_trend: string; count: number; sources_json: string | null; name: string | null }>();
+      const motion = (motionRows.results || []).map((r) => ({
+        key: r.profile_key,
+        motion_level: r.motion_level,
+        motion_std: r.motion_std,
+        motion_trend: r.motion_trend,
+        count: r.count,
+        sources: r.sources_json ? (JSON.parse(r.sources_json) as string[]) : [],
+        name: r.name,
+      }));
+      return json({ learned_colors: colors, learned_motion: motion });
     }
 
   return err("Not found", 404);
