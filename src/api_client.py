@@ -19,7 +19,6 @@ def api_request(
     api_base: str,
     method: str,
     path: str,
-    *,
     data: dict | None = None,
     raw_body: bytes | None = None,
     content_type: str | None = None,
