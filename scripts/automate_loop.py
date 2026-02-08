@@ -116,7 +116,7 @@ def run() -> None:
         duration = duration_for_run(state["run_count"], args.duration)
 
         try:
-            job = api_request(args.api_base, "POST", "/api/jobs", {
+            job = api_request(args.api_base, "POST", "/api/jobs", data={
                 "prompt": prompt,
                 "duration_seconds": duration,
             })
@@ -150,7 +150,7 @@ def run() -> None:
             analysis = analyze_video(path)
             analysis_dict = analysis.to_dict()
 
-            api_request(args.api_base, "POST", "/api/learning", {
+            api_request(args.api_base, "POST", "/api/learning", data={
                 "job_id": job_id,
                 "prompt": prompt,
                 "spec": {

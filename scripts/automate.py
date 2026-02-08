@@ -110,7 +110,7 @@ def main() -> None:
         duration = duration_for_run(run_count, args.duration, args.scale_duration)
 
         try:
-            job = api_request(args.api_base, "POST", "/api/jobs", {
+            job = api_request(args.api_base, "POST", "/api/jobs", data={
                 "prompt": prompt,
                 "duration_seconds": duration,
             })
@@ -149,7 +149,7 @@ def main() -> None:
             instruction = interpret_user_prompt(prompt, default_duration=duration)
             spec = build_spec_from_instruction(instruction)
             analysis = analyze_video(path)
-            api_request(args.api_base, "POST", "/api/learning", {
+            api_request(args.api_base, "POST", "/api/learning", data={
                 "job_id": job_id,
                 "prompt": prompt,
                 "spec": {
