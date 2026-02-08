@@ -30,6 +30,9 @@ def build_spec_from_instruction(
     palette = instruction.palette_name
     motion = instruction.motion_type
     intensity = instruction.intensity
+    gradient = getattr(instruction, "gradient_type", "vertical") or "vertical"
+    camera = getattr(instruction, "camera_motion", "static") or "static"
+    shape = getattr(instruction, "shape_overlay", "none") or "none"
 
     # Optional: refine from knowledge
     if knowledge:
@@ -44,6 +47,9 @@ def build_spec_from_instruction(
         motion_type=motion,
         intensity=intensity,
         raw_prompt=instruction.raw_prompt,
+        gradient_type=gradient,
+        camera_motion=camera,
+        shape_overlay=shape,
     )
 
 

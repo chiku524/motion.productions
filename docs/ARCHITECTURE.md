@@ -62,10 +62,10 @@ We do **not** use Runway, Replicate, PyTorch, diffusers, transformers, or any pr
 ### Procedural pipeline
 
 1. **Prompt → parameters (our parser)**  
-   Keywords and rules map text → palette, motion type, intensity. No neural network.
+   Keywords and rules map text → palette, motion type, intensity, gradient type, camera motion, shape overlay. No neural network.
 
 2. **Parameters → pixels (our renderer)**  
-   For each frame: gradients, noise, motion curves, easing — our algorithms and data only.
+   For each frame: gradients (vertical/radial/angled/horizontal), noise, motion curves, camera transforms (zoom/pan/rotate), shape overlays — our algorithms and data only.
 
 3. **Frames → video file**  
    imageio + FFmpeg to encode. Content is 100% our code and data.
@@ -121,7 +121,21 @@ Implementation: `src/analysis/` (analyzer, metrics), `src/learning/` (log, aggre
 
 ---
 
-## 4. Summary
+## 4. Roadmap
+
+See [docs/ROADMAP.md](ROADMAP.md) for the 7-phase plan toward industry-level video generation:
+
+- **Phase 1** (Done): Gradient types, camera motion, shape overlays
+- **Phase 2**: Cinematography and scene structure
+- **Phase 3**: Lighting and color
+- **Phase 4**: Text and graphics
+- **Phase 5**: Narrative and genre
+- **Phase 6**: Sound
+- **Phase 7**: Higher realism
+
+---
+
+## 5. Summary
 
 | Goal                        | How we do it                                                       |
 |-----------------------------|--------------------------------------------------------------------|
@@ -130,4 +144,5 @@ Implementation: `src/analysis/` (analyzer, metrics), `src/learning/` (log, aggre
 | Video from prompt           | User prompt → parameters from knowledge → one video file.          |
 | No external model           | Procedural engine: parser + renderer + FFmpeg only.                |
 | Interpret output            | `analyze_video()` → OutputAnalysis (color, motion, consistency).   |
+| Visual variety              | Gradient types, camera motion, shape overlays (Phase 1).           |
 | Learn from output           | Log runs → aggregate → suggestions → refine base knowledge.        |

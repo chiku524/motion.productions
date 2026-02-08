@@ -44,6 +44,44 @@ KEYWORD_TO_MOTION: dict[str, str] = {
     "dream": "slow",
 }
 
+# Words that suggest gradient layout
+KEYWORD_TO_GRADIENT: dict[str, str] = {
+    "radial": "radial",
+    "circle": "radial",
+    "sun": "radial",
+    "glow": "radial",
+    "angled": "angled",
+    "diagonal": "angled",
+    "sweep": "angled",
+    "vertical": "vertical",
+    "horizontal": "horizontal",
+}
+
+# Words that suggest shape overlay (none | circle | rect)
+KEYWORD_TO_SHAPE: dict[str, str] = {
+    "circle": "circle",
+    "glow": "circle",
+    "spot": "circle",
+    "spotlight": "circle",
+    "vignette": "circle",
+    "frame": "rect",
+    "box": "rect",
+    "letterbox": "rect",
+}
+
+# Words that suggest camera-style motion
+KEYWORD_TO_CAMERA: dict[str, str] = {
+    "zoom": "zoom",
+    "zoom_in": "zoom",
+    "zoom_out": "zoom_out",
+    "pan": "pan",
+    "sweep": "pan",
+    "rotate": "rotate",
+    "spin": "rotate",
+    "static": "static",
+    "still": "static",
+}
+
 # Words that suggest intensity (0–1)
 KEYWORD_TO_INTENSITY: dict[str, float] = {
     "calm": 0.2,
@@ -58,3 +96,6 @@ KEYWORD_TO_INTENSITY: dict[str, float] = {
 DEFAULT_PALETTE = "default"
 DEFAULT_MOTION = "flow"
 DEFAULT_INTENSITY = 0.5
+DEFAULT_GRADIENT = "vertical"
+DEFAULT_CAMERA = "static"
+DEFAULT_SHAPE = "none"

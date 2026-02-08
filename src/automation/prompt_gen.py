@@ -9,14 +9,23 @@ from ..procedural.data.keywords import (
     KEYWORD_TO_PALETTE,
     KEYWORD_TO_MOTION,
     KEYWORD_TO_INTENSITY,
+    KEYWORD_TO_GRADIENT,
+    KEYWORD_TO_CAMERA,
+    KEYWORD_TO_SHAPE,
 )
 
 # Unique keywords per category (avoid duplicates across mappings)
 SUBJECTS = sorted(set(KEYWORD_TO_PALETTE.keys()))
 MODIFIERS_MOTION = [k for k in KEYWORD_TO_MOTION.keys() if k not in SUBJECTS]
 MODIFIERS_INTENSITY = [k for k in KEYWORD_TO_INTENSITY.keys() if k not in SUBJECTS]
+MODIFIERS_GRADIENT = [k for k in KEYWORD_TO_GRADIENT.keys() if k not in SUBJECTS]
+MODIFIERS_CAMERA = [k for k in KEYWORD_TO_CAMERA.keys() if k not in SUBJECTS]
+MODIFIERS_SHAPE = [k for k in KEYWORD_TO_SHAPE.keys() if k not in SUBJECTS]
 
-# Templates: subject + optional modifier
+# All modifiers for exploration (gradient, camera, shape add variety)
+ALL_MODIFIERS = MODIFIERS_MOTION + MODIFIERS_INTENSITY + MODIFIERS_GRADIENT + MODIFIERS_CAMERA + MODIFIERS_SHAPE
+
+# Templates: subject + optional modifier(s)
 TEMPLATES = [
     "{subject}",
     "{subject}, {modifier}",
@@ -39,7 +48,7 @@ def generate_procedural_prompt(
     if seed is not None:
         random.seed(seed)
     subjects = subjects or SUBJECTS
-    modifiers = modifiers or (MODIFIERS_MOTION + MODIFIERS_INTENSITY)
+    modifiers = modifiers or ALL_MODIFIERS
     avoid = avoid or set()
 
     # Try random combinations

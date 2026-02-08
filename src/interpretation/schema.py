@@ -17,6 +17,9 @@ class InterpretedInstruction:
     palette_name: str
     motion_type: str
     intensity: float  # 0–1
+    gradient_type: str = "vertical"   # vertical | radial | angled | horizontal
+    camera_motion: str = "static"     # static | zoom | zoom_out | pan | rotate
+    shape_overlay: str = "none"       # none | circle | rect
 
     # Duration (seconds; None = use default)
     duration_seconds: float | None = None

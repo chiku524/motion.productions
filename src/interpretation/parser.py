@@ -10,9 +10,15 @@ from ..procedural.data.keywords import (
     KEYWORD_TO_PALETTE,
     KEYWORD_TO_MOTION,
     KEYWORD_TO_INTENSITY,
+    KEYWORD_TO_GRADIENT,
+    KEYWORD_TO_CAMERA,
+    KEYWORD_TO_SHAPE,
     DEFAULT_PALETTE,
     DEFAULT_MOTION,
     DEFAULT_INTENSITY,
+    DEFAULT_GRADIENT,
+    DEFAULT_CAMERA,
+    DEFAULT_SHAPE,
 )
 
 # Duration extraction: "5 seconds", "10s", "15 sec", "2 minutes", "1 min"
@@ -121,6 +127,30 @@ def _resolve_intensity(
     return DEFAULT_INTENSITY
 
 
+def _resolve_gradient(words: list[str]) -> str:
+    """Resolve gradient type from keywords."""
+    for w in words:
+        if w in KEYWORD_TO_GRADIENT:
+            return KEYWORD_TO_GRADIENT[w]
+    return DEFAULT_GRADIENT
+
+
+def _resolve_camera(words: list[str]) -> str:
+    """Resolve camera motion from keywords."""
+    for w in words:
+        if w in KEYWORD_TO_CAMERA:
+            return KEYWORD_TO_CAMERA[w]
+    return DEFAULT_CAMERA
+
+
+def _resolve_shape(words: list[str]) -> str:
+    """Resolve shape overlay from keywords."""
+    for w in words:
+        if w in KEYWORD_TO_SHAPE:
+            return KEYWORD_TO_SHAPE[w]
+    return DEFAULT_SHAPE
+
+
 def _resolve_style(words: list[str]) -> str | None:
     """Extract style hint if present."""
     for w in words:
@@ -160,11 +190,14 @@ def interpret_user_prompt(
     palette = _resolve_palette(words, avoid_palette)
     motion = _resolve_motion(words, avoid_motion)
     intensity = _resolve_intensity(words)
+    gradient = _resolve_gradient(words)
+    camera = _resolve_camera(words)
+    shape = _resolve_shape(words)
 
     # Keywords that contributed (for learning and logging)
     contributing: list[str] = []
     for w in words:
-        if w in KEYWORD_TO_PALETTE or w in KEYWORD_TO_MOTION or w in KEYWORD_TO_INTENSITY:
+        if w in KEYWORD_TO_PALETTE or w in KEYWORD_TO_MOTION or w in KEYWORD_TO_INTENSITY or w in KEYWORD_TO_GRADIENT or w in KEYWORD_TO_CAMERA or w in KEYWORD_TO_SHAPE:
             contributing.append(w)
     if not contributing:
         contributing = words[:10]  # fallback: first 10 words
@@ -173,6 +206,9 @@ def interpret_user_prompt(
         palette_name=palette,
         motion_type=motion,
         intensity=intensity,
+        gradient_type=gradient,
+        camera_motion=camera,
+        shape_overlay=shape,
         duration_seconds=duration,
         style=style,
         tone=tone,
