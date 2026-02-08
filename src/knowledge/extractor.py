@@ -87,11 +87,20 @@ def extract_from_video(
     except Exception:
         meta = {}
     fps_raw = meta.get("fps", 24.0)
-    try:
-        fps = float(fps_raw)
-    except (TypeError, ValueError):
-        fps = 24.0
-    if fps <= 0:
+    if isinstance(fps_raw, dict):
+        # Some formats (e.g. ffmpeg) return fps as rational {num, den} or {numerator, denominator}
+        try:
+            num = fps_raw.get("num") or fps_raw.get("numerator", 24)
+            den = fps_raw.get("den") or fps_raw.get("denominator", 1)
+            fps = float(num) / float(den) if den else 24.0
+        except (TypeError, ValueError, ZeroDivisionError):
+            fps = 24.0
+    else:
+        try:
+            fps = float(fps_raw)
+        except (TypeError, ValueError):
+            fps = 24.0
+    if not isinstance(fps, (int, float)) or fps <= 0:
         fps = 24.0
     size = meta.get("size")
     width = size[0] if size and isinstance(size, (tuple, list)) and len(size) >= 2 else None
