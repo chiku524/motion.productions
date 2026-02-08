@@ -123,10 +123,10 @@ def extract_from_video(
     elif frames[0].shape[-1] == 4:
         frames = [f[:, :, :3].copy() for f in frames]
 
-    # Infer width/height from first frame if meta missing
-    h, w = frames[0].shape[:2]
-    width = width if width is not None else w
-    height = height if height is not None else h
+    # Infer width/height from first frame if meta missing (keep names; loop overwrites h with histogram dict)
+    frame_h, frame_w = frames[0].shape[:2]
+    width = width if width is not None else frame_w
+    height = height if height is not None else frame_h
 
     n = len(frames)
     fps = float(fps)  # ensure scalar (avoid float/dict if meta.fps was nested)
@@ -161,15 +161,15 @@ def extract_from_video(
             diff = frame_difference(frames[i - 1], fr)
             per_motion.append(diff)
 
-        h = color_histogram(fr, bins=bins)
+        hist = color_histogram(fr, bins=bins)
         if hist_sum_r is None:
-            hist_sum_r = h["r"].copy()
-            hist_sum_g = h["g"].copy()
-            hist_sum_b = h["b"].copy()
+            hist_sum_r = hist["r"].copy()
+            hist_sum_g = hist["g"].copy()
+            hist_sum_b = hist["b"].copy()
         else:
-            hist_sum_r += h["r"]
-            hist_sum_g += h["g"]
-            hist_sum_b += h["b"]
+            hist_sum_r += hist["r"]
+            hist_sum_g += hist["g"]
+            hist_sum_b += hist["b"]
 
         # Graphics: sample from middle frame
         if i == mid_idx:
@@ -195,10 +195,10 @@ def extract_from_video(
     dominant_rgb = dom[0] if dom else (0.0, 0.0, 0.0)
     closest_palette, palette_distance = _closest_palette(*dominant_rgb)
 
-    # Normalize center of mass to 0-1 (frame coords are 0..w-1, 0..h-1)
-    w, h = int(w), int(h)
-    cx_norm = cx / w if w else 0.5
-    cy_norm = cy / h if h else 0.5
+    # Normalize center of mass to 0-1 (frame coords are 0..frame_w-1, 0..frame_h-1)
+    frame_w, frame_h = int(frame_w), int(frame_h)
+    cx_norm = cx / frame_w if frame_w else 0.5
+    cy_norm = cy / frame_h if frame_h else 0.5
 
     busyness = 0.5 * edge_den + 0.5 * spat_var
 
