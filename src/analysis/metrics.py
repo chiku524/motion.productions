@@ -82,14 +82,15 @@ def saturation_and_hue(frame: np.ndarray) -> dict[str, float]:
     cmax = np.maximum(np.maximum(r, g), b)
     cmin = np.minimum(np.minimum(r, g), b)
     delta = cmax - cmin
+    delta_safe = np.maximum(delta, 1e-9)  # avoid division by zero (np.where evaluates both branches)
     sat = np.where(cmax > 1e-9, delta / cmax, 0.0)
     hue = np.zeros_like(r)
     mask_r = (cmax == r) & (delta > 1e-9)
     mask_g = (cmax == g) & (delta > 1e-9)
     mask_b = (cmax == b) & (delta > 1e-9)
-    hue = np.where(mask_r, 60 * (((g - b) / delta) % 6), hue)
-    hue = np.where(mask_g, 60 * ((b - r) / delta + 2), hue)
-    hue = np.where(mask_b, 60 * ((r - g) / delta + 4), hue)
+    hue = np.where(mask_r, 60 * (((g - b) / delta_safe) % 6), hue)
+    hue = np.where(mask_g, 60 * ((b - r) / delta_safe + 2), hue)
+    hue = np.where(mask_b, 60 * ((r - g) / delta_safe + 4), hue)
     hue = (hue + 360) % 360
     return {
         "saturation": float(sat.mean()),

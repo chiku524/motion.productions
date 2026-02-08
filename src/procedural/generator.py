@@ -53,6 +53,15 @@ class ProceduralVideoGenerator(VideoGenerator):
             fps = out_cfg.get("fps", self.fps)
         else:
             width, height, fps = self.width, self.height, self.fps
+        # Coerce to int/float in case config returns dict or wrong type
+        width = int(width) if width is not None else self.width
+        height = int(height) if height is not None else self.height
+        try:
+            fps = float(fps) if fps is not None else float(self.fps)
+        except (TypeError, ValueError):
+            fps = float(self.fps)
+        if fps <= 0:
+            fps = float(self.fps)
 
         from ..interpretation import interpret_user_prompt
         from ..creation import build_spec_from_instruction
