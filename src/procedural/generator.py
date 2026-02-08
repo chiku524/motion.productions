@@ -95,6 +95,7 @@ class ProceduralVideoGenerator(VideoGenerator):
             codec="libx264",
             quality=8,
         )
+        fps = float(fps)  # ensure scalar before division
         try:
             for i in range(num_frames):
                 t = i / fps

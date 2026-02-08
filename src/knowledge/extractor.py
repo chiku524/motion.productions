@@ -129,7 +129,8 @@ def extract_from_video(
     height = height if height is not None else h
 
     n = len(frames)
-    duration_seconds = n / fps if fps and n else 0.0
+    fps = float(fps)  # ensure scalar (avoid float/dict if meta.fps was nested)
+    duration_seconds = n / fps if fps > 0 and n else 0.0
 
     # Per-frame metrics
     per_brightness: list[float] = []
@@ -195,6 +196,7 @@ def extract_from_video(
     closest_palette, palette_distance = _closest_palette(*dominant_rgb)
 
     # Normalize center of mass to 0-1 (frame coords are 0..w-1, 0..h-1)
+    w, h = int(w), int(h)
     cx_norm = cx / w if w else 0.5
     cy_norm = cy / h if h else 0.5
 

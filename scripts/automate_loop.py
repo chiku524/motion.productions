@@ -168,7 +168,9 @@ def run() -> None:
                 print("✓")
 
         except Exception as e:
+            import traceback
             print(f"✗ {e}")
+            traceback.print_exc()
 
         state["run_count"] += 1
         state["recent_prompts"] = (state.get("recent_prompts", []) + [prompt])[-200:]

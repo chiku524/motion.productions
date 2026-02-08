@@ -154,10 +154,12 @@ def center_of_mass(frame: np.ndarray) -> tuple[float, float]:
     gray = frame.astype(np.float64)
     gray = 0.299 * gray[:, :, 0] + 0.587 * gray[:, :, 1] + 0.114 * gray[:, :, 2]
     weight = gray + 1e-9
-    total = weight.sum()
+    total = float(weight.sum())
     if total < 1e-9:
         return 0.5, 0.5
-    h, w = gray.shape
+    h, w = int(gray.shape[0]), int(gray.shape[1])
+    if w <= 0 or h <= 0:
+        return 0.5, 0.5
     yy, xx = np.ogrid[:h, :w]
     cx = float((xx * weight).sum() / total / w)
     cy = float((yy * weight).sum() / total / h)
