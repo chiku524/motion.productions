@@ -1,0 +1,19 @@
+from .palettes import PALETTES
+from .keywords import (
+    KEYWORD_TO_PALETTE,
+    KEYWORD_TO_MOTION,
+    KEYWORD_TO_INTENSITY,
+    DEFAULT_PALETTE,
+    DEFAULT_MOTION,
+    DEFAULT_INTENSITY,
+)
+
+__all__ = [
+    "PALETTES",
+    "KEYWORD_TO_PALETTE",
+    "KEYWORD_TO_MOTION",
+    "KEYWORD_TO_INTENSITY",
+    "DEFAULT_PALETTE",
+    "DEFAULT_MOTION",
+    "DEFAULT_INTENSITY",
+]

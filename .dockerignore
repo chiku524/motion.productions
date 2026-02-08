@@ -1,0 +1,19 @@
+# Exclude Cloudflare Worker (we deploy the Python worker)
+cloudflare/
+
+# Outputs, caches, venv
+output/
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+.git/
+.github/
+
+# Optional / large
+learning_log.jsonl
+data/
+models/
+*.ckpt
+*.safetensors

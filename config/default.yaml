@@ -1,0 +1,27 @@
+# Default config for local text-to-video pipeline
+# One prompt → one full video (single output file)
+
+# Output
+output:
+  dir: "output"           # relative to project root
+  filename_prefix: "video"
+  # Format used for internal segments and final file (must match for concat)
+  width: 512
+  height: 512
+  fps: 24
+
+# Video generation
+video:
+  # Max duration (seconds) the model can produce in a single call (e.g. 5–10 for most local models)
+  max_single_clip_seconds: 6
+  # When duration > max_single_clip_seconds, we use temporal continuation and concat
+  # No user-facing "scenes" — one full video file is always returned
+
+# Prompt (optional enrichment; can be disabled)
+prompt:
+  enrich: false            # set true when you add a local LLM
+  # style_suffix: "cinematic, high quality"
+
+# Paths (override via env or CLI)
+# model_path: ""
+# ffmpeg_bin: "ffmpeg"

@@ -1,0 +1,8 @@
+# Render: Background Worker for self-feeding learning loop
+# https://render.com/docs/background-workers
+services:
+  - type: worker
+    name: motion-loop
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python scripts/automate_loop.py

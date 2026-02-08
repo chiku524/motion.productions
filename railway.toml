@@ -1,0 +1,9 @@
+# Railway: Background Worker for self-feeding learning loop
+# https://docs.railway.app/config-as-code
+# Uses Dockerfile when present; Root Directory must be repo root (not cloudflare/)
+
+[build]
+builder = "DOCKERFILE"
+
+[deploy]
+startCommand = "python scripts/automate_loop.py"

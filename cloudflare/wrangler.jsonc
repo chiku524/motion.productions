@@ -1,0 +1,26 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "motion-productions",
+  "account_id": "10374f367672f4d19db430601db0926b",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-01-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "routes": [
+    { "pattern": "motion.productions", "custom_domain": true },
+    { "pattern": "www.motion.productions", "custom_domain": true }
+  ],
+  "kv_namespaces": [
+    { "binding": "MOTION_KV", "id": "e3d001c8396b4623be7052450fe7aadf" }
+  ],
+  "d1_databases": [
+    { "binding": "DB", "database_name": "motion-productions-db", "database_id": "7c6e61ce-c4ae-474b-b303-7eb8641f0747" }
+  ],
+  "r2_buckets": [
+    { "binding": "VIDEOS", "bucket_name": "motion-productions-videos" }
+  ],
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS"
+  }
+}

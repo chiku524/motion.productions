@@ -1,0 +1,37 @@
+# Outputs
+output/*.mp4
+output/*.webm
+output/*.mkv
+!output/.gitkeep
+
+# Learning log (optional: remove to commit training data)
+learning_log.jsonl
+
+# Automation state (local run count, prompts tried)
+data/automation_state.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.env
+.env.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Models (large downloads)
+models/
+*.ckpt
+*.safetensors
+*.bin
+
+# OS
+.DS_Store
+Thumbs.db

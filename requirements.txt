@@ -1,0 +1,14 @@
+# AI Text/Script-to-Video — foundation
+# Python 3.10+
+# No external "model" — procedural engine uses only our algorithms and data.
+
+# Config and CLI
+PyYAML>=6.0
+
+# Procedural engine: pixels, motion, color (our code) + minimal video encoding
+numpy>=1.24.0
+imageio>=2.31.0
+imageio-ffmpeg>=0.4.9
+
+# FFmpeg: for encoding (imageio-ffmpeg) and for concat of segments if needed.
+# Install separately: winget install FFmpeg / brew install ffmpeg / apt install ffmpeg

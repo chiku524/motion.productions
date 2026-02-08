@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Motion — From prompt to production</title>
+  <meta name="description" content="Turn your script into video. One prompt. One video. Our procedural engine creates authentic videos with no external models — Motion learns from your usage to improve over time.">
+  <meta name="theme-color" content="#0A0A0C">
+  <link rel="canonical" href="https://motion.productions/">
+  <link rel="icon" type="image/svg+xml" href="/logo.svg">
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/favicon.png">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://motion.productions/">
+  <meta property="og:title" content="Motion — From prompt to production">
+  <meta property="og:description" content="Turn your script into video. One prompt. One video. No external models — our procedural engine creates it.">
+  <meta property="og:image" content="https://motion.productions/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:site_name" content="Motion Productions">
+  <meta property="og:locale" content="en_US">
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:url" content="https://motion.productions/">
+  <meta name="twitter:title" content="Motion — From prompt to production">
+  <meta name="twitter:description" content="Turn your script into video. One prompt. One video. No external models — our procedural engine creates it.">
+  <meta name="twitter:image" content="https://motion.productions/og-image.png">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/app.css">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebApplication",
+    "name": "Motion",
+    "alternateName": "Motion Productions",
+    "url": "https://motion.productions",
+    "description": "Turn your script into video. One prompt. One video. Our procedural engine creates authentic videos with no external models.",
+    "applicationCategory": "MultimediaApplication",
+    "operatingSystem": "Any",
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+  }
+  </script>
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+      <a href="/" class="logo">
+        <img src="/logo.svg" alt="Motion" class="logo-icon" width="28" height="28">
+        <span>Motion</span>
+      </a>
+      <span class="tagline">From prompt to production.</span>
+    </header>
+
+    <main class="main">
+      <section class="hero">
+        <h1 class="hero-title">Turn your script into video</h1>
+        <p class="hero-sub">One prompt. One video. No external models — our procedural engine creates it.</p>
+      </section>
+
+      <section class="generator motion-fade-in-up">
+        <form id="generate-form" class="generator-form">
+          <label class="label" for="prompt">Describe your video</label>
+          <textarea
+            id="prompt"
+            name="prompt"
+            class="textarea"
+            placeholder="e.g. Sunset over the ocean, dreamy waves, warm tones"
+            rows="3"
+            required
+          ></textarea>
+
+          <div class="row">
+            <div class="field">
+              <label class="label" for="duration">Duration (seconds)</label>
+              <select id="duration" name="duration" class="select">
+                <option value="5">5s</option>
+                <option value="6" selected>6s</option>
+                <option value="10">10s</option>
+                <option value="15">15s</option>
+                <option value="30">30s</option>
+              </select>
+            </div>
+            <button type="submit" id="submit-btn" class="btn btn-primary">
+              Generate
+            </button>
+          </div>
+        </form>
+
+        <div id="status" class="status" hidden>
+          <div class="status-content">
+            <span class="status-label">Status:</span>
+            <span id="status-text" class="status-text"></span>
+          </div>
+          <div id="progress-bar" class="progress-bar" hidden>
+            <div class="progress-fill"></div>
+          </div>
+        </div>
+
+        <div id="result" class="result" hidden>
+          <p class="result-label">Your video is ready</p>
+          <video id="video-player" class="video-player" controls playsinline></video>
+          <div class="result-actions">
+            <a id="download-link" class="btn btn-secondary" download>Download</a>
+            <span class="feedback-label">Was this helpful?</span>
+            <button type="button" id="feedback-up" class="btn-feedback" title="Thumbs up" aria-label="Good result">👍</button>
+            <button type="button" id="feedback-down" class="btn-feedback" title="Thumbs down" aria-label="Poor result">👎</button>
+          </div>
+        </div>
+
+        <div id="error" class="error" hidden>
+          <span id="error-text"></span>
+        </div>
+      </section>
+
+      <section class="about">
+        <p class="about-text">
+          Motion uses our own procedural engine — algorithms and data we built. No Runway, no Replicate, no external APIs.
+          The system learns from your usage to improve over time.
+        </p>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <span>motion.productions</span>
+    </footer>
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>
