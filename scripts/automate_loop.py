@@ -35,28 +35,7 @@ def baseline_state() -> dict:
     }
 
 
-def api_request(
-    api_base: str, method: str, path: str,
-    data: dict | None = None,
-    raw_body: bytes | None = None,
-    content_type: str | None = None,
-) -> dict:
-    import urllib.request
-
-    url = f"{api_base.rstrip('/')}{path}"
-    headers = {"Accept": "application/json"}
-    if raw_body is not None:
-        body = raw_body
-        if content_type:
-            headers["Content-Type"] = content_type
-    elif isinstance(data, dict):
-        body = json.dumps(data).encode()
-        headers["Content-Type"] = "application/json"
-    else:
-        body = None
-    req = urllib.request.Request(url, data=body, method=method, headers=headers)
-    with urllib.request.urlopen(req) as resp:
-        return json.loads(resp.read().decode())
+from src.api_client import api_request
 
 
 def is_good_outcome(analysis: dict) -> bool:

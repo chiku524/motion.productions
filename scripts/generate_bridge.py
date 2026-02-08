@@ -26,44 +26,24 @@ from src.pipeline import generate_full_video
 from src.procedural import ProceduralVideoGenerator
 
 
-def fetch_pending_jobs(api_base: str) -> list[dict]:
-    import urllib.request
+from src.api_client import api_get, api_post, api_post_binary
 
-    url = f"{api_base.rstrip('/')}/api/jobs?status=pending"
-    req = urllib.request.Request(url, headers={"Accept": "application/json"})
-    with urllib.request.urlopen(req) as resp:
-        data = resp.read().decode()
-    import json
-    out = json.loads(data)
+
+def fetch_pending_jobs(api_base: str) -> list[dict]:
+    out = api_get(api_base, "/api/jobs?status=pending")
     return out.get("jobs", [])
 
 
 def log_to_api(
     api_base: str, job_id: str, prompt: str, spec: dict, analysis: dict
 ) -> None:
-    import json
-    import urllib.request
-
-    url = f"{api_base.rstrip('/')}/api/learning"
-    data = json.dumps({"job_id": job_id, "prompt": prompt, "spec": spec, "analysis": analysis}).encode()
-    req = urllib.request.Request(url, data=data, method="POST")
-    req.add_header("Content-Type", "application/json")
-    with urllib.request.urlopen(req) as resp:
-        if resp.status not in (200, 201):
-            raise RuntimeError(f"Log failed: {resp.status}")
+    api_post(api_base, "/api/learning", {"job_id": job_id, "prompt": prompt, "spec": spec, "analysis": analysis})
 
 
 def upload_video(api_base: str, job_id: str, video_path: Path) -> None:
-    import urllib.request
-
-    url = f"{api_base.rstrip('/')}/api/jobs/{job_id}/upload"
     with open(video_path, "rb") as f:
-        data = f.read()
-    req = urllib.request.Request(url, data=data, method="POST")
-    req.add_header("Content-Type", "video/mp4")
-    with urllib.request.urlopen(req) as resp:
-        if resp.status not in (200, 201):
-            raise RuntimeError(f"Upload failed: {resp.status}")
+        body = f.read()
+    api_post_binary(api_base, f"/api/jobs/{job_id}/upload", body, content_type="video/mp4", timeout=120)
 
 
 def process_job(job: dict, api_base: str, config: dict, learn: bool) -> bool:

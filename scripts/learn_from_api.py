@@ -14,14 +14,16 @@ import json
 import re
 import sys
 from collections import defaultdict
-from urllib.request import Request, urlopen
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.api_client import api_get
 
 
 def fetch_json(api_base: str, path: str) -> dict:
-    url = f"{api_base.rstrip('/')}{path}"
-    req = Request(url, headers={"Accept": "application/json"})
-    with urlopen(req) as resp:
-        return json.loads(resp.read().decode())
+    return api_get(api_base, path)
 
 
 def words(prompt: str) -> set[str]:
