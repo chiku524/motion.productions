@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
 """
 Self-feeding learning loop: each output triggers the next run.
-70% exploit (good outcomes) / 30% explore (new combos). State resets on restart.
-Run on Railway or Render as a background worker.
+70% exploit (good outcomes) / 30% explore (new combos).
+State is persisted to the API (KV) so it survives restarts.
 
 Usage:
   python scripts/automate_loop.py
   python scripts/automate_loop.py --api-base https://motion.productions
+  python scripts/automate_loop.py --delay 30   # wait 30s between runs (view results in library)
+  LOOP_DELAY_SECONDS=60 python scripts/automate_loop.py
+  DEBUG=1 python scripts/automate_loop.py      # print full tracebacks on errors
 """
 import json
 import random
 import sys
+import time
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -60,6 +64,29 @@ def pick_prompt(state: dict) -> str:
     return generate_procedural_prompt(avoid=recent) or random.choice(good) if good else generate_procedural_prompt()
 
 
+def _load_state(api_base: str) -> dict:
+    """Load state from API (KV); falls back to baseline if unavailable."""
+    try:
+        data = api_request(api_base, "GET", "/api/loop/state")
+        s = data.get("state", {})
+        return {
+            "run_count": int(s.get("run_count", 0)),
+            "good_prompts": list(s.get("good_prompts", []))[-200:],
+            "recent_prompts": list(s.get("recent_prompts", []))[-200:],
+            "duration_base": float(s.get("duration_base", 6.0)),
+        }
+    except Exception:
+        return baseline_state()
+
+
+def _save_state(api_base: str, state: dict) -> None:
+    """Persist state to API (KV) for cross-restart continuity."""
+    try:
+        api_request(api_base, "POST", "/api/loop/state", data={"state": state})
+    except Exception:
+        pass
+
+
 def duration_for_run(run_count: int, base: float) -> float:
     """Scale duration as session progresses."""
     if run_count < 20:
@@ -83,8 +110,10 @@ def run() -> None:
         default=os.environ.get("API_BASE", "https://motion.productions"),
     )
     parser.add_argument("--duration", type=float, default=6)
+    parser.add_argument("--delay", type=float, default=None, help="Seconds to wait between runs (e.g. 30 to view results); env LOOP_DELAY_SECONDS")
     parser.add_argument("--config", type=Path, default=None)
     args = parser.parse_args()
+    delay_seconds = args.delay if args.delay is not None else (float(os.environ.get("LOOP_DELAY_SECONDS", "0")) or 0)
 
     from src.config import load_config
     from src.pipeline import generate_full_video
@@ -103,9 +132,10 @@ def run() -> None:
     out_dir = Path(config.get("output", {}).get("dir", "output"))
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    state = baseline_state()
-    print("Starting self-feeding loop (70% exploit / 30% explore, baseline state)")
-    print("Each output triggers the next run. Restart = reset to baseline.\n")
+    state = _load_state(args.api_base)
+    print("Starting self-feeding loop (70% exploit / 30% explore)")
+    print(f"State: run_count={state['run_count']}, good_prompts={len(state.get('good_prompts', []))}, recent={len(state.get('recent_prompts', []))}")
+    print("Each output triggers the next run. State persisted to API.\n")
 
     while True:
         prompt = pick_prompt(state)
@@ -167,13 +197,20 @@ def run() -> None:
             else:
                 print("✓")
 
+            if delay_seconds > 0:
+                print(f"  (waiting {delay_seconds:.0f}s before next run — check the library at motion.productions)")
+                time.sleep(delay_seconds)
+
         except Exception as e:
-            import traceback
             print(f"✗ {e}")
-            traceback.print_exc()
+            if os.environ.get("DEBUG") == "1":
+                import traceback
+                traceback.print_exc()
 
         state["run_count"] += 1
         state["recent_prompts"] = (state.get("recent_prompts", []) + [prompt])[-200:]
+
+        _save_state(args.api_base, state)
 
 
 if __name__ == "__main__":

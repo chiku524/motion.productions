@@ -143,3 +143,83 @@ function submitFeedback(rating) {
 
 feedbackUp?.addEventListener('click', () => submitFeedback(2));
 feedbackDown?.addEventListener('click', () => submitFeedback(1));
+
+// Library: recent completed videos (successfully generated — see progress)
+const libraryList = document.getElementById('library-list');
+const libraryLoading = document.getElementById('library-loading');
+const libraryRefresh = document.getElementById('library-refresh');
+
+const LIBRARY_AUTO_REFRESH_MS = 45000; // 45s when tab visible
+
+function formatDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+async function loadLibrary() {
+  if (!libraryList) return;
+  try {
+    const res = await fetch(`${API_BASE}/api/jobs?status=completed&limit=24`);
+    const data = await res.json();
+    libraryLoading?.remove();
+    if (!res.ok || !Array.isArray(data.jobs)) {
+      libraryList.innerHTML = '<p class="library-empty">No videos yet. Generate one above or wait for the loop.</p>';
+      return;
+    }
+    if (data.jobs.length === 0) {
+      libraryList.innerHTML = '<p class="library-empty">No videos yet. Generate one above or wait for the loop.</p>';
+      return;
+    }
+    const base = window.location.origin;
+    libraryList.innerHTML = data.jobs.map((job) => {
+      const url = base + job.download_url;
+      const prompt = (job.prompt || '').slice(0, 80) + (job.prompt && job.prompt.length > 80 ? '…' : '');
+      return `
+        <article class="library-card">
+          <video class="library-video" src="${url}" controls playsinline preload="metadata"></video>
+          <div class="library-card-body">
+            <p class="library-prompt">${escapeHtml(prompt)}</p>
+            <p class="library-meta">${formatDate(job.updated_at || job.created_at)}${job.duration_seconds ? ` · ${job.duration_seconds}s` : ''}</p>
+            <a href="${url}" class="library-download" download="motion-${job.id}.mp4">Download</a>
+          </div>
+        </article>`;
+    }).join('');
+  } catch {
+    libraryLoading?.remove();
+    libraryList.innerHTML = '<p class="library-empty">Could not load library. Refresh to try again.</p>';
+  }
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+libraryRefresh?.addEventListener('click', () => {
+  libraryList.innerHTML = '<div class="library-loading">Loading…</div>';
+  loadLibrary();
+});
+
+// Auto-refresh library when tab is visible
+let libraryRefreshTimer = null;
+function scheduleLibraryRefresh() {
+  if (document.visibilityState === 'visible' && libraryList) {
+    libraryRefreshTimer = setTimeout(() => {
+      loadLibrary();
+      scheduleLibraryRefresh();
+    }, LIBRARY_AUTO_REFRESH_MS);
+  }
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden' && libraryRefreshTimer) {
+    clearTimeout(libraryRefreshTimer);
+    libraryRefreshTimer = null;
+  } else if (document.visibilityState === 'visible') {
+    scheduleLibraryRefresh();
+  }
+});
+
+loadLibrary();
+scheduleLibraryRefresh();

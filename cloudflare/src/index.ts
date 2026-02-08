@@ -68,9 +68,11 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
   const err = (message: string, status = 400) =>
     json({ error: message }, status);
 
-  // GET /api/jobs?status=pending — list pending jobs (for generator service)
+  // GET /api/jobs?status=pending|completed — list jobs (pending for worker; completed for library)
     if (path === "/api/jobs" && request.method === "GET") {
-      const status = new URL(request.url).searchParams.get("status");
+      const url = new URL(request.url);
+      const status = url.searchParams.get("status");
+      const limit = Math.min(parseInt(url.searchParams.get("limit") ?? "24", 10) || 24, 100);
       if (status === "pending") {
         const rows = await env.DB.prepare(
           "SELECT id, prompt, duration_seconds, created_at FROM jobs WHERE status = 'pending' ORDER BY created_at ASC"
@@ -78,7 +80,23 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           .all<{ id: string; prompt: string; duration_seconds: number | null; created_at: string }>();
         return json({ jobs: rows.results || [] });
       }
-      return err("status=pending required", 400);
+      if (status === "completed") {
+        const rows = await env.DB.prepare(
+          "SELECT id, prompt, duration_seconds, created_at, updated_at FROM jobs WHERE status = 'completed' AND r2_key IS NOT NULL ORDER BY updated_at DESC LIMIT ?"
+        )
+          .bind(limit)
+          .all<{ id: string; prompt: string; duration_seconds: number | null; created_at: string; updated_at: string }>();
+        const jobs = (rows.results || []).map((r) => ({
+          id: r.id,
+          prompt: r.prompt,
+          duration_seconds: r.duration_seconds,
+          created_at: r.created_at,
+          updated_at: r.updated_at,
+          download_url: `/api/jobs/${r.id}/download`,
+        }));
+        return json({ jobs });
+      }
+      return err("status=pending or status=completed required", 400);
     }
 
     // POST /api/jobs — create job
@@ -226,6 +244,26 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         created_at: r.created_at,
       }));
       return json({ runs });
+    }
+
+    // GET /api/loop/state — load loop state (for worker continuity across restarts)
+    if (path === "/api/loop/state" && request.method === "GET") {
+      const raw = await env.MOTION_KV.get("loop_state");
+      const state = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+      return json({ state });
+    }
+
+    // POST /api/loop/state — save loop state (good_prompts, recent_prompts, run_count)
+    if (path === "/api/loop/state" && request.method === "POST") {
+      let body: { state?: Record<string, unknown> };
+      try {
+        body = (await request.json()) as { state?: Record<string, unknown> };
+      } catch {
+        return err("Invalid JSON");
+      }
+      const state = body.state && typeof body.state === "object" ? body.state : {};
+      await env.MOTION_KV.put("loop_state", JSON.stringify(state));
+      return json({ ok: true });
     }
 
     // POST /api/events — log user interaction for learning
