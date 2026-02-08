@@ -22,6 +22,8 @@ You can also trigger a deploy manually from **Actions → Deploy to Cloudflare �
 - **D1** — SQL database:
   - `jobs` — prompt, status, R2 key (video storage reference).
   - `learning_runs` — logged runs for learning (prompt, spec, analysis).
+  - `learned_blends`, `learned_colors`, `learned_motion`, `learned_lighting`, `learned_composition`, `learned_graphics`, `learned_temporal`, `learned_technical` — discoveries (blends, primitive depths, names) from the intended loop.
+  - `name_reserve` — used names for uniqueness.
 - **R2** — Bucket for stored video files (`jobs/{id}/video.mp4`).
 - **KV** — Cached learning stats (`learning:stats`, 5-min TTL) for fast aggregation reads.
 
@@ -106,6 +108,9 @@ The Worker serves the app UI at **https://motion.productions** — prompt input,
 - **POST /api/jobs** — Create a job. Body: `{ "prompt": "your prompt", "duration_seconds": 6 }`. Returns `{ "id", "prompt", "status": "pending" }`.
 - **GET /api/jobs?status=pending** — List pending jobs (for the generator bridge).
 - **POST /api/learning** — Log a run for learning (D1). Body: `{ job_id?, prompt, spec, analysis }`.
+- **POST /api/knowledge/discoveries** — Record discoveries to D1 (colors, blends with primitive depths, motion, lighting, etc.). Called by generate_bridge/automate_loop when `--learn` is used.
+- **POST /api/knowledge/name/take** — Reserve a unique name for a discovery.
+- **GET /api/knowledge/colors?key=...** — Check if color key exists.
 - **GET /api/learning/runs** — List learning runs (optional `?limit=100`).
 - **GET /api/learning/stats** — Aggregated stats (by palette, by keyword). Cached in KV.
 - **POST /api/events** — Log user interaction. Body: `{ event_type, job_id?, payload? }`. Types: `prompt_submitted`, `job_completed`, `video_played`, `video_abandoned`, `download_clicked`, `error`, `feedback`.

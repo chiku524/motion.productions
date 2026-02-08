@@ -380,7 +380,171 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       return json(report);
     }
 
+    // POST /api/knowledge/name/take — reserve a unique name for a discovery
+    if (path === "/api/knowledge/name/take" && request.method === "POST") {
+      const name = await generateUniqueName(env);
+      await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+      return json({ name }, 201);
+    }
+
+    // POST /api/knowledge/discoveries — batch record discoveries (D1)
+    if (path === "/api/knowledge/discoveries" && request.method === "POST") {
+      let body: {
+        colors?: Array<{ key: string; r: number; g: number; b: number; source_prompt?: string }>;
+        blends?: Array<{ name: string; domain: string; inputs: Record<string, unknown>; output: Record<string, unknown>; primitive_depths?: Record<string, unknown>; source_prompt?: string }>;
+        motion?: Array<{ key: string; motion_level: number; motion_std: number; motion_trend: string; source_prompt?: string }>;
+        lighting?: Array<{ key: string; brightness: number; contrast: number; saturation: number; source_prompt?: string }>;
+        composition?: Array<{ key: string; center_x: number; center_y: number; luminance_balance: number; source_prompt?: string }>;
+        graphics?: Array<{ key: string; edge_density: number; spatial_variance: number; busyness: number; source_prompt?: string }>;
+        temporal?: Array<{ key: string; duration: number; motion_trend: string; source_prompt?: string }>;
+        technical?: Array<{ key: string; width: number; height: number; fps: number; source_prompt?: string }>;
+      };
+      try {
+        body = (await request.json()) as typeof body;
+      } catch {
+        return err("Invalid JSON");
+      }
+      const results: Record<string, number> = { colors: 0, blends: 0, motion: 0, lighting: 0, composition: 0, graphics: 0, temporal: 0, technical: 0 };
+      for (const c of body.colors || []) {
+        const existing = await env.DB.prepare("SELECT id, name, count FROM learned_colors WHERE color_key = ?").bind(c.key).first();
+        if (existing) {
+          await env.DB.prepare("UPDATE learned_colors SET count = count + 1 WHERE color_key = ?").bind(c.key).run();
+        } else {
+          const name = await generateUniqueName(env);
+          await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+          await env.DB.prepare(
+            "INSERT INTO learned_colors (id, color_key, r, g, b, count, sources_json, name) VALUES (?, ?, ?, ?, ?, 1, ?, ?)"
+          ).bind(uuid(), c.key, c.r, c.g, c.b, c.source_prompt ? JSON.stringify([c.source_prompt.slice(0, 80)]) : null, name).run();
+        }
+        results.colors++;
+      }
+      for (const b of body.blends || []) {
+        const name = (b.name && b.name.trim()) ? b.name : await generateUniqueName(env);
+        if (!b.name || !b.name.trim()) await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+        await env.DB.prepare(
+          "INSERT INTO learned_blends (id, name, domain, inputs_json, output_json, primitive_depths_json, source_prompt) VALUES (?, ?, ?, ?, ?, ?, ?)"
+        ).bind(uuid(), name, b.domain, JSON.stringify(b.inputs), JSON.stringify(b.output), b.primitive_depths ? JSON.stringify(b.primitive_depths) : null, (b.source_prompt || "").slice(0, 120)).run();
+        results.blends++;
+      }
+      for (const m of body.motion || []) {
+        const existing = await env.DB.prepare("SELECT id FROM learned_motion WHERE profile_key = ?").bind(m.key).first();
+        if (existing) {
+          await env.DB.prepare("UPDATE learned_motion SET count = count + 1 WHERE profile_key = ?").bind(m.key).run();
+        } else {
+          const name = await generateUniqueName(env);
+          await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+          await env.DB.prepare(
+            "INSERT INTO learned_motion (id, profile_key, motion_level, motion_std, motion_trend, count, sources_json, name) VALUES (?, ?, ?, ?, ?, 1, ?, ?)"
+          ).bind(uuid(), m.key, m.motion_level, m.motion_std, m.motion_trend, m.source_prompt ? JSON.stringify([m.source_prompt.slice(0, 80)]) : null, name).run();
+        }
+        results.motion++;
+      }
+      for (const l of body.lighting || []) {
+        const existing = await env.DB.prepare("SELECT id FROM learned_lighting WHERE profile_key = ?").bind(l.key).first();
+        if (existing) {
+          await env.DB.prepare("UPDATE learned_lighting SET count = count + 1 WHERE profile_key = ?").bind(l.key).run();
+        } else {
+          const name = await generateUniqueName(env);
+          await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+          await env.DB.prepare(
+            "INSERT INTO learned_lighting (id, profile_key, brightness, contrast, saturation, count, sources_json, name) VALUES (?, ?, ?, ?, ?, 1, ?, ?)"
+          ).bind(uuid(), l.key, l.brightness, l.contrast, l.saturation, l.source_prompt ? JSON.stringify([l.source_prompt.slice(0, 80)]) : null, name).run();
+        }
+        results.lighting++;
+      }
+      for (const c of body.composition || []) {
+        const existing = await env.DB.prepare("SELECT id FROM learned_composition WHERE profile_key = ?").bind(c.key).first();
+        if (existing) {
+          await env.DB.prepare("UPDATE learned_composition SET count = count + 1 WHERE profile_key = ?").bind(c.key).run();
+        } else {
+          const name = await generateUniqueName(env);
+          await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+          await env.DB.prepare(
+            "INSERT INTO learned_composition (id, profile_key, center_x, center_y, luminance_balance, count, sources_json, name) VALUES (?, ?, ?, ?, ?, 1, ?, ?)"
+          ).bind(uuid(), c.key, c.center_x, c.center_y, c.luminance_balance, c.source_prompt ? JSON.stringify([c.source_prompt.slice(0, 80)]) : null, name).run();
+        }
+        results.composition++;
+      }
+      for (const g of body.graphics || []) {
+        const existing = await env.DB.prepare("SELECT id FROM learned_graphics WHERE profile_key = ?").bind(g.key).first();
+        if (existing) {
+          await env.DB.prepare("UPDATE learned_graphics SET count = count + 1 WHERE profile_key = ?").bind(g.key).run();
+        } else {
+          const name = await generateUniqueName(env);
+          await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+          await env.DB.prepare(
+            "INSERT INTO learned_graphics (id, profile_key, edge_density, spatial_variance, busyness, count, sources_json, name) VALUES (?, ?, ?, ?, ?, 1, ?, ?)"
+          ).bind(uuid(), g.key, g.edge_density, g.spatial_variance, g.busyness, g.source_prompt ? JSON.stringify([g.source_prompt.slice(0, 80)]) : null, name).run();
+        }
+        results.graphics++;
+      }
+      for (const t of body.temporal || []) {
+        const existing = await env.DB.prepare("SELECT id FROM learned_temporal WHERE profile_key = ?").bind(t.key).first();
+        if (existing) {
+          await env.DB.prepare("UPDATE learned_temporal SET count = count + 1 WHERE profile_key = ?").bind(t.key).run();
+        } else {
+          const name = await generateUniqueName(env);
+          await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+          await env.DB.prepare(
+            "INSERT INTO learned_temporal (id, profile_key, duration, motion_trend, count, sources_json, name) VALUES (?, ?, ?, ?, 1, ?, ?)"
+          ).bind(uuid(), t.key, t.duration, t.motion_trend, t.source_prompt ? JSON.stringify([t.source_prompt.slice(0, 80)]) : null, name).run();
+        }
+        results.temporal++;
+      }
+      for (const t of body.technical || []) {
+        const existing = await env.DB.prepare("SELECT id FROM learned_technical WHERE profile_key = ?").bind(t.key).first();
+        if (existing) {
+          await env.DB.prepare("UPDATE learned_technical SET count = count + 1 WHERE profile_key = ?").bind(t.key).run();
+        } else {
+          const name = await generateUniqueName(env);
+          await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+          await env.DB.prepare(
+            "INSERT INTO learned_technical (id, profile_key, width, height, fps, count, sources_json, name) VALUES (?, ?, ?, ?, ?, 1, ?, ?)"
+          ).bind(uuid(), t.key, t.width, t.height, t.fps, t.source_prompt ? JSON.stringify([t.source_prompt.slice(0, 80)]) : null, name).run();
+        }
+        results.technical++;
+      }
+      await env.MOTION_KV.delete("learning:stats");
+      return json({ status: "recorded", results }, 201);
+    }
+
+    // GET /api/knowledge/colors — check if color key exists (for novelty check)
+    if (path === "/api/knowledge/colors" && request.method === "GET") {
+      const key = new URL(request.url).searchParams.get("key");
+      if (!key) return err("key required");
+      const row = await env.DB.prepare("SELECT color_key FROM learned_colors WHERE color_key = ?").bind(key).first();
+      return json({ exists: !!row });
+    }
+
   return err("Not found", 404);
+}
+
+async function generateUniqueName(env: Env): Promise<string> {
+  const CONSONANTS = "blckdrflgrklmnprstvzwxq";
+  const VOWELS = "aeiou";
+  const invent = (seed: number): string => {
+    let r = seed % 100000;
+    const parts: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      parts.push(CONSONANTS[r % CONSONANTS.length]);
+      r = Math.floor(r / CONSONANTS.length);
+      parts.push(VOWELS[r % VOWELS.length]);
+      r = Math.floor(r / VOWELS.length);
+    }
+    return parts.join("");
+  };
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const seed = Math.floor(Math.random() * 1000000) + attempt * 7919;
+    const c1 = invent(seed);
+    const c2 = invent(seed + 1237);
+    const name = c1 + c2;
+    if (name.length >= 5) {
+      const inReserve = await env.DB.prepare("SELECT name FROM name_reserve WHERE name = ?").bind(name).first();
+      const inBlends = await env.DB.prepare("SELECT name FROM learned_blends WHERE name = ?").bind(name).first();
+      if (!inReserve && !inBlends) return name;
+    }
+  }
+  return "dsc_" + crypto.randomUUID().slice(0, 8);
 }
 
 async function logEvent(env: Env, eventType: string, jobId: string | null, payload: Record<string, unknown> | null): Promise<void> {

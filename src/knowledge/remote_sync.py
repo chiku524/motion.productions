@@ -1,0 +1,218 @@
+"""
+Remote sync: POST discoveries to the Cloudflare API (D1/KV).
+When api_base is set, growth persists to D1 instead of local JSON.
+"""
+from typing import Any
+
+
+def post_discoveries(
+    api_base: str,
+    discoveries: dict[str, list[dict[str, Any]]],
+) -> dict[str, Any]:
+    """
+    POST discoveries to /api/knowledge/discoveries.
+    Returns API response.
+    """
+    from ..api_client import api_post
+    resp = api_post(api_base, "/api/knowledge/discoveries", data=discoveries)
+    return resp
+
+
+def grow_and_sync_to_api(
+    analysis: dict[str, Any],
+    *,
+    prompt: str = "",
+    api_base: str = "",
+) -> dict[str, Any]:
+    """
+    Extract discoveries from analysis and POST them to the API.
+    Uses D1/KV for persistence. Does not use local JSON.
+    """
+    from .domain_extraction import analysis_dict_to_domains
+    from .blend_depth import (
+        compute_color_depth,
+        compute_motion_depth,
+        compute_lighting_depth,
+        compute_composition_depth,
+        compute_graphics_depth,
+        compute_temporal_depth,
+        compute_technical_depth,
+        compute_full_blend_depths,
+    )
+    from .registry import _color_key
+
+    if not api_base:
+        return {"error": "api_base required"}
+
+    discoveries: dict[str, list[dict[str, Any]]] = {
+        "colors": [],
+        "blends": [],
+        "motion": [],
+        "lighting": [],
+        "composition": [],
+        "graphics": [],
+        "temporal": [],
+        "technical": [],
+    }
+
+    # Color
+    dom = analysis.get("dominant_color_rgb")
+    if dom and len(dom) >= 3:
+        r, g, b = float(dom[0]), float(dom[1]), float(dom[2])
+        key = _color_key(r, g, b, tolerance=25)
+        discoveries["colors"].append({
+            "key": key,
+            "r": r,
+            "g": g,
+            "b": b,
+            "source_prompt": prompt[:80] if prompt else "",
+        })
+        discoveries["blends"].append({
+            "name": "",  # API will generate
+            "domain": "color",
+            "inputs": {"key": key},
+            "output": {"r": r, "g": g, "b": b},
+            "primitive_depths": compute_color_depth(r, g, b),
+            "source_prompt": prompt[:120] if prompt else "",
+        })
+
+    # Motion
+    motion_level = float(analysis.get("motion_level", 0))
+    motion_std = float(analysis.get("motion_std", 0))
+    motion_trend = str(analysis.get("motion_trend", "steady"))
+    level_bucket = round(motion_level, 1)
+    mkey = f"{level_bucket}_{motion_trend}"
+    discoveries["motion"].append({
+        "key": mkey,
+        "motion_level": motion_level,
+        "motion_std": motion_std,
+        "motion_trend": motion_trend,
+        "source_prompt": prompt[:80] if prompt else "",
+    })
+    discoveries["blends"].append({
+        "name": "",
+        "domain": "motion",
+        "inputs": {"motion_level": motion_level, "motion_std": motion_std, "motion_trend": motion_trend},
+        "output": {"key": mkey},
+        "primitive_depths": compute_motion_depth(motion_level, motion_trend),
+        "source_prompt": prompt[:120] if prompt else "",
+    })
+
+    # Lighting
+    brightness = float(analysis.get("mean_brightness", 128))
+    contrast = float(analysis.get("mean_contrast", 50))
+    saturation = 1.0
+    lkey = f"{round(brightness/25)*25}_{round(contrast,1)}_{round(saturation,1)}"
+    discoveries["lighting"].append({
+        "key": lkey,
+        "brightness": brightness,
+        "contrast": contrast,
+        "saturation": saturation,
+        "source_prompt": prompt[:80] if prompt else "",
+    })
+    discoveries["blends"].append({
+        "name": "",
+        "domain": "lighting",
+        "inputs": {"key": lkey},
+        "output": {"brightness": brightness, "contrast": contrast, "saturation": saturation},
+        "primitive_depths": compute_lighting_depth(brightness, contrast, saturation),
+        "source_prompt": prompt[:120] if prompt else "",
+    })
+
+    # Full blend from domains
+    domains = analysis_dict_to_domains(analysis)
+    primitive_depths = compute_full_blend_depths(domains)
+    discoveries["blends"].append({
+        "name": "",
+        "domain": "full_blend",
+        "inputs": {"domains": list(domains.keys())},
+        "output": domains,
+        "primitive_depths": primitive_depths,
+        "source_prompt": prompt[:120] if prompt else "",
+    })
+
+    # Composition (if available)
+    if "center_of_mass_x" in analysis or "luminance_balance" in analysis:
+        cx = float(analysis.get("center_of_mass_x", 0.5))
+        cy = float(analysis.get("center_of_mass_y", 0.5))
+        lb = float(analysis.get("luminance_balance", 0.5))
+        ckey = f"{round(cx,2)}_{round(cy,2)}_{round(lb,2)}"
+        discoveries["composition"].append({
+            "key": ckey,
+            "center_x": cx,
+            "center_y": cy,
+            "luminance_balance": lb,
+            "source_prompt": prompt[:80] if prompt else "",
+        })
+        discoveries["blends"].append({
+            "name": "",
+            "domain": "composition",
+            "inputs": {"key": ckey},
+            "output": {"center_x": cx, "center_y": cy, "luminance_balance": lb},
+            "primitive_depths": compute_composition_depth(cx, cy, lb),
+            "source_prompt": prompt[:120] if prompt else "",
+        })
+
+    # Graphics (if available)
+    if "edge_density" in analysis or "busyness" in analysis:
+        ed = float(analysis.get("edge_density", 0))
+        sv = float(analysis.get("spatial_variance", 0))
+        busy = float(analysis.get("busyness", 0))
+        gkey = f"{round(ed,2)}_{round(sv,2)}_{round(busy,2)}"
+        discoveries["graphics"].append({
+            "key": gkey,
+            "edge_density": ed,
+            "spatial_variance": sv,
+            "busyness": busy,
+            "source_prompt": prompt[:80] if prompt else "",
+        })
+        discoveries["blends"].append({
+            "name": "",
+            "domain": "graphics",
+            "inputs": {"key": gkey},
+            "output": {"edge_density": ed, "spatial_variance": sv, "busyness": busy},
+            "primitive_depths": compute_graphics_depth(ed, sv, busy),
+            "source_prompt": prompt[:120] if prompt else "",
+        })
+
+    # Temporal
+    duration = float(analysis.get("duration_seconds", 5))
+    tkey = f"{round(duration,1)}_{motion_trend}"
+    discoveries["temporal"].append({
+        "key": tkey,
+        "duration": duration,
+        "motion_trend": motion_trend,
+        "source_prompt": prompt[:80] if prompt else "",
+    })
+    discoveries["blends"].append({
+        "name": "",
+        "domain": "temporal",
+        "inputs": {"key": tkey},
+        "output": {"duration": duration, "motion_trend": motion_trend},
+        "primitive_depths": compute_temporal_depth(duration, motion_trend),
+        "source_prompt": prompt[:120] if prompt else "",
+    })
+
+    # Technical (if available)
+    if "width" in analysis or "height" in analysis:
+        w = int(analysis.get("width", 512))
+        h = int(analysis.get("height", 512))
+        fps = float(analysis.get("fps", 24))
+        tekkey = f"{w}x{h}_{fps}"
+        discoveries["technical"].append({
+            "key": tekkey,
+            "width": w,
+            "height": h,
+            "fps": fps,
+            "source_prompt": prompt[:80] if prompt else "",
+        })
+        discoveries["blends"].append({
+            "name": "",
+            "domain": "technical",
+            "inputs": {"key": tekkey},
+            "output": {"width": w, "height": h, "fps": fps},
+            "primitive_depths": compute_technical_depth(w, h, fps),
+            "source_prompt": prompt[:120] if prompt else "",
+        })
+
+    return post_discoveries(api_base, discoveries)

@@ -176,9 +176,17 @@ def run() -> None:
             )
 
             instruction = interpret_user_prompt(prompt, default_duration=duration)
-            spec = build_spec_from_instruction(instruction)
+            from src.knowledge import get_knowledge_for_creation
+            spec = build_spec_from_instruction(instruction, knowledge=get_knowledge_for_creation(config))
             analysis = analyze_video(path)
             analysis_dict = analysis.to_dict()
+
+            # Growth: sync discoveries to D1/KV (the intended loop)
+            try:
+                from src.knowledge.remote_sync import grow_and_sync_to_api
+                grow_and_sync_to_api(analysis_dict, prompt=prompt, api_base=args.api_base)
+            except Exception as e:
+                print(f"  (discoveries sync: {e})")
 
             api_request(args.api_base, "POST", "/api/learning", data={
                 "job_id": job_id,

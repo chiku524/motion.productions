@@ -77,18 +77,28 @@ def process_job(job: dict, api_base: str, config: dict, learn: bool) -> bool:
             from src.analysis import analyze_video
             from src.interpretation import interpret_user_prompt
             from src.creation import build_spec_from_instruction
+            from src.knowledge.remote_sync import grow_and_sync_to_api
 
             instruction = interpret_user_prompt(prompt, default_duration=duration)
             spec = build_spec_from_instruction(instruction)
             analysis = analyze_video(path)
+            analysis_dict = analysis.to_dict()
             log_to_api(
                 api_base,
                 job_id,
                 prompt,
                 {"palette_name": spec.palette_name, "motion_type": spec.motion_type, "intensity": spec.intensity},
-                analysis.to_dict(),
+                analysis_dict,
             )
-            print(f"  Logged for learning (D1 + KV)")
+            # Sync discoveries (blends, colors, motion, etc.) to D1/KV
+            try:
+                sync_resp = grow_and_sync_to_api(analysis_dict, prompt=prompt, api_base=api_base)
+                results = sync_resp.get("results", {})
+                print(f"  Logged for learning (D1 + KV)")
+                if results:
+                    print(f"  Discoveries recorded: {results}")
+            except Exception as e:
+                print(f"  Learning run logged; discoveries sync failed: {e}")
         return True
     except Exception as e:
         print(f"  Error: {e}")
