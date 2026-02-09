@@ -320,6 +320,15 @@ loopSave?.addEventListener('click', async () => {
   const delay_seconds = Math.max(0, Math.min(600, parseInt(loopDelay.value, 10) || 30));
   const exploit_ratio = Math.max(0, Math.min(1, parseInt(loopExploit.value, 10) / 100));
 
+  const originalText = loopSave.textContent;
+  loopSave.disabled = true;
+  loopSave.textContent = '';
+  loopSave.classList.add('btn-saving');
+  const spinner = document.createElement('span');
+  spinner.className = 'btn-spinner';
+  spinner.setAttribute('aria-hidden', 'true');
+  loopSave.appendChild(spinner);
+
   try {
     const res = await fetch(`${API_BASE}/api/loop/config`, {
       method: 'POST',
@@ -328,8 +337,20 @@ loopSave?.addEventListener('click', async () => {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Failed to save config');
+    loopSave.textContent = 'Saved';
+    loopSave.classList.remove('btn-saving');
+    loopSave.classList.add('btn-saved');
     loadLoopStatus();
+    setTimeout(() => {
+      loopSave.textContent = originalText;
+      loopSave.classList.remove('btn-saved');
+      loopSave.disabled = false;
+    }, 1500);
   } catch (e) {
+    loopSave.removeChild(spinner);
+    loopSave.textContent = originalText;
+    loopSave.classList.remove('btn-saving');
+    loopSave.disabled = false;
     alert(e.message || 'Could not save loop settings');
   }
 });
