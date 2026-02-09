@@ -173,7 +173,7 @@ def run() -> None:
 
         knowledge = {}
         try:
-            knowledge = get_knowledge_for_creation(config, api_base=args.api_base)
+            knowledge = get_knowledge_for_creation(config)
         except Exception:
             pass
 
@@ -216,7 +216,7 @@ def run() -> None:
 
             instruction = interpret_user_prompt(prompt, default_duration=duration)
             from src.knowledge import get_knowledge_for_creation
-            spec = build_spec_from_instruction(instruction, knowledge=get_knowledge_for_creation(config, api_base=args.api_base))
+            spec = build_spec_from_instruction(instruction, knowledge=get_knowledge_for_creation(config))
             from src.knowledge import extract_from_video
             ext = extract_from_video(path)
             analysis_dict = ext.to_dict()
