@@ -52,8 +52,12 @@ def is_good_outcome(analysis: dict) -> bool:
     )
 
 
-def pick_prompt(state: dict, exploit_ratio: float = DEFAULT_EXPLOIT_RATIO) -> str:
-    """Exploit (good prompts) vs explore (new) based on exploit_ratio."""
+def pick_prompt(
+    state: dict,
+    exploit_ratio: float = DEFAULT_EXPLOIT_RATIO,
+    knowledge: dict | None = None,
+) -> str:
+    """Exploit (good prompts) vs explore (new) based on exploit_ratio. Uses knowledge for dynamic exploration."""
     from src.automation import generate_procedural_prompt
 
     good = state.get("good_prompts", [])
@@ -61,7 +65,10 @@ def pick_prompt(state: dict, exploit_ratio: float = DEFAULT_EXPLOIT_RATIO) -> st
 
     if random.random() < exploit_ratio and good:
         return random.choice(good)
-    return generate_procedural_prompt(avoid=recent) or random.choice(good) if good else generate_procedural_prompt()
+    return (
+        generate_procedural_prompt(avoid=recent, knowledge=knowledge)
+        or (random.choice(good) if good else generate_procedural_prompt(knowledge=knowledge))
+    )
 
 
 def _load_state(api_base: str) -> dict:
@@ -134,6 +141,7 @@ def run() -> None:
     from src.analysis import analyze_video
     from src.interpretation import interpret_user_prompt
     from src.creation import build_spec_from_instruction
+    from src.knowledge.lookup import get_knowledge_for_creation
 
     config = load_config(args.config)
     config = {**config, "api_base": args.api_base}
@@ -161,7 +169,13 @@ def run() -> None:
         delay_seconds = loop_config.get("delay_seconds") or (args.delay if args.delay is not None else float(os.environ.get("LOOP_DELAY_SECONDS", "0")) or 0)
         exploit_ratio = loop_config.get("exploit_ratio", DEFAULT_EXPLOIT_RATIO)
 
-        prompt = pick_prompt(state, exploit_ratio=exploit_ratio)
+        knowledge = {}
+        try:
+            knowledge = get_knowledge_for_creation(config, api_base=args.api_base)
+        except Exception:
+            pass
+
+        prompt = pick_prompt(state, exploit_ratio=exploit_ratio, knowledge=knowledge)
         if not prompt:
             state["recent_prompts"] = []
             continue
