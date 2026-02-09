@@ -56,6 +56,8 @@ def generate_full_video(
             seed=seed,
             config=config,
         )
+        # Phase 6: optional audio mix
+        output_path = _maybe_add_audio(output_path, config, prompt)
         return output_path
 
     # Long-form: segments with temporal continuation, then concat
@@ -65,6 +67,8 @@ def generate_full_video(
     index = 0
     conditioning_path: Path | None = None
 
+    import math
+    total_segments = max(1, math.ceil(duration_seconds / segment_duration))
     while total < duration_seconds:
         index += 1
         remaining = duration_seconds - total
@@ -77,6 +81,8 @@ def generate_full_video(
             conditioning_image_path=conditioning_path,
             seed=seed if index == 1 else None,
             config=config,
+            segment_index=index,
+            total_segments=total_segments,
         )
         segment_paths.append(seg_path)
         total += seg_dur
@@ -91,11 +97,48 @@ def generate_full_video(
 
     concat_segments(segment_paths, output_path)
 
+    # Phase 6: optional audio mix
+    output_path = _maybe_add_audio(output_path, config, effective_prompt)
+
     # Optional: remove segment files to save space (keep for debugging initially)
     # for p in segment_paths:
     #     p.unlink(missing_ok=True)
 
     return output_path
+
+
+def _maybe_add_audio(
+    output_path: Path,
+    config: dict[str, Any],
+    prompt: str,
+    *,
+    instruction: Any = None,
+) -> Path:
+    """Optionally add procedural audio if config enables it. Uses spec audio_mood when available. Phase 6."""
+    audio_cfg = config.get("audio", {}) or {}
+    if not audio_cfg.get("add", False):
+        return output_path
+    try:
+        from .audio import mix_audio_to_video
+        mood = "neutral"
+        if instruction is not None:
+            mood = getattr(instruction, "audio_mood", None) or "neutral"
+        elif prompt:
+            if any(w in prompt.lower() for w in ("moody", "noir", "dark")):
+                mood = "moody"
+            else:
+                try:
+                    from .interpretation import interpret_user_prompt
+                    inst = interpret_user_prompt(prompt, default_duration=6)
+                    mood = getattr(inst, "audio_mood", None) or "neutral"
+                except Exception:
+                    pass
+        out = mix_audio_to_video(output_path, output_path=output_path, mood=mood)
+        return Path(out)
+    except ImportError:
+        return output_path
+    except Exception:
+        return output_path
 
 
 def _next_filename(config: dict[str, Any], default_prefix: str) -> str:

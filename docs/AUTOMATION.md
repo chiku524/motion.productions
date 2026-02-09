@@ -90,6 +90,37 @@ python scripts/automate.py --duration 5 --interval 120
 | Variable   | Default                    | Purpose                    |
 |------------|----------------------------|----------------------------|
 | `API_BASE` | `https://motion.productions` | API root for jobs, upload |
+| `LOOP_DELAY_SECONDS` | (from API) | Delay between runs when not overridden by API |
+| `LOOP_EXPLOIT_RATIO_OVERRIDE` | (none) | If set (0–1), overrides webapp exploit ratio for this worker |
+
+---
+
+## Multi-Workflow (Parallel Workers)
+
+You can run **multiple Railway services** to speed up learning without compromising quality. Each worker shares the same KV/D1 (state, knowledge) and contributes discoveries.
+
+### Option 1: Identical workers (2×–3× throughput)
+
+Deploy 2–3 copies of the same loop service. They may occasionally pick the same prompt; duplicates still add to the knowledge base. No config changes.
+
+### Option 2: Differentiated workflows
+
+Use env overrides to run workers with different strategies:
+
+| Worker | `LOOP_EXPLOIT_RATIO_OVERRIDE` | Purpose |
+|--------|------------------------------|---------|
+| Explorer | `0` | 100% explore — broad discovery |
+| Balanced | (none, uses webapp) | 70% exploit / 30% explore |
+| Exploiter | `1` | 100% exploit — refine known-good prompts |
+
+Each worker writes to the same D1; the knowledge base grows from all strategies. Quality is preserved because discoveries and good prompts are shared.
+
+### Setup
+
+1. Create multiple Railway services from the same repo.
+2. Same Start Command: `python scripts/automate_loop.py`
+3. Set `LOOP_EXPLOIT_RATIO_OVERRIDE` per service (optional).
+4. Ensure `API_BASE` points to motion.productions.
 
 ---
 

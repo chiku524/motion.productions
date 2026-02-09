@@ -5,17 +5,24 @@
 output:
   dir: "output"           # relative to project root
   filename_prefix: "video"
-  # Format used for internal segments and final file (must match for concat)
+  # Format: 512, 720p (1280x720), 1080p (1920x1080)
   width: 512
   height: 512
   fps: 24
+  # Quality tiers: draft (512), standard (720), high (1080)
+  # Set quality: "draft" | "standard" | "high" to override width/height
+  quality: null
 
 # Video generation
 video:
-  # Max duration (seconds) the model can produce in a single call (e.g. 5–10 for most local models)
-  max_single_clip_seconds: 6
+  # Max duration (seconds) per segment; longer videos are split into segments
+  max_single_clip_seconds: 15
   # When duration > max_single_clip_seconds, we use temporal continuation and concat
   # No user-facing "scenes" — one full video file is always returned
+
+# Audio: procedural mix (ambient, mood)
+audio:
+  add: true
 
 # Prompt (optional enrichment; can be disabled)
 prompt:

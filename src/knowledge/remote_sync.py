@@ -23,10 +23,12 @@ def grow_and_sync_to_api(
     *,
     prompt: str = "",
     api_base: str = "",
+    spec: Any = None,
 ) -> dict[str, Any]:
     """
     Extract discoveries from analysis and POST them to the API.
-    Uses D1/KV for persistence. Does not use local JSON.
+    Uses D1/KV for persistence. When spec is provided, adds camera, transitions,
+    audio, and narrative (spec-intended values) to growth — all domains covered.
     """
     from .domain_extraction import analysis_dict_to_domains
     from .blend_depth import (
@@ -101,7 +103,7 @@ def grow_and_sync_to_api(
     # Lighting
     brightness = float(analysis.get("mean_brightness", 128))
     contrast = float(analysis.get("mean_contrast", 50))
-    saturation = 1.0
+    saturation = float(analysis.get("mean_saturation", 1.0))
     lkey = f"{round(brightness/25)*25}_{round(contrast,1)}_{round(saturation,1)}"
     discoveries["lighting"].append({
         "key": lkey,
@@ -212,6 +214,48 @@ def grow_and_sync_to_api(
             "inputs": {"key": tekkey},
             "output": {"width": w, "height": h, "fps": fps},
             "primitive_depths": compute_technical_depth(w, h, fps),
+            "source_prompt": prompt[:120] if prompt else "",
+        })
+
+    # Camera, Transitions, Audio, Narrative — from spec (intended values)
+    if spec is not None:
+        camera = getattr(spec, "camera_motion", "static") or "static"
+        transitions = f"{getattr(spec, 'transition_in', 'cut') or 'cut'}_{getattr(spec, 'transition_out', 'cut') or 'cut'}"
+        discoveries["blends"].append({
+            "name": "",
+            "domain": "camera",
+            "inputs": {"camera_motion": camera},
+            "output": {"camera_motion": camera},
+            "primitive_depths": {camera: 1.0},
+            "source_prompt": prompt[:120] if prompt else "",
+        })
+        discoveries["blends"].append({
+            "name": "",
+            "domain": "transitions",
+            "inputs": {"transition_in": getattr(spec, "transition_in", "cut"), "transition_out": getattr(spec, "transition_out", "cut")},
+            "output": {"key": transitions},
+            "primitive_depths": {transitions: 1.0},
+            "source_prompt": prompt[:120] if prompt else "",
+        })
+        audio_tempo = getattr(spec, "audio_tempo", "medium") or "medium"
+        audio_mood = getattr(spec, "audio_mood", "neutral") or "neutral"
+        audio_presence = getattr(spec, "audio_presence", "ambient") or "ambient"
+        discoveries["blends"].append({
+            "name": "",
+            "domain": "audio",
+            "inputs": {"tempo": audio_tempo, "mood": audio_mood, "presence": audio_presence},
+            "output": {"tempo": audio_tempo, "mood": audio_mood, "presence": audio_presence},
+            "primitive_depths": {audio_tempo: 1.0, audio_mood: 1.0, audio_presence: 1.0},
+            "source_prompt": prompt[:120] if prompt else "",
+        })
+        genre_val = getattr(spec, "genre", "general") or "general"
+        tension = getattr(spec, "tension_curve", "standard") or "standard"
+        discoveries["blends"].append({
+            "name": "",
+            "domain": "narrative",
+            "inputs": {"genre": genre_val, "tension_curve": tension},
+            "output": {"genre": genre_val, "tension_curve": tension},
+            "primitive_depths": {genre_val: 1.0, tension: 1.0},
             "source_prompt": prompt[:120] if prompt else "",
         })
 

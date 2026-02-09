@@ -167,7 +167,9 @@ def run() -> None:
             continue
 
         delay_seconds = loop_config.get("delay_seconds") or (args.delay if args.delay is not None else float(os.environ.get("LOOP_DELAY_SECONDS", "0")) or 0)
-        exploit_ratio = loop_config.get("exploit_ratio", DEFAULT_EXPLOIT_RATIO)
+        override = os.environ.get("LOOP_EXPLOIT_RATIO_OVERRIDE")
+        exploit_ratio = float(override) if override is not None and override != "" else loop_config.get("exploit_ratio", DEFAULT_EXPLOIT_RATIO)
+        exploit_ratio = max(0.0, min(1.0, exploit_ratio))
 
         knowledge = {}
         try:
@@ -215,13 +217,14 @@ def run() -> None:
             instruction = interpret_user_prompt(prompt, default_duration=duration)
             from src.knowledge import get_knowledge_for_creation
             spec = build_spec_from_instruction(instruction, knowledge=get_knowledge_for_creation(config, api_base=args.api_base))
-            analysis = analyze_video(path)
-            analysis_dict = analysis.to_dict()
+            from src.knowledge import extract_from_video
+            ext = extract_from_video(path)
+            analysis_dict = ext.to_dict()
 
-            # Growth: sync discoveries to D1/KV (the intended loop)
+            # Growth: sync discoveries to D1/KV (the intended loop) — full extract + spec-based domains
             try:
                 from src.knowledge.remote_sync import grow_and_sync_to_api
-                grow_and_sync_to_api(analysis_dict, prompt=prompt, api_base=args.api_base)
+                grow_and_sync_to_api(analysis_dict, prompt=prompt, api_base=args.api_base, spec=spec)
             except Exception as e:
                 print(f"  (discoveries sync: {e})")
 
@@ -236,7 +239,7 @@ def run() -> None:
                 "analysis": analysis_dict,
             })
 
-            if is_good_outcome(analysis_dict):
+            if is_good_outcome(analysis_dict):  # analysis_dict has brightness_std_over_time, motion_level
                 state["good_prompts"] = (state.get("good_prompts", []) + [prompt])[-200:]
                 print("✓ good")
             else:
