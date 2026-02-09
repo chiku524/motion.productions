@@ -20,6 +20,32 @@ class InterpretedInstruction:
     gradient_type: str = "vertical"   # vertical | radial | angled | horizontal
     camera_motion: str = "static"     # static | zoom | zoom_out | pan | rotate
     shape_overlay: str = "none"       # none | circle | rect
+    shot_type: str = "medium"         # wide | medium | close | pov | handheld
+    transition_in: str = "cut"        # cut | fade | dissolve | wipe
+    transition_out: str = "cut"
+    lighting_preset: str = "neutral"  # noir | golden_hour | neon | documentary | moody
+    genre: str = "general"            # documentary | thriller | ad | tutorial | educational
+
+    # Composition (Domain: Composition)
+    composition_balance: str = "balanced"   # left_heavy | balanced | right_heavy | top_heavy | bottom_heavy
+    composition_symmetry: str = "slight"    # asymmetric | slight | bilateral
+
+    # Temporal (Domain: Temporal)
+    pacing_factor: float = 1.0              # 0.5–2.0; resolved from KEYWORD_TO_PACING
+
+    # Narrative (Domain: Narrative)
+    tension_curve: str = "standard"         # flat | slow_build | standard | immediate
+
+    # Audio (Domain: Audio)
+    audio_tempo: str = "medium"             # slow | medium | fast
+    audio_mood: str = "neutral"             # neutral | calm | tense | uplifting | dark
+    audio_presence: str = "ambient"         # silence | ambient | music | sfx | full
+
+    # Text/graphics overlays (Phase 4)
+    text_overlay: str | None = None   # text to display (titles, subtitles)
+    text_position: str = "center"     # center | top | bottom
+    educational_template: str | None = None  # concept_example_summary | tutorial | explainer
+    depth_parallax: bool = False             # Phase 7: 2.5D parallax
 
     # Duration (seconds; None = use default)
     duration_seconds: float | None = None

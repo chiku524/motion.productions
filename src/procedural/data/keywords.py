@@ -23,6 +23,19 @@ KEYWORD_TO_PALETTE: dict[str, str] = {
     "cinematic": "mono",
     "black": "night",
     "white": "mono",
+    # Expansions for arbitrary prompts (unknown-word resilience)
+    "blue": "ocean",
+    "azure": "ocean",
+    "teal": "ocean",
+    "green": "forest",
+    "orange": "fire",
+    "red": "fire",
+    "purple": "dreamy",
+    "lavender": "dreamy",
+    "pink": "dreamy",
+    "urban": "neon",
+    "cyber": "neon",
+    "retro": "neon",
 }
 
 # Words that suggest motion style
@@ -42,6 +55,15 @@ KEYWORD_TO_MOTION: dict[str, str] = {
     "city": "pulse",
     "dreamy": "slow",
     "dream": "slow",
+    # Expansions for arbitrary prompts
+    "chaotic": "fast",
+    "intense": "fast",
+    "peaceful": "slow",
+    "serene": "slow",
+    "rhythmic": "pulse",
+    "fluid": "flow",
+    "smooth": "flow",
+    "erratic": "pulse",
 }
 
 # Words that suggest gradient layout
@@ -80,7 +102,188 @@ KEYWORD_TO_CAMERA: dict[str, str] = {
     "spin": "rotate",
     "static": "static",
     "still": "static",
+    "dolly": "dolly",
+    "push": "dolly",
+    "crane": "crane",
+    "tilt": "crane",
 }
+
+# Words that suggest shot type (Phase 2)
+KEYWORD_TO_SHOT: dict[str, str] = {
+    "wide": "wide",
+    "establishing": "wide",
+    "medium": "medium",
+    "close": "close",
+    "closeup": "close",
+    "close_up": "close",
+    "pov": "pov",
+    "handheld": "handheld",
+}
+
+# Words that suggest transition (Phase 2)
+KEYWORD_TO_TRANSITION: dict[str, str] = {
+    "cut": "cut",
+    "fade": "fade",
+    "dissolve": "dissolve",
+    "crossfade": "dissolve",
+    "wipe": "wipe",
+}
+
+# Words that suggest lighting preset (Phase 3)
+KEYWORD_TO_LIGHTING: dict[str, str] = {
+    "noir": "noir",
+    "dark": "noir",
+    "golden": "golden_hour",
+    "golden_hour": "golden_hour",
+    "sunset": "golden_hour",
+    "warm": "golden_hour",
+    "neon": "neon",
+    "documentary": "documentary",
+    "neutral": "documentary",
+    "natural": "documentary",
+    "moody": "moody",
+    "dramatic": "moody",
+    "cinematic": "neutral",
+    "film": "neutral",
+    "dreamy": "golden_hour",
+    "bright": "documentary",
+    "soft": "golden_hour",
+    "harsh": "noir",
+    "dim": "noir",
+    "nostalgic": "golden_hour",
+}
+
+# Words that suggest depth/parallax (Phase 7)
+KEYWORD_TO_DEPTH: dict[str, bool] = {
+    "parallax": True,
+    "depth": True,
+    "layered": True,
+    "3d": True,
+    "realistic": True,
+}
+
+# Words that suggest genre (Phase 5)
+KEYWORD_TO_GENRE: dict[str, str] = {
+    "documentary": "documentary",
+    "doc": "documentary",
+    "thriller": "thriller",
+    "ad": "ad",
+    "commercial": "ad",
+    "tutorial": "tutorial",
+    "educational": "educational",
+    "explainer": "explainer",
+    "cinematic": "general",
+    "film": "general",
+    "movie": "general",
+    "advert": "ad",
+    "promo": "ad",
+    "howto": "tutorial",
+}
+
+# Abstract style phrases → style (for "documentary feel", "cinematic look", etc.)
+STYLE_PHRASE_TO_STYLE: dict[str, str] = {
+    "documentary": "realistic",
+    "cinematic": "cinematic",
+    "film": "cinematic",
+    "abstract": "abstract",
+    "minimal": "minimal",
+    "anime": "anime",
+    "realistic": "realistic",
+}
+
+# Abstract mood words → tone (for "something nostalgic", "melancholic vibe")
+MOOD_TO_TONE: dict[str, str] = {
+    "nostalgic": "moody",
+    "melancholic": "dark",
+    "hopeful": "bright",
+    "serene": "calm",
+    "uplifting": "bright",
+    "eerie": "dark",
+    "warm": "bright",
+    "cool": "calm",
+    "mysterious": "dark",
+    "epic": "energetic",
+}
+
+# Words that suggest pacing (slow/fast per segment)
+KEYWORD_TO_PACING: dict[str, float] = {
+    "slow": 0.6,
+    "slower": 0.5,
+    "fast": 1.4,
+    "faster": 1.5,
+    "quick": 1.3,
+    "lively": 1.2,
+    "relaxed": 0.7,
+}
+DEFAULT_PACING = 1.0
+
+# Composition: balance, symmetry, framing (Domain: Composition)
+KEYWORD_TO_COMPOSITION_BALANCE: dict[str, str] = {
+    "balanced": "balanced",
+    "balance": "balanced",
+    "centered": "balanced",
+    "left": "left_heavy",
+    "right": "right_heavy",
+    "asymmetric": "asymmetric",
+    "asymmetry": "asymmetric",
+    "symmetry": "bilateral",
+    "symmetric": "bilateral",
+    "bilateral": "bilateral",
+}
+KEYWORD_TO_COMPOSITION_SYMMETRY: dict[str, str] = {
+    "asymmetric": "asymmetric",
+    "slight": "slight",
+    "symmetry": "bilateral",
+    "symmetric": "bilateral",
+    "bilateral": "bilateral",
+    "mirror": "bilateral",
+}
+
+# Narrative tension curve (Domain: Narrative)
+KEYWORD_TO_TENSION: dict[str, str] = {
+    "flat": "flat",
+    "steady": "flat",
+    "slow_build": "slow_build",
+    "gradual": "slow_build",
+    "build": "slow_build",
+    "standard": "standard",
+    "immediate": "immediate",
+    "instant": "immediate",
+    "tense": "immediate",
+    "climax": "immediate",
+}
+
+# Audio: tempo, mood, presence (Domain: Audio)
+KEYWORD_TO_AUDIO_TEMPO: dict[str, str] = {
+    "slow": "slow",
+    "calm": "slow",
+    "fast": "fast",
+    "upbeat": "fast",
+    "medium": "medium",
+}
+KEYWORD_TO_AUDIO_MOOD: dict[str, str] = {
+    "neutral": "neutral",
+    "calm": "calm",
+    "tense": "tense",
+    "uplifting": "uplifting",
+    "dark": "dark",
+    "ambient": "calm",
+}
+KEYWORD_TO_AUDIO_PRESENCE: dict[str, str] = {
+    "silence": "silence",
+    "quiet": "silence",
+    "ambient": "ambient",
+    "music": "music",
+    "sfx": "sfx",
+    "full": "full",
+}
+
+DEFAULT_COMPOSITION_BALANCE = "balanced"
+DEFAULT_COMPOSITION_SYMMETRY = "slight"
+DEFAULT_TENSION = "standard"
+DEFAULT_AUDIO_TEMPO = "medium"
+DEFAULT_AUDIO_MOOD = "neutral"
+DEFAULT_AUDIO_PRESENCE = "ambient"
 
 # Words that suggest intensity (0–1)
 KEYWORD_TO_INTENSITY: dict[str, float] = {
@@ -99,3 +302,7 @@ DEFAULT_INTENSITY = 0.5
 DEFAULT_GRADIENT = "vertical"
 DEFAULT_CAMERA = "static"
 DEFAULT_SHAPE = "none"
+DEFAULT_SHOT = "medium"
+DEFAULT_TRANSITION = "cut"
+DEFAULT_LIGHTING = "neutral"
+DEFAULT_GENRE = "general"

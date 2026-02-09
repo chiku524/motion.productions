@@ -33,6 +33,30 @@ def build_spec_from_instruction(
     gradient = getattr(instruction, "gradient_type", "vertical") or "vertical"
     camera = getattr(instruction, "camera_motion", "static") or "static"
     shape = getattr(instruction, "shape_overlay", "none") or "none"
+    shot = getattr(instruction, "shot_type", "medium") or "medium"
+    transition = getattr(instruction, "transition_in", "cut") or "cut"
+    lighting = getattr(instruction, "lighting_preset", "neutral") or "neutral"
+    genre_val = getattr(instruction, "genre", "general") or "general"
+    composition_balance = getattr(instruction, "composition_balance", "balanced") or "balanced"
+    composition_symmetry = getattr(instruction, "composition_symmetry", "slight") or "slight"
+    pacing_factor = getattr(instruction, "pacing_factor", 1.0)
+    tension_curve = getattr(instruction, "tension_curve", "standard") or "standard"
+    audio_tempo = getattr(instruction, "audio_tempo", "medium") or "medium"
+    audio_mood = getattr(instruction, "audio_mood", "neutral") or "neutral"
+    audio_presence = getattr(instruction, "audio_presence", "ambient") or "ambient"
+    style_val = getattr(instruction, "style", None)
+    tone_val = getattr(instruction, "tone", None)
+    # Style/tone can refine lighting when style implies a look
+    if style_val and lighting == "neutral":
+        style_to_lighting = {"cinematic": "neutral", "noir": "noir", "abstract": "moody", "minimal": "documentary", "realistic": "documentary", "anime": "golden_hour"}
+        lighting = style_to_lighting.get(style_val, lighting)
+    if tone_val and lighting == "neutral":
+        tone_to_lighting = {"dreamy": "golden_hour", "dark": "noir", "bright": "documentary", "calm": "documentary", "energetic": "neon", "moody": "moody"}
+        lighting = tone_to_lighting.get(tone_val, lighting)
+    text_overlay = getattr(instruction, "text_overlay", None)
+    text_position = getattr(instruction, "text_position", "center") or "center"
+    educational_template = getattr(instruction, "educational_template", None)
+    depth_parallax = getattr(instruction, "depth_parallax", False)
 
     # Optional: refine from knowledge
     if knowledge:
@@ -50,6 +74,22 @@ def build_spec_from_instruction(
         gradient_type=gradient,
         camera_motion=camera,
         shape_overlay=shape,
+        shot_type=shot,
+        transition_in=transition,
+        transition_out=transition,
+        lighting_preset=lighting,
+        genre=genre_val,
+        composition_balance=composition_balance,
+        composition_symmetry=composition_symmetry,
+        pacing_factor=pacing_factor,
+        tension_curve=tension_curve,
+        audio_tempo=audio_tempo,
+        audio_mood=audio_mood,
+        audio_presence=audio_presence,
+        text_overlay=text_overlay,
+        text_position=text_position,
+        educational_template=educational_template,
+        depth_parallax=depth_parallax,
     )
 
 

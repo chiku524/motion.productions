@@ -16,12 +16,19 @@ from ..procedural.data.keywords import (
     KEYWORD_TO_GENRE,
     KEYWORD_TO_SHOT,
     KEYWORD_TO_TRANSITION,
+    KEYWORD_TO_PACING,
+    KEYWORD_TO_COMPOSITION_BALANCE,
+    KEYWORD_TO_COMPOSITION_SYMMETRY,
+    KEYWORD_TO_TENSION,
+    KEYWORD_TO_AUDIO_TEMPO,
+    KEYWORD_TO_AUDIO_MOOD,
+    KEYWORD_TO_AUDIO_PRESENCE,
 )
 
 # Base subjects (palette-suggesting keywords)
 SUBJECTS_BASE = sorted(set(KEYWORD_TO_PALETTE.keys()))
 
-# All modifier categories for exploration (expanded)
+# All modifier categories — every domain from INTENDED_LOOP represented
 _MODS_MOTION = [k for k in KEYWORD_TO_MOTION.keys() if k not in SUBJECTS_BASE]
 _MODS_INTENSITY = [k for k in KEYWORD_TO_INTENSITY.keys() if k not in SUBJECTS_BASE]
 _MODS_GRADIENT = [k for k in KEYWORD_TO_GRADIENT.keys() if k not in SUBJECTS_BASE]
@@ -31,10 +38,20 @@ _MODS_LIGHTING = list(KEYWORD_TO_LIGHTING.keys())
 _MODS_GENRE = list(KEYWORD_TO_GENRE.keys())
 _MODS_SHOT = list(KEYWORD_TO_SHOT.keys())
 _MODS_TRANSITION = list(KEYWORD_TO_TRANSITION.keys())
+# Temporal: pacing
+_MODS_PACING = list(KEYWORD_TO_PACING.keys())
+# Composition: balance, symmetry
+_MODS_COMPOSITION = list(KEYWORD_TO_COMPOSITION_BALANCE.keys()) + [k for k in KEYWORD_TO_COMPOSITION_SYMMETRY.keys() if k not in KEYWORD_TO_COMPOSITION_BALANCE]
+# Narrative: tension curve
+_MODS_TENSION = list(KEYWORD_TO_TENSION.keys())
+# Audio: tempo, mood, presence
+_MODS_AUDIO = list(KEYWORD_TO_AUDIO_TEMPO.keys()) + list(KEYWORD_TO_AUDIO_MOOD.keys()) + list(KEYWORD_TO_AUDIO_PRESENCE.keys())
+_MODS_AUDIO = list(dict.fromkeys(m for m in _MODS_AUDIO if m not in SUBJECTS_BASE))
 
 MODIFIERS_BASE = (
     _MODS_MOTION + _MODS_INTENSITY + _MODS_GRADIENT + _MODS_CAMERA + _MODS_SHAPE
     + _MODS_LIGHTING + _MODS_GENRE + _MODS_SHOT + _MODS_TRANSITION
+    + _MODS_PACING + _MODS_COMPOSITION + _MODS_TENSION + _MODS_AUDIO
 )
 MODIFIERS_BASE = [m for m in MODIFIERS_BASE if m not in SUBJECTS_BASE]
 MODIFIERS_BASE = list(dict.fromkeys(MODIFIERS_BASE))  # dedupe preserve order
