@@ -1,8 +1,34 @@
-# Render: Background Worker for self-feeding learning loop
-# https://render.com/docs/background-workers
+# Render: Multi-workflow background workers
+# https://render.com/docs/blueprint-spec
+# Deploy all three for parallel learning; each uses same D1/KV
 services:
   - type: worker
-    name: motion-loop
-    env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: python scripts/automate_loop.py
+    name: motion-loop-explorer
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerCommand: python scripts/automate_loop.py
+    envVars:
+      - key: API_BASE
+        value: https://motion.productions
+      - key: LOOP_EXPLOIT_RATIO_OVERRIDE
+        value: "0"
+
+  - type: worker
+    name: motion-loop-balanced
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerCommand: python scripts/automate_loop.py
+    envVars:
+      - key: API_BASE
+        value: https://motion.productions
+
+  - type: worker
+    name: motion-loop-exploiter
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerCommand: python scripts/automate_loop.py
+    envVars:
+      - key: API_BASE
+        value: https://motion.productions
+      - key: LOOP_EXPLOIT_RATIO_OVERRIDE
+        value: "1"

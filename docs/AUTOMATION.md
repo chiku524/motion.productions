@@ -115,12 +115,13 @@ Use env overrides to run workers with different strategies:
 
 Each worker writes to the same D1; the knowledge base grows from all strategies. Quality is preserved because discoveries and good prompts are shared.
 
-### Setup
+### Setup (Railway)
 
-1. Create multiple Railway services from the same repo.
-2. Same Start Command: `python scripts/automate_loop.py`
-3. Set `LOOP_EXPLOIT_RATIO_OVERRIDE` per service (optional).
-4. Ensure `API_BASE` points to motion.productions.
+See **[docs/MULTI_WORKFLOW_RAILWAY.md](./MULTI_WORKFLOW_RAILWAY.md)** for step-by-step Railway UI instructions.
+
+### Setup (Render)
+
+Use `render.yaml` — it defines three workers (explorer, balanced, exploiter). Connect the repo as a Blueprint to deploy all at once.
 
 ---
 

@@ -1,0 +1,20 @@
+# Multi-workflow configurations for Railway / Render / local
+# Copy env vars per service when creating multiple workers
+
+workflows:
+  explorer:
+    description: 100% explore — broad discovery, maximizes variety
+    env:
+      LOOP_EXPLOIT_RATIO_OVERRIDE: "0"
+      API_BASE: https://motion.productions
+
+  balanced:
+    description: Uses webapp config (default 70% exploit / 30% explore)
+    env:
+      API_BASE: https://motion.productions
+
+  exploiter:
+    description: 100% exploit — refines known-good prompts
+    env:
+      LOOP_EXPLOIT_RATIO_OVERRIDE: "1"
+      API_BASE: https://motion.productions
