@@ -199,11 +199,14 @@ def run() -> None:
         print(f"[{state['run_count'] + 1}] {prompt[:50]}... ({duration}s) ", end="", flush=True)
 
         try:
+            # Vary seed per run so each video looks different (was fixed 42 before)
+            run_seed = (state["run_count"] + 1) * 7919 + (hash(job_id) % 1_000_000)
             path = generate_full_video(
                 prompt,
                 duration,
                 generator=generator,
                 output_path=out_path,
+                seed=run_seed,
                 config=config,
             )
 

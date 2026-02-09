@@ -114,26 +114,33 @@ def _maybe_add_audio(
     *,
     instruction: Any = None,
 ) -> Path:
-    """Optionally add procedural audio if config enables it. Uses spec audio_mood when available. Phase 6."""
+    """Optionally add procedural audio if config enables it. Uses audio origins: mood, tempo, presence."""
     audio_cfg = config.get("audio", {}) or {}
     if not audio_cfg.get("add", False):
         return output_path
     try:
         from .audio import mix_audio_to_video
         mood = "neutral"
+        tempo = "medium"
+        presence = "ambient"
         if instruction is not None:
             mood = getattr(instruction, "audio_mood", None) or "neutral"
+            tempo = getattr(instruction, "audio_tempo", None) or "medium"
+            presence = getattr(instruction, "audio_presence", None) or "ambient"
         elif prompt:
-            if any(w in prompt.lower() for w in ("moody", "noir", "dark")):
-                mood = "moody"
-            else:
-                try:
-                    from .interpretation import interpret_user_prompt
-                    inst = interpret_user_prompt(prompt, default_duration=6)
-                    mood = getattr(inst, "audio_mood", None) or "neutral"
-                except Exception:
-                    pass
-        out = mix_audio_to_video(output_path, output_path=output_path, mood=mood)
+            try:
+                from .interpretation import interpret_user_prompt
+                inst = interpret_user_prompt(prompt, default_duration=6)
+                mood = getattr(inst, "audio_mood", None) or "neutral"
+                tempo = getattr(inst, "audio_tempo", None) or "medium"
+                presence = getattr(inst, "audio_presence", None) or "ambient"
+            except Exception:
+                if any(w in prompt.lower() for w in ("moody", "noir", "dark")):
+                    mood = "moody"
+        out = mix_audio_to_video(
+            output_path, output_path=output_path,
+            mood=mood, tempo=tempo, presence=presence,
+        )
         return Path(out)
     except ImportError:
         return output_path

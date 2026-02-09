@@ -613,7 +613,18 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         sources: r.sources_json ? (JSON.parse(r.sources_json) as string[]) : [],
         name: r.name,
       }));
-      return json({ learned_colors: colors, learned_motion: motion });
+      const audioRows = await env.DB.prepare(
+        "SELECT domain, inputs_json, output_json, source_prompt, created_at FROM learned_blends WHERE domain = 'audio' ORDER BY created_at DESC LIMIT ?"
+      )
+        .bind(limit)
+        .all<{ domain: string; inputs_json: string; output_json: string; source_prompt: string | null; created_at: string }>();
+      const learned_audio = (audioRows.results || []).map((r) => ({
+        tempo: (JSON.parse(r.output_json) as Record<string, unknown>).tempo ?? "medium",
+        mood: (JSON.parse(r.output_json) as Record<string, unknown>).mood ?? "neutral",
+        presence: (JSON.parse(r.output_json) as Record<string, unknown>).presence ?? "ambient",
+        source_prompt: r.source_prompt ?? "",
+      }));
+      return json({ learned_colors: colors, learned_motion: motion, learned_audio });
     }
 
   return err("Not found", 404);

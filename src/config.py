@@ -23,6 +23,13 @@ def load_config(config_path: Path | None = None) -> dict[str, Any]:
     return {**_defaults(), **data}
 
 
+_QUALITY_PRESETS: dict[str, tuple[int, int, int]] = {
+    "draft": (512, 512, 24),
+    "standard": (1280, 720, 24),
+    "high": (1920, 1080, 30),
+}
+
+
 def _defaults() -> dict[str, Any]:
     return {
         "output": {
@@ -31,10 +38,24 @@ def _defaults() -> dict[str, Any]:
             "width": 512,
             "height": 512,
             "fps": 24,
+            "quality": None,
         },
-        "video": {"max_single_clip_seconds": 6},
+        "video": {"max_single_clip_seconds": 15},
+        "audio": {"add": True},
         "prompt": {"enrich": False},
     }
+
+
+def resolve_output_config(config: dict[str, Any]) -> dict[str, Any]:
+    """Resolve output config: quality preset overrides width/height/fps if set."""
+    out = dict(config.get("output", {}))
+    quality = out.get("quality")
+    if quality and quality in _QUALITY_PRESETS:
+        w, h, fps = _QUALITY_PRESETS[quality]
+        out["width"] = w
+        out["height"] = h
+        out["fps"] = fps
+    return out
 
 
 def get_output_dir(config: dict[str, Any]) -> Path:

@@ -65,6 +65,10 @@ def build_spec_from_instruction(
             instruction.keywords,
             knowledge,
         )
+        audio_tempo, audio_mood, audio_presence = _refine_audio_from_knowledge(
+            audio_tempo, audio_mood, audio_presence,
+            knowledge,
+        )
 
     return SceneSpec(
         palette_name=palette,
@@ -137,3 +141,27 @@ def _refine_from_knowledge(
                 best_intensity = max(0.1, intensity - 0.1)
 
     return palette, best_motion, best_intensity
+
+
+def _refine_audio_from_knowledge(
+    tempo: str,
+    mood: str,
+    presence: str,
+    knowledge: dict[str, Any],
+) -> tuple[str, str, str]:
+    """Refine audio params from learned_audio discoveries so audio progresses with the loop."""
+    learned = knowledge.get("learned_audio", [])
+    if not learned:
+        return tempo, mood, presence
+    # Use most recent discoveries to influence: pick most frequent values when we have defaults
+    from collections import Counter
+    tempos = Counter(a.get("tempo", "medium") for a in learned if isinstance(a.get("tempo"), str))
+    moods = Counter(a.get("mood", "neutral") for a in learned if isinstance(a.get("mood"), str))
+    presences = Counter(a.get("presence", "ambient") for a in learned if isinstance(a.get("presence"), str))
+    if tempos and (tempo == "medium" or not tempos.get(tempo, 0)):
+        tempo = tempos.most_common(1)[0][0]
+    if moods and (mood == "neutral" or not moods.get(mood, 0)):
+        mood = moods.most_common(1)[0][0]
+    if presences and (presence == "ambient" or not presences.get(presence, 0)):
+        presence = presences.most_common(1)[0][0]
+    return tempo, mood, presence
