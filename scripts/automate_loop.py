@@ -137,7 +137,12 @@ def run() -> None:
 
     config = load_config(args.config)
     config = {**config, "api_base": args.api_base}
-    generator = ProceduralVideoGenerator(config=config)
+    out_cfg = config.get("output", {})
+    generator = ProceduralVideoGenerator(
+        width=out_cfg.get("width", 512),
+        height=out_cfg.get("height", 512),
+        fps=out_cfg.get("fps", 24),
+    )
     out_dir = Path(config.get("output", {}).get("dir", "output"))
     out_dir.mkdir(parents=True, exist_ok=True)
 
