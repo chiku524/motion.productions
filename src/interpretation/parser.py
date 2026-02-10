@@ -44,6 +44,7 @@ from ..procedural.data.keywords import (
     DEFAULT_AUDIO_MOOD,
     DEFAULT_AUDIO_PRESENCE,
 )
+from ..procedural.data.palettes import PALETTES
 
 # Duration extraction: "5 seconds", "10s", "15 sec", "2 minutes", "1 min"
 _DURATION_PATTERN = re.compile(
@@ -114,17 +115,34 @@ def _resolve_palette(
     Resolve palette from keywords. First match wins; excludes avoided palettes.
     For arbitrary prompts: when no keyword matches, infer from tone.
     """
+    hints = _resolve_palette_hints(words, avoid_palette, tone=tone)
+    return hints[0] if hints else DEFAULT_PALETTE
+
+
+def _resolve_palette_hints(
+    words: list[str],
+    avoid_palette: list[str],
+    *,
+    tone: str | None = None,
+) -> list[str]:
+    """
+    Resolve ALL palette hints from keywords (for blending primitives).
+    INTENDED_LOOP: creation blends these, not a single template.
+    """
     avoid_set = set(avoid_palette)
+    hints: list[str] = []
+    seen: set[str] = set()
     for w in words:
         if w in KEYWORD_TO_PALETTE:
             p = KEYWORD_TO_PALETTE[w]
-            if p not in avoid_set:
-                return p
-    # Fallback: infer from tone when no keyword matches (arbitrary prompt)
-    if tone and tone not in avoid_set:
+            if p not in avoid_set and p not in seen:
+                hints.append(p)
+                seen.add(p)
+    if not hints and tone and tone not in avoid_set:
         tone_to_palette = {"dark": "night", "dreamy": "dreamy", "bright": "warm_sunset", "moody": "night"}
-        return tone_to_palette.get(tone, DEFAULT_PALETTE)
-    return DEFAULT_PALETTE
+        p = tone_to_palette.get(tone, DEFAULT_PALETTE)
+        hints = [p]
+    return hints if hints else [DEFAULT_PALETTE]
 
 
 def _resolve_motion(
@@ -135,21 +153,36 @@ def _resolve_motion(
 ) -> str:
     """
     Resolve motion type from keywords. First match wins; excludes avoided motions.
-    For arbitrary prompts: infer from tone when no keyword matches.
+    """
+    hints = _resolve_motion_hints(words, avoid_motion, tone=tone)
+    return hints[0] if hints else DEFAULT_MOTION
+
+
+def _resolve_motion_hints(
+    words: list[str],
+    avoid_motion: list[str],
+    *,
+    tone: str | None = None,
+) -> list[str]:
+    """
+    Resolve ALL motion hints from keywords (for blending primitives).
+    INTENDED_LOOP: creation blends these with learned motion.
     """
     avoid_set = set(avoid_motion)
+    hints: list[str] = []
+    seen: set[str] = set()
     for w in words:
         if w in KEYWORD_TO_MOTION:
             m = KEYWORD_TO_MOTION[w]
-            if m not in avoid_set:
-                return m
-    # Fallback: infer from tone
-    if tone:
+            if m not in avoid_set and m not in seen:
+                hints.append(m)
+                seen.add(m)
+    if not hints and tone:
         tone_to_motion = {"calm": "slow", "energetic": "fast", "dreamy": "slow", "moody": "flow"}
         m = tone_to_motion.get(tone)
         if m and m not in avoid_set:
-            return m
-    return DEFAULT_MOTION
+            hints = [m]
+    return hints if hints else [DEFAULT_MOTION]
 
 
 def _resolve_intensity(
@@ -218,6 +251,45 @@ def _resolve_lighting(words: list[str]) -> str:
         if w in KEYWORD_TO_LIGHTING:
             return KEYWORD_TO_LIGHTING[w]
     return DEFAULT_LIGHTING
+
+
+def _resolve_lighting_hints(words: list[str]) -> list[str]:
+    """Resolve all lighting preset hints from keywords (for primitive blending)."""
+    hints: list[str] = []
+    seen: set[str] = set()
+    for w in words:
+        if w in KEYWORD_TO_LIGHTING:
+            p = KEYWORD_TO_LIGHTING[w]
+            if p not in seen:
+                hints.append(p)
+                seen.add(p)
+    return hints if hints else [DEFAULT_LIGHTING]
+
+
+def _resolve_composition_balance_hints(words: list[str]) -> list[str]:
+    """Resolve all composition balance hints from keywords (for primitive blending)."""
+    hints: list[str] = []
+    seen: set[str] = set()
+    for w in words:
+        if w in KEYWORD_TO_COMPOSITION_BALANCE:
+            p = KEYWORD_TO_COMPOSITION_BALANCE[w]
+            if p not in seen:
+                hints.append(p)
+                seen.add(p)
+    return hints if hints else [DEFAULT_COMPOSITION_BALANCE]
+
+
+def _resolve_composition_symmetry_hints(words: list[str]) -> list[str]:
+    """Resolve all composition symmetry hints from keywords (for primitive blending)."""
+    hints: list[str] = []
+    seen: set[str] = set()
+    for w in words:
+        if w in KEYWORD_TO_COMPOSITION_SYMMETRY:
+            p = KEYWORD_TO_COMPOSITION_SYMMETRY[w]
+            if p not in seen:
+                hints.append(p)
+                seen.add(p)
+    return hints if hints else [DEFAULT_COMPOSITION_SYMMETRY]
 
 
 def _resolve_genre(words: list[str]) -> str:
@@ -369,6 +441,11 @@ def interpret_user_prompt(
     # Resolve with tone fallback for arbitrary prompts (unknown words)
     palette = _resolve_palette(words, avoid_palette, tone=tone)
     motion = _resolve_motion(words, avoid_motion, tone=tone)
+    palette_hints = _resolve_palette_hints(words, avoid_palette, tone=tone)
+    motion_hints = _resolve_motion_hints(words, avoid_motion, tone=tone)
+    lighting_hints = _resolve_lighting_hints(words)
+    composition_balance_hints = _resolve_composition_balance_hints(words)
+    composition_symmetry_hints = _resolve_composition_symmetry_hints(words)
     intensity = _resolve_intensity(words, tone=tone)
     gradient = _resolve_gradient(words)
     camera = _resolve_camera(words)
@@ -405,9 +482,19 @@ def interpret_user_prompt(
     if not contributing:
         contributing = words[:15] if words else ["unknown"]
 
+    # Resolve palette hints to primitive RGB lists (prompt → values, not names)
+    default_rgbs = PALETTES.get(DEFAULT_PALETTE, list(PALETTES.values())[0])
+    color_primitive_lists = [list(PALETTES.get(h, default_rgbs)) for h in palette_hints]
+
     return InterpretedInstruction(
         palette_name=palette,
         motion_type=motion,
+        palette_hints=palette_hints,
+        motion_hints=motion_hints,
+        lighting_hints=lighting_hints,
+        composition_balance_hints=composition_balance_hints,
+        composition_symmetry_hints=composition_symmetry_hints,
+        color_primitive_lists=color_primitive_lists,
         intensity=intensity,
         gradient_type=gradient,
         camera_motion=camera,

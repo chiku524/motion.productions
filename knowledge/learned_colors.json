@@ -1,0 +1,33 @@
+{
+  "colors": {
+    "50,125,175": {
+      "r": 63.5,
+      "g": 136.9,
+      "b": 194.0,
+      "count": 1,
+      "sources": [
+        "azure serene waves 3 seconds"
+      ]
+    },
+    "50,125,200": {
+      "r": 71.6,
+      "g": 144.3,
+      "b": 200.1,
+      "count": 1,
+      "sources": [
+        "teal forest flow 3 seconds"
+      ],
+      "name": "tealforestfl"
+    },
+    "200,175,225": {
+      "r": 203.2,
+      "g": 183.0,
+      "b": 240.9,
+      "count": 1,
+      "sources": [
+        "dreamy fire glow 3 seconds"
+      ],
+      "name": "babaluqi"
+    }
+  }
+}

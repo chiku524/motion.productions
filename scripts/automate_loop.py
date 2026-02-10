@@ -12,6 +12,7 @@ Usage:
   DEBUG=1 python scripts/automate_loop.py      # print full tracebacks on errors
 """
 import json
+import logging
 import random
 import sys
 import time
@@ -19,6 +20,8 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_EXPLOIT_RATIO = 0.70
 DEFAULT_DELAY_SECONDS = 30
@@ -39,7 +42,7 @@ def baseline_state() -> dict:
     }
 
 
-from src.api_client import api_request
+from src.api_client import APIError, api_request_with_retry
 
 
 def is_good_outcome(analysis: dict) -> bool:
@@ -72,9 +75,9 @@ def pick_prompt(
 
 
 def _load_state(api_base: str) -> dict:
-    """Load state from API (KV); falls back to baseline if unavailable."""
+    """Load state from API (KV); falls back to baseline if unavailable. Retries on 5xx/connection."""
     try:
-        data = api_request(api_base, "GET", "/api/loop/state")
+        data = api_request_with_retry(api_base, "GET", "/api/loop/state", timeout=15)
         s = data.get("state", {})
         return {
             "run_count": int(s.get("run_count", 0)),
@@ -82,29 +85,32 @@ def _load_state(api_base: str) -> dict:
             "recent_prompts": list(s.get("recent_prompts", []))[-200:],
             "duration_base": float(s.get("duration_base", 6.0)),
         }
-    except Exception:
+    except APIError as e:
+        logger.warning("GET /api/loop/state failed (status=%s, path=%s): %s — using baseline state", e.status_code, e.path, e)
         return baseline_state()
 
 
 def _save_state(api_base: str, state: dict) -> None:
-    """Persist state to API (KV) for cross-restart continuity."""
+    """Persist state to API (KV) for cross-restart continuity. Retries on 5xx/connection; logs on failure."""
     try:
-        api_request(api_base, "POST", "/api/loop/state", data={"state": state})
-    except Exception:
-        pass
+        api_request_with_retry(api_base, "POST", "/api/loop/state", data={"state": state}, timeout=15)
+    except APIError as e:
+        logger.warning("POST /api/loop/state failed (status=%s, path=%s): %s — state not persisted", e.status_code, e.path, e)
 
 
 def _load_loop_config(api_base: str) -> dict:
-    """Load user-controlled loop config from API (controls Railway loop)."""
+    """Load user-controlled loop config from API (controls Railway loop). Retries on 5xx/connection; logs on failure."""
     try:
-        data = api_request(api_base, "GET", "/api/loop/config")
+        data = api_request_with_retry(api_base, "GET", "/api/loop/config", timeout=15)
         return {
             "enabled": data.get("enabled", True),
             "delay_seconds": int(data.get("delay_seconds", DEFAULT_DELAY_SECONDS)),
             "exploit_ratio": float(data.get("exploit_ratio", DEFAULT_EXPLOIT_RATIO)),
+            "duration_seconds": data.get("duration_seconds"),
         }
-    except Exception:
-        return {"enabled": True, "delay_seconds": DEFAULT_DELAY_SECONDS, "exploit_ratio": DEFAULT_EXPLOIT_RATIO}
+    except APIError as e:
+        logger.warning("GET /api/loop/config failed (status=%s, path=%s): %s — using defaults", e.status_code, e.path, e)
+        return {"enabled": True, "delay_seconds": DEFAULT_DELAY_SECONDS, "exploit_ratio": DEFAULT_EXPLOIT_RATIO, "duration_seconds": None}
 
 
 def duration_for_run(run_count: int, base: float) -> float:
@@ -124,12 +130,13 @@ def run() -> None:
     import argparse
     import os
 
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     parser = argparse.ArgumentParser(description="Self-feeding learning loop.")
     parser.add_argument(
         "--api-base",
         default=os.environ.get("API_BASE", "https://motion.productions"),
     )
-    parser.add_argument("--duration", type=float, default=6)
+    parser.add_argument("--duration", type=float, default=6, help="Base duration (s). Use 1 for learning-optimized (more videos, one window each).")
     parser.add_argument("--delay", type=float, default=None, help="Seconds to wait between runs (e.g. 30 to view results); env LOOP_DELAY_SECONDS")
     parser.add_argument("--config", type=Path, default=None)
     args = parser.parse_args()
@@ -174,32 +181,49 @@ def run() -> None:
         knowledge = {}
         try:
             knowledge = get_knowledge_for_creation(config)
-        except Exception:
-            pass
+        except APIError as e:
+            logger.warning("Knowledge fetch failed (path=%s, status=%s): %s — using empty knowledge", e.path, e.status_code, e)
+        except Exception as e:
+            logger.warning("Knowledge fetch failed (non-API): %s — using empty knowledge", e)
 
         prompt = pick_prompt(state, exploit_ratio=exploit_ratio, knowledge=knowledge)
         if not prompt:
             state["recent_prompts"] = []
             continue
 
-        duration = duration_for_run(state["run_count"], args.duration)
+        # Duration: API loop config (from UI) overrides local config and CLI
+        api_duration = loop_config.get("duration_seconds")
+        if api_duration is not None and api_duration > 0:
+            duration = float(api_duration)
+        else:
+            learning_duration = (config.get("learning") or {}).get("duration_seconds")
+            if learning_duration is not None and learning_duration > 0:
+                duration = float(learning_duration)
+            else:
+                duration = duration_for_run(state["run_count"], args.duration)
 
         try:
-            job = api_request(args.api_base, "POST", "/api/jobs", data={
-                "prompt": prompt,
-                "duration_seconds": duration,
-            })
-        except Exception as e:
+            job = api_request_with_retry(
+                args.api_base, "POST", "/api/jobs",
+                data={"prompt": prompt, "duration_seconds": duration},
+                timeout=30,
+            )
+        except APIError as e:
+            logger.warning("POST /api/jobs failed (status=%s, path=%s): %s", e.status_code, e.path, e)
             print(f"API error: {e}")
             continue
 
-        job_id = job["id"]
-        out_path = out_dir / f"loop_{job_id}.mp4"
+        job_id = job.get("id")
+        if not job_id:
+            logger.warning("POST /api/jobs returned no id: %s — skipping run", job)
+            print("API error: job created but no id returned")
+            continue
 
+        out_path = out_dir / f"loop_{job_id}.mp4"
         print(f"[{state['run_count'] + 1}] {prompt[:50]}... ({duration}s) ", end="", flush=True)
 
+        run_succeeded = False
         try:
-            # Vary seed per run so each video looks different (was fixed 42 before)
             run_seed = (state["run_count"] + 1) * 7919 + (hash(job_id) % 1_000_000)
             path = generate_full_video(
                 prompt,
@@ -212,10 +236,12 @@ def run() -> None:
 
             with open(path, "rb") as f:
                 body = f.read()
-            api_request(
+            api_request_with_retry(
                 args.api_base, "POST", f"/api/jobs/{job_id}/upload",
                 raw_body=body, content_type="video/mp4",
+                timeout=120,
             )
+            run_succeeded = True
 
             instruction = interpret_user_prompt(prompt, default_duration=duration)
             from src.knowledge import get_knowledge_for_creation
@@ -224,25 +250,85 @@ def run() -> None:
             ext = extract_from_video(path)
             analysis_dict = ext.to_dict()
 
-            # Growth: sync discoveries to D1/KV (the intended loop) — full extract + spec-based domains
+            # Per-frame static (growth) + per-window dynamic (recording) + narrative
+            try:
+                from src.knowledge.growth_per_instance import grow_from_video, grow_dynamic_from_video
+                from src.knowledge.narrative_registry import grow_narrative_from_spec
+                from src.knowledge.remote_sync import (
+                    grow_and_sync_to_api,
+                    post_static_discoveries,
+                    post_dynamic_discoveries,
+                    post_narrative_discoveries,
+                )
+                added, novel_for_sync = grow_from_video(
+                    path,
+                    prompt=prompt,
+                    config=config,
+                    max_frames=None,
+                    sample_every=2,
+                    window_seconds=1.0,
+                    collect_novel_for_sync=bool(args.api_base),
+                    spec=spec,
+                )
+                if any(added.values()):
+                    logger.info("Per-instance growth (static): %s", added)
+                # Growth in DYNAMIC registry (non-pure, multi-frame values; add novel with name)
+                dynamic_added, dynamic_novel = grow_dynamic_from_video(
+                    path,
+                    prompt=prompt,
+                    config=config,
+                    max_frames=None,
+                    sample_every=2,
+                    window_seconds=1.0,
+                    collect_novel_for_sync=bool(args.api_base),
+                    spec=spec,
+                )
+                if any(dynamic_added.values()):
+                    logger.info("Dynamic growth: %s", dynamic_added)
+                novel_for_sync = {**novel_for_sync, **dynamic_novel}
+                if args.api_base:
+                    if novel_for_sync.get("static_colors") or novel_for_sync.get("static_sound"):
+                        post_static_discoveries(
+                            args.api_base,
+                            novel_for_sync.get("static_colors", []),
+                            novel_for_sync.get("static_sound"),
+                        )
+                    post_dynamic_discoveries(args.api_base, novel_for_sync)
+                    narrative_added, narrative_novel = grow_narrative_from_spec(
+                        spec, prompt=prompt, config=config, instruction=instruction, collect_novel_for_sync=True
+                    )
+                    if any(narrative_novel.get(a) for a in ("genre", "mood", "plots", "settings", "themes", "scene_type")):
+                        post_narrative_discoveries(args.api_base, narrative_novel)
+            except APIError as e:
+                logger.warning("Per-instance or narrative sync failed (status=%s): %s", e.status_code, e)
+            except Exception as e:
+                logger.warning("Per-instance or narrative growth/sync: %s", e)
+
             try:
                 from src.knowledge.remote_sync import grow_and_sync_to_api
                 grow_and_sync_to_api(analysis_dict, prompt=prompt, api_base=args.api_base, spec=spec)
+            except APIError as e:
+                logger.warning("POST /api/knowledge/discoveries failed (status=%s): %s", e.status_code, e)
+                print(f"  (discoveries sync: {e})")
             except Exception as e:
                 print(f"  (discoveries sync: {e})")
 
-            api_request(args.api_base, "POST", "/api/learning", data={
-                "job_id": job_id,
-                "prompt": prompt,
-                "spec": {
-                    "palette_name": spec.palette_name,
-                    "motion_type": spec.motion_type,
-                    "intensity": spec.intensity,
-                },
-                "analysis": analysis_dict,
-            })
+            try:
+                api_request_with_retry(args.api_base, "POST", "/api/learning", data={
+                    "job_id": job_id,
+                    "prompt": prompt,
+                    "spec": {
+                        "palette_name": spec.palette_name,
+                        "motion_type": spec.motion_type,
+                        "intensity": spec.intensity,
+                    },
+                    "analysis": analysis_dict,
+                }, timeout=30)
+            except APIError as e:
+                logger.warning("POST /api/learning failed (status=%s, path=%s): %s — run still counts as success", e.status_code, e.path, e)
+                print(f"  (learning log: {e})")
 
-            if is_good_outcome(analysis_dict):  # analysis_dict has brightness_std_over_time, motion_level
+            if is_good_outcome(analysis_dict):
                 state["good_prompts"] = (state.get("good_prompts", []) + [prompt])[-200:]
                 print("✓ good")
             else:
@@ -252,19 +338,22 @@ def run() -> None:
                 print(f"  (waiting {delay_seconds:.0f}s before next run — check the library at motion.productions)")
                 time.sleep(delay_seconds)
 
+        except APIError as e:
+            logger.warning("API call failed (status=%s, path=%s): %s", e.status_code, e.path, e)
+            print(f"✗ {e}")
         except Exception as e:
             print(f"✗ {e}")
             if os.environ.get("DEBUG") == "1":
                 import traceback
                 traceback.print_exc()
 
-        state["run_count"] += 1
-        state["recent_prompts"] = (state.get("recent_prompts", []) + [prompt])[-200:]
-        state["last_run_at"] = __import__("datetime").datetime.utcnow().isoformat() + "Z"
-        state["last_prompt"] = (prompt or "")[:80] + ("…" if len(prompt or "") > 80 else "")
-        state["last_job_id"] = job_id
-
-        _save_state(args.api_base, state)
+        if run_succeeded:
+            state["run_count"] += 1
+            state["recent_prompts"] = (state.get("recent_prompts", []) + [prompt])[-200:]
+            state["last_run_at"] = __import__("datetime").datetime.utcnow().isoformat() + "Z"
+            state["last_prompt"] = (prompt or "")[:80] + ("…" if len(prompt or "") > 80 else "")
+            state["last_job_id"] = job_id
+            _save_state(args.api_base, state)
 
 
 if __name__ == "__main__":

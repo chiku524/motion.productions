@@ -3,7 +3,7 @@
 **One prompt → one full video.**  
 Create and produce videos from text, script, or prompt — driven by base knowledge of everything in video files (colors, graphics, resolutions, motion, etc.). The continuous loop extracts every aspect from this knowledge; the software creates videos from user input informed by that extraction. **No external “model”** — the default engine is **our own procedural system**: algorithms and data (pixels, graphics, motion, color) only.
 
-- **Core foundation:** [docs/FOUNDATION.md](./docs/FOUNDATION.md) — base knowledge, extraction, creation
+- **Core foundation and loop:** [docs/INTENDED_LOOP.md](./docs/INTENDED_LOOP.md) — base knowledge, extraction, creation, learning loop
 - **Architecture:** [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) — procedural engine, interpreter & learning
 - **Automation & deployment:** [docs/AUTOMATION.md](./docs/AUTOMATION.md) — automate_loop, Railway/Render
 - **Deploy to Cloudflare:** [docs/DEPLOY_CLOUDFLARE.md](./docs/DEPLOY_CLOUDFLARE.md)
@@ -15,7 +15,7 @@ Create and produce videos from text, script, or prompt — driven by base knowle
 
 - **Input:** One text prompt (and optional duration, style, tone).
 - **Output:** One video file. No scene list or manual combining.
-- **Base knowledge → extraction → creation:** The loop extracts color, motion, resolution, and other aspects from every output. User prompts map to parameters drawn from this knowledge; the procedural engine produces videos informed by it. See [docs/FOUNDATION.md](docs/FOUNDATION.md).
+- **Base knowledge → extraction → creation:** The loop extracts color, motion, resolution, and other aspects from every output. User prompts map to parameters drawn from this knowledge; the procedural engine produces videos informed by it. See [docs/INTENDED_LOOP.md](docs/INTENDED_LOOP.md).
 - **No reliance on other software:** We do **not** use Runway, Replicate, PyTorch, diffusers, or any trained neural network. The pipeline uses a **procedural engine** we built:
   - **Prompt → parameters:** Our keyword/rules parser (palettes, motion hints, intensity — from base knowledge).
   - **Parameters → pixels:** Our renderer (gradients, noise, motion curves — our algorithms).
@@ -109,7 +109,7 @@ motion.productions/
 ├── config/
 │   └── default.yaml           # Output dir, resolution, fps
 ├── docs/
-│   ├── FOUNDATION.md           # Core: base knowledge, extraction, creation
+│   ├── INTENDED_LOOP.md        # Core: foundation, loop, extraction, creation
 │   ├── ARCHITECTURE.md         # Procedural engine, interpreter & learning
 │   ├── AUTOMATION.md           # Scripts, Railway/Render deployment
 │   ├── DEPLOY_CLOUDFLARE.md    # Cloudflare Worker deploy

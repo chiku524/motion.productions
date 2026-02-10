@@ -13,10 +13,19 @@ class InterpretedInstruction:
     What the user wants: palette, motion, intensity, duration, style, tone, etc.
     """
 
-    # Core visual
+    # Core visual (primary resolved values)
     palette_name: str
     motion_type: str
     intensity: float  # 0–1
+
+    # Multi-keyword hints for blending (INTENDED_LOOP: blend primitives, not pick templates)
+    palette_hints: list[str] = field(default_factory=list)  # all palette names from matching keywords
+    motion_hints: list[str] = field(default_factory=list)   # all motion types from matching keywords
+    lighting_hints: list[str] = field(default_factory=list)  # all lighting presets from matching keywords
+    composition_balance_hints: list[str] = field(default_factory=list)
+    composition_symmetry_hints: list[str] = field(default_factory=list)
+    # Primitive values for blending: prompt → actual RGB lists (from PALETTES), not names
+    color_primitive_lists: list[list[tuple[int, int, int]]] = field(default_factory=list)
     gradient_type: str = "vertical"   # vertical | radial | angled | horizontal
     camera_motion: str = "static"     # static | zoom | zoom_out | pan | rotate
     shape_overlay: str = "none"       # none | circle | rect

@@ -71,4 +71,13 @@ def get_camera_params(
     if camera_motion == "rotate":
         # Slow rotation
         return 1.0, 0.0, 0.0, t * 0.3
+    if camera_motion == "dolly":
+        # Dolly: zoom in (push forward)
+        s = 1.0 + 0.25 * ease_in_out(min(1.0, t / 4.0))
+        return min(s, 1.25), 0.0, 0.0, 0.0
+    if camera_motion == "crane":
+        # Crane: vertical movement + slight zoom
+        pan_y = 0.15 * ease_in_out(min(1.0, t / 3.0))
+        s = 1.0 + 0.1 * math.sin(t * 0.4)
+        return s, 0.0, pan_y, 0.0
     return 1.0, 0.0, 0.0, 0.0

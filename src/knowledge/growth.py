@@ -45,12 +45,12 @@ def grow_from_extract(
             add_learned_color(r, g, b, source_prompt=prompt, config=config)
             added["colors"] += 1
 
-    # Motion
-    add_learned_motion_profile(
+    # Motion (only count when novel)
+    if add_learned_motion_profile(
         extract.motion_level, extract.motion_std, extract.motion_trend,
         source_prompt=prompt, config=config,
-    )
-    added["motion"] += 1
+    ) is not None:
+        added["motion"] += 1
 
     # Lighting
     if add_learned_lighting_profile(
@@ -118,15 +118,15 @@ def grow_from_analysis(
             add_learned_color(r, g, b, source_prompt=prompt, config=config)
             added["colors"] += 1
 
-    # Motion
+    # Motion (only count when novel)
     motion_level = analysis.get("motion_level", 0)
     motion_std = analysis.get("motion_std", 0)
-    motion_trend = "steady"
-    add_learned_motion_profile(
+    motion_trend = analysis.get("motion_trend", "steady") or "steady"
+    if add_learned_motion_profile(
         motion_level, motion_std, motion_trend,
         source_prompt=prompt, config=config,
-    )
-    added["motion"] += 1
+    ) is not None:
+        added["motion"] += 1
 
     # Lighting (analysis has brightness, contrast)
     if add_learned_lighting_profile(

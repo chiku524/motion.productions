@@ -1,16 +1,18 @@
 # Architecture: Procedural Engine and Learning
 
-This document describes how Motion implements the [core foundation](FOUNDATION.md): base knowledge of video aspects, continuous extraction via the loop, and video creation from user prompts. We use only our own algorithms and data — no external models.
+This document describes how Motion implements the [core foundation and loop](INTENDED_LOOP.md): base knowledge of video aspects, continuous extraction via the loop, and video creation from user prompts. We use only our own algorithms and data — no external models.
 
 ---
 
 ## Foundation (Summary)
 
-- **Base knowledge** — Everything in video files: colors, graphics, resolutions, motion, etc.
-- **Extraction** — The loop extracts every aspect from base knowledge as it runs.
-- **Creation** — Software produces videos from user text/script/prompt, informed by extracted knowledge.
+- **Origins** — Primitives of every film/video aspect form base knowledge (`src/knowledge/origins.py`).
+- **Interpretation** — Maps any user prompt → parameters; ready for arbitrary input.
+- **Creation** — Software produces videos using origins + learned values.
+- **Extraction** — The loop extracts every aspect from output as it runs.
+- **Growth** — Novel colors, motion profiles, etc. are added to learned registry.
 
-See [docs/FOUNDATION.md](FOUNDATION.md) for the full statement.
+See [docs/INTENDED_LOOP.md](INTENDED_LOOP.md) for the full design (foundation + loop).
 
 ---
 

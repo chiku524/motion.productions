@@ -1,7 +1,9 @@
 """
 Sound: procedural audio, SFX, mix with video. Phase 6.
 Procedural audio uses origins: tempo, mood, presence.
+Requires: pydub, ffmpeg and ffprobe on PATH.
 """
+import logging
 import os
 import shutil
 import tempfile
@@ -10,6 +12,8 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     pass
+
+logger = logging.getLogger(__name__)
 
 
 def generate_silence(duration_seconds: float, sample_rate: int = 44100) -> "bytes":
@@ -56,11 +60,14 @@ def mix_audio_to_video(
     - If audio_path: mix that file.
     - Else: generate procedural ambient from origins (tempo, mood, presence).
     - Always writes to a temp file first to avoid ffmpeg in-place corruption.
+    Raises RuntimeError if pydub is missing or ffmpeg/ffprobe are not on PATH.
     """
     try:
         from pydub import AudioSegment
-    except ImportError:
-        return video_path
+    except ImportError as e:
+        raise RuntimeError(
+            "pydub is required for audio. Install with: pip install pydub"
+        ) from e
 
     import subprocess
 
@@ -87,7 +94,12 @@ def mix_audio_to_video(
             check=True,
         )
         duration = float(out.stdout.strip() or 5.0)
-    except (subprocess.CalledProcessError, ValueError, FileNotFoundError):
+    except FileNotFoundError as e:
+        raise RuntimeError(
+            "ffprobe not found. Audio requires ffmpeg. Install: winget install FFmpeg / brew install ffmpeg / apt install ffmpeg"
+        ) from e
+    except (subprocess.CalledProcessError, ValueError) as e:
+        logger.warning("ffprobe failed for %s: %s — using duration 5.0s", video_path, e)
         duration = 5.0
 
     if audio_path and audio_path.exists():
@@ -106,11 +118,16 @@ def mix_audio_to_video(
         tmp_wav = f.name
     try:
         audio.export(tmp_wav, format="wav")
-        subprocess.run(
-            ["ffmpeg", "-y", "-i", str(video_path), "-i", tmp_wav, "-c:v", "copy", "-c:a", "aac", "-shortest", str(output_path)],
-            capture_output=True,
-            check=True,
-        )
+        try:
+            subprocess.run(
+                ["ffmpeg", "-y", "-i", str(video_path), "-i", tmp_wav, "-c:v", "copy", "-c:a", "aac", "-shortest", str(output_path)],
+                capture_output=True,
+                check=True,
+            )
+        except FileNotFoundError as e:
+            raise RuntimeError(
+                "ffmpeg not found. Audio requires ffmpeg on PATH. Install: winget install FFmpeg / brew install ffmpeg / apt install ffmpeg"
+            ) from e
     finally:
         Path(tmp_wav).unlink(missing_ok=True)
 
@@ -137,21 +154,22 @@ def _generate_procedural_audio(
 
     try:
         from pydub.generators import Sine
-    except ImportError:
+    except ImportError as e:
+        logger.warning("pydub.generators.Sine not available: %s — using silence for procedural audio", e)
         return base
 
-    # Mood: frequency and volume (origin primitives)
+    # Mood: frequency and volume (origin primitives). Levels set so audio is clearly audible when unmuted.
     mood_config = {
-        "neutral": (110, -32),
-        "calm": (82, -30),
-        "tense": (55, -28),
-        "uplifting": (165, -30),
-        "dark": (55, -26),
-        "moody": (55, -28),
-        "noir": (49, -27),
-        "thriller": (44, -26),
+        "neutral": (110, -22),
+        "calm": (82, -20),
+        "tense": (55, -18),
+        "uplifting": (165, -20),
+        "dark": (55, -18),
+        "moody": (55, -20),
+        "noir": (49, -19),
+        "thriller": (44, -18),
     }
-    freq, db = mood_config.get(mood, (110, -32))
+    freq, db = mood_config.get(mood, (110, -22))
 
     # Tempo: tone length (origin primitive)
     tempo_ms = {"slow": 4000, "medium": 2500, "fast": 1200}.get(tempo, 2500)

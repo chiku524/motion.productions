@@ -115,9 +115,15 @@ Use env overrides to run workers with different strategies:
 
 Each worker writes to the same D1; the knowledge base grows from all strategies. Quality is preserved because discoveries and good prompts are shared.
 
-### Setup (Railway)
+### Setup (Railway) — step-by-step
 
-See **[docs/MULTI_WORKFLOW_RAILWAY.md](./MULTI_WORKFLOW_RAILWAY.md)** for step-by-step Railway UI instructions.
+1. **Existing service** — Your current worker (e.g. `motion-loop`). No changes if you want it as "balanced" (uses webapp).
+2. **Add Explorer** — New service from same repo: Root Directory: (repo root); Build: Dockerfile; Start: `python scripts/automate_loop.py`; Variables: `LOOP_EXPLOIT_RATIO_OVERRIDE=0`, `API_BASE=https://motion.productions`.
+3. **Add Exploiter** — Another new service: same as above; Variables: `LOOP_EXPLOIT_RATIO_OVERRIDE=1`, `API_BASE=https://motion.productions`.
+
+**Railway UI:** Dashboard → Your Project → **New** → **Empty Service** → Connect repo → Settings: Root Directory empty, Builder: Dockerfile, Start Command: `python scripts/automate_loop.py` → Variables: `API_BASE`, `LOOP_EXPLOIT_RATIO_OVERRIDE` (0 for Explorer, 1 for Exploiter) → Deploy.
+
+**Verify:** All services show logs like `[1]`, `[2]`, …; webapp loop status reflects combined activity.
 
 ### Setup (Render)
 

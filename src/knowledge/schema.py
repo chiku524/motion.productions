@@ -54,7 +54,7 @@ class BaseKnowledgeExtract:
     center_of_mass_y: float = 0.5  # 0–1
     luminance_balance: float = 0.5  # 0=dark-biased, 0.5=balanced, 1=light-biased
 
-    # --- Palette match (our data) ---
+    # --- Palette match (display/reference only; registry stores exact RGB, not palette name) ---
     closest_palette: str = "default"
     palette_distance: float = 0.0
 

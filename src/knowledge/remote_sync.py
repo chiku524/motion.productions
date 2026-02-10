@@ -11,11 +11,57 @@ def post_discoveries(
 ) -> dict[str, Any]:
     """
     POST discoveries to /api/knowledge/discoveries.
-    Returns API response.
+    Returns API response. Uses retry on 5xx/connection errors.
+    Supports static_colors, static_sound (per-frame) and colors, motion, lighting, etc. (dynamic).
     """
-    from ..api_client import api_post
-    resp = api_post(api_base, "/api/knowledge/discoveries", data=discoveries)
+    from ..api_client import api_request_with_retry
+    resp = api_request_with_retry(api_base, "POST", "/api/knowledge/discoveries", data=discoveries, timeout=30)
     return resp
+
+
+def post_static_discoveries(
+    api_base: str,
+    static_colors: list[dict[str, Any]],
+    static_sound: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """
+    POST per-frame static discoveries to /api/knowledge/discoveries.
+    Writes to D1 static_colors and static_sound tables. Uses sensible names from Python when provided.
+    """
+    discoveries: dict[str, list[dict[str, Any]]] = {
+        "static_colors": static_colors,
+        "static_sound": static_sound or [],
+    }
+    return post_discoveries(api_base, discoveries)
+
+
+def post_narrative_discoveries(
+    api_base: str,
+    novel_for_sync: dict[str, list[dict[str, Any]]],
+) -> dict[str, Any]:
+    """
+    POST narrative discoveries (themes, plots, settings, genre, mood, scene_type) to /api/knowledge/discoveries.
+    Writes to D1 narrative_entries table. Uses sensible names from Python when provided.
+    """
+    discoveries: dict[str, Any] = {"narrative": novel_for_sync}
+    return post_discoveries(api_base, discoveries)
+
+
+def post_dynamic_discoveries(
+    api_base: str,
+    novel_for_sync: dict[str, list[dict[str, Any]]],
+) -> dict[str, Any]:
+    """
+    POST per-window dynamic discoveries (motion, lighting, composition, graphics, temporal, technical)
+    to /api/knowledge/discoveries. Only sends keys that have at least one entry.
+    """
+    dynamic_keys = ("motion", "time", "lighting", "composition", "graphics", "temporal", "technical", "audio_semantic")
+    discoveries: dict[str, list[dict[str, Any]]] = {
+        k: novel_for_sync.get(k, []) for k in dynamic_keys if novel_for_sync.get(k)
+    }
+    if not discoveries:
+        return {}
+    return post_discoveries(api_base, discoveries)
 
 
 def grow_and_sync_to_api(

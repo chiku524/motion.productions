@@ -56,21 +56,29 @@ MODIFIERS_BASE = (
 MODIFIERS_BASE = [m for m in MODIFIERS_BASE if m not in SUBJECTS_BASE]
 MODIFIERS_BASE = list(dict.fromkeys(MODIFIERS_BASE))  # dedupe preserve order
 
-# Templates: single and multi-modifier for larger combination space
+# Templates: single, double, and triple modifier for maximum variety (interpretation workflow)
 TEMPLATES_SINGLE = [
     "{subject}",
     "{subject}, {modifier}",
     "{subject} {modifier}",
     "{modifier} {subject}",
     "{subject} with {modifier}",
+    "{modifier} atmosphere {subject}",
 ]
 TEMPLATES_DOUBLE = [
     "{subject}, {mod1} and {mod2}",
     "{subject} {mod1} {mod2}",
     "{mod1} {subject} {mod2}",
     "{subject} with {mod1} and {mod2}",
+    "{mod1}, {mod2} {subject}",
+    "{subject} in {mod1} {mod2} style",
 ]
-TEMPLATES_ALL = TEMPLATES_SINGLE + TEMPLATES_DOUBLE
+TEMPLATES_TRIPLE = [
+    "{subject} with {mod1}, {mod2} and {mod3}",
+    "{mod1} {mod2} {subject} {mod3}",
+    "{subject} — {mod1}, {mod2}, {mod3}",
+]
+TEMPLATES_ALL = TEMPLATES_SINGLE + TEMPLATES_DOUBLE + TEMPLATES_TRIPLE
 
 
 def _expand_from_knowledge(knowledge: dict[str, Any] | None) -> tuple[list[str], list[str]]:
@@ -160,25 +168,54 @@ def generate_procedural_prompt(
     if not sub_pool or not mod_pool:
         return None
 
-    # Try random combinations (more attempts for larger space)
-    max_attempts = 150
+    # Prefer modifiers that map to different palettes/motion (wider interpretation spread)
+    def _pick_diverse_mods(n: int) -> list[str]:
+        chosen: list[str] = []
+        pool = list(mod_pool)
+        for _ in range(n):
+            if not pool:
+                break
+            candidates = [m for m in pool if m not in chosen] or pool
+            m = random.choice(candidates)
+            chosen.append(m)
+        return chosen
+
+    max_attempts = 200
     for _ in range(max_attempts):
         sub = random.choice(sub_pool)
-        mod1 = random.choice(mod_pool)
-        mod2 = random.choice(mod_pool) if len(mod_pool) > 1 else mod1
+        mods = _pick_diverse_mods(3)
+        mod1 = mods[0] if mods else random.choice(mod_pool)
+        mod2 = mods[1] if len(mods) > 1 else mod1
+        mod3 = mods[2] if len(mods) > 2 else mod2
 
-        # Pick template (single vs double modifier)
-        use_double = random.random() < 0.35 and mod1 != mod2
-        templates = TEMPLATES_DOUBLE if use_double else TEMPLATES_SINGLE
-        tmpl = random.choice(templates)
-
-        try:
-            if "mod2" in tmpl:
+        # Pick template: 40% double, 25% triple (when we have 3 distinct), 35% single — more variety
+        r = random.random()
+        if r < 0.25 and len(mod_pool) >= 3 and mod1 != mod2 and mod2 != mod3 and mod1 != mod3:
+            templates = TEMPLATES_TRIPLE
+            tmpl = random.choice(templates)
+            try:
+                prompt = tmpl.format(subject=sub, mod1=mod1, mod2=mod2, mod3=mod3)
+            except (KeyError, ValueError):
+                prompt = f"{sub}, {mod1}, {mod2} and {mod3}"
+        elif r < 0.65 and mod1 != mod2:
+            templates = TEMPLATES_DOUBLE
+            tmpl = random.choice(templates)
+            try:
                 prompt = tmpl.format(subject=sub, mod1=mod1, mod2=mod2)
-            else:
-                prompt = tmpl.format(subject=sub, modifier=mod1)
-        except (KeyError, ValueError):
-            prompt = f"{sub}, {mod1}"
+            except (KeyError, ValueError):
+                prompt = f"{sub}, {mod1} and {mod2}"
+        else:
+            templates = TEMPLATES_SINGLE
+            tmpl = random.choice(templates)
+            try:
+                if "mod2" in tmpl:
+                    prompt = tmpl.format(subject=sub, mod1=mod1, mod2=mod2)
+                elif "modifier" in tmpl:
+                    prompt = tmpl.format(subject=sub, modifier=mod1)
+                else:
+                    prompt = tmpl.format(subject=sub)
+            except (KeyError, ValueError):
+                prompt = f"{sub}, {mod1}"
 
         if prompt and prompt not in avoid:
             return prompt

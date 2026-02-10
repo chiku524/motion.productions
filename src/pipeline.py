@@ -56,8 +56,8 @@ def generate_full_video(
             seed=seed,
             config=config,
         )
-        # Phase 6: optional audio mix
-        output_path = _maybe_add_audio(output_path, config, prompt)
+        # Phase 6: mandatory audio (every mp4 has an audio track)
+        output_path = _add_audio(output_path, config, prompt)
         return output_path
 
     # Long-form: segments with temporal continuation, then concat
@@ -97,8 +97,8 @@ def generate_full_video(
 
     concat_segments(segment_paths, output_path)
 
-    # Phase 6: optional audio mix
-    output_path = _maybe_add_audio(output_path, config, effective_prompt)
+    # Phase 6: mandatory audio (every mp4 has an audio track)
+    output_path = _add_audio(output_path, config, effective_prompt)
 
     # Optional: remove segment files to save space (keep for debugging initially)
     # for p in segment_paths:
@@ -107,45 +107,80 @@ def generate_full_video(
     return output_path
 
 
-def _maybe_add_audio(
+def _add_audio(
     output_path: Path,
     config: dict[str, Any],
     prompt: str,
     *,
     instruction: Any = None,
 ) -> Path:
-    """Optionally add procedural audio if config enables it. Uses audio origins: mood, tempo, presence."""
-    audio_cfg = config.get("audio", {}) or {}
-    if not audio_cfg.get("add", False):
-        return output_path
+    """Always add procedural audio to the video. Uses audio origins: mood, tempo, presence.
+    Failures (missing pydub/ffmpeg or mix errors) are logged and re-raised; no silent skip."""
+    import logging
+    logger = logging.getLogger(__name__)
     try:
         from .audio import mix_audio_to_video
-        mood = "neutral"
-        tempo = "medium"
-        presence = "ambient"
-        if instruction is not None:
-            mood = getattr(instruction, "audio_mood", None) or "neutral"
-            tempo = getattr(instruction, "audio_tempo", None) or "medium"
-            presence = getattr(instruction, "audio_presence", None) or "ambient"
-        elif prompt:
-            try:
-                from .interpretation import interpret_user_prompt
-                inst = interpret_user_prompt(prompt, default_duration=6)
-                mood = getattr(inst, "audio_mood", None) or "neutral"
-                tempo = getattr(inst, "audio_tempo", None) or "medium"
-                presence = getattr(inst, "audio_presence", None) or "ambient"
-            except Exception:
-                if any(w in prompt.lower() for w in ("moody", "noir", "dark")):
-                    mood = "moody"
+    except ImportError as e:
+        logger.error("Audio requires pydub. pip install pydub — not skipping audio.", exc_info=True)
+        raise RuntimeError(
+            "Audio is mandatory but pydub could not be imported. Install with: pip install pydub"
+        ) from e
+
+    mood = "neutral"
+    tempo = "medium"
+    presence = "ambient"
+    if instruction is not None:
+        mood = getattr(instruction, "audio_mood", None) or "neutral"
+        tempo = getattr(instruction, "audio_tempo", None) or "medium"
+        presence = getattr(instruction, "audio_presence", None) or "ambient"
+    elif prompt:
+        try:
+            from .interpretation import interpret_user_prompt
+            inst = interpret_user_prompt(prompt, default_duration=6)
+            mood = getattr(inst, "audio_mood", None) or "neutral"
+            tempo = getattr(inst, "audio_tempo", None) or "medium"
+            presence = getattr(inst, "audio_presence", None) or "ambient"
+        except Exception as e:
+            logger.debug("Could not interpret prompt for audio params: %s — using defaults", e)
+            if any(w in prompt.lower() for w in ("moody", "noir", "dark")):
+                mood = "moody"
+
+    try:
         out = mix_audio_to_video(
             output_path, output_path=output_path,
             mood=mood, tempo=tempo, presence=presence,
         )
-        return Path(out)
-    except ImportError:
-        return output_path
-    except Exception:
-        return output_path
+        out_path = Path(out)
+        _verify_audio_track(out_path)
+        return out_path
+    except Exception as e:
+        logger.error(
+            "Adding audio to %s failed (mood=%s, tempo=%s, presence=%s): %s",
+            output_path, mood, tempo, presence, e,
+            exc_info=True,
+        )
+        raise
+
+
+def _verify_audio_track(video_path: Path) -> None:
+    """Verify the file has at least one audio stream. Raises RuntimeError if not (so we never upload video-only)."""
+    import subprocess
+    try:
+        r = subprocess.run(
+            [
+                "ffprobe", "-v", "error", "-show_entries", "stream=codec_type",
+                "-of", "default=noprint_wrappers=1:nokey=1", str(video_path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except FileNotFoundError:
+        return  # ffprobe missing; skip check
+    if r.returncode != 0:
+        raise RuntimeError(f"Video has no audio track or is invalid: ffprobe failed for {video_path}")
+    if "audio" not in (r.stdout or ""):
+        raise RuntimeError(f"Video has no audio stream: {video_path}. Pipeline must add audio before upload.")
 
 
 def _next_filename(config: dict[str, Any], default_prefix: str) -> str:

@@ -29,6 +29,8 @@ class VideoGenerator(ABC):
         conditioning_image_path: Path | None = None,
         seed: int | None = None,
         config: dict[str, Any] | None = None,
+        segment_index: int | None = None,
+        total_segments: int | None = None,
     ) -> Path:
         """
         Generate one clip and write to output_path.

@@ -1,43 +1,28 @@
 """
 Name reserve: mass amounts of unique names on reserve for new discoveries.
 Pre-generates a large pool; consumes on demand; refills when low.
+Uses the same English-like name generator as blend_names for consistency.
 """
 import json
 from pathlib import Path
 from typing import Any
 
-_CONSONANTS = "blckdrflgrklmnprstvzwxq"
-_VOWELS = "aeiou"
 _MIN_POOL_SIZE = 1000
 _DEFAULT_RESERVE_SIZE = 50000
 
 
-def _invent_word(seed: int) -> str:
-    """Invent a pronounceable word from seed."""
-    r = seed % 100000
-    parts = []
-    for _ in range(2, 4):
-        c = _CONSONANTS[r % len(_CONSONANTS)]
-        r //= len(_CONSONANTS)
-        v = _VOWELS[r % len(_VOWELS)]
-        r //= len(_VOWELS)
-        parts.append(c + v)
-    return "".join(parts)
-
-
 def _generate_batch(count: int, exclude: set[str], start_seed: int = 0) -> list[str]:
-    """Generate a batch of unique invented names."""
+    """Generate a batch of unique English-like names (same algorithm as blend_names._invent_word)."""
+    from .blend_names import _invent_word
+
     names: list[str] = []
     seen: set[str] = set(exclude)
     seed = start_seed
     attempts = 0
     max_attempts = count * 20
     while len(names) < count and attempts < max_attempts:
-        # Two-syllable + optional suffix
-        c1 = _invent_word(seed)
-        c2 = _invent_word(seed + 7919)
-        candidate = f"{c1}{c2}"
-        if len(candidate) >= 5 and candidate not in seen:
+        candidate = _invent_word(seed)
+        if len(candidate) >= 4 and candidate not in seen:
             names.append(candidate)
             seen.add(candidate)
         seed += 1237

@@ -102,8 +102,9 @@ def main() -> None:
         from src.learning import log_run
         from src.interpretation import interpret_user_prompt
         from src.creation import build_spec_from_instruction
+        from src.knowledge import grow_from_analysis
         instruction = interpret_user_prompt(args.prompt, default_duration=args.duration)
-        spec = build_spec_from_instruction(instruction)
+        spec = build_spec_from_instruction(instruction, knowledge=None)
         analysis = analyze_video(path)
         log_path = log_run(
             args.prompt,
@@ -112,7 +113,9 @@ def main() -> None:
             video_path=str(path),
             config=config,
         )
-        print(f"Logged for learning: {log_path}")
+        # Growth: add novel colors/motion to learned registry (the loop)
+        grown = grow_from_analysis(analysis.to_dict(), prompt=args.prompt, config=config)
+        print(f"Logged for learning: {log_path} (grown: {grown})")
 
 
 if __name__ == "__main__":

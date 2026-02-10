@@ -253,7 +253,12 @@ body {
 .result-label {
   font-size: 0.9375rem;
   color: var(--color-success);
-  margin-bottom: 1rem;
+  margin-bottom: 0.5rem;
+}
+.result-audio-hint {
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+  margin: 0 0 0.75rem 0;
 }
 .video-player {
   width: 100%;
@@ -450,6 +455,22 @@ body {
 .loop-slider-label {
   display: block;
   font-size: 0.8125rem;
+  color: var(--color-text-muted);
+  margin-top: 0.25rem;
+}
+.loop-select {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text-heading);
+  font-family: inherit;
+  font-size: 0.9375rem;
+}
+.loop-hint {
+  display: block;
+  font-size: 0.75rem;
   color: var(--color-text-muted);
   margin-top: 0.25rem;
 }

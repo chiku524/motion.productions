@@ -1,11 +1,34 @@
 """
 Registry: persisted learned knowledge. Grows from extraction.
 Stores novel colors, motion profiles, and documented blends with unique names.
+Single source of truth: one directory per deployment, one manifest listing all domains and value counts.
 """
 import json
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+# All domains in the registry; each has a file and a key within that file for counting values
+REGISTRY_DOMAINS = [
+    "color",
+    "motion",
+    "lighting",
+    "composition",
+    "graphics",
+    "temporal",
+    "technical",
+    "blends",
+]
+_REGISTRY_FILE_MAP = {
+    "color": ("learned_colors", "colors", lambda d: len(d.get("colors", {}))),
+    "motion": ("learned_motion", "profiles", lambda d: len(d.get("profiles", []))),
+    "lighting": ("learned_lighting", "profiles", lambda d: len(d.get("profiles", []))),
+    "composition": ("learned_composition", "profiles", lambda d: len(d.get("profiles", []))),
+    "graphics": ("learned_graphics", "profiles", lambda d: len(d.get("profiles", []))),
+    "temporal": ("learned_temporal", "profiles", lambda d: len(d.get("profiles", []))),
+    "technical": ("learned_technical", "profiles", lambda d: len(d.get("profiles", []))),
+    "blends": ("learned_blends", "blends", lambda d: len(d.get("blends", []))),
+}
 
 
 def get_registry_dir(config: dict[str, Any] | None = None) -> Path:
@@ -42,13 +65,90 @@ def load_registry(name: str, config: dict[str, Any] | None = None) -> dict[str, 
 
 
 def save_registry(name: str, data: dict[str, Any], config: dict[str, Any] | None = None) -> Path:
-    """Save a learned registry."""
+    """Save a learned registry and update the registry manifest."""
     reg_dir = get_registry_dir(config)
     reg_dir.mkdir(parents=True, exist_ok=True)
     path = _registry_path(reg_dir, name)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
+    _update_manifest(name, data, config)
     return path
+
+
+def _manifest_path(config: dict[str, Any] | None = None) -> Path:
+    """Path to the single registry manifest (lists every domain and value count)."""
+    return get_registry_dir(config) / "registry_manifest.json"
+
+
+def load_registry_manifest(config: dict[str, Any] | None = None) -> dict[str, Any]:
+    """
+    Load the registry manifest: one place listing every domain and its value count.
+    Structure: {"domains": {"color": {"file": "learned_colors.json", "count": N, "updated": "ISO"}, ...}, "updated": "ISO"}.
+    If manifest is missing, builds it from current registry files.
+    """
+    path = _manifest_path(config)
+    if path.exists():
+        try:
+            with open(path, encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            pass
+    return _refresh_manifest_from_disk(config)
+
+
+def _refresh_manifest_from_disk(config: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Build or refresh the manifest from all current registry files."""
+    now = datetime.utcnow().isoformat() + "Z"
+    domains: dict[str, Any] = {}
+    for domain, (file_name, _key, count_fn) in _REGISTRY_FILE_MAP.items():
+        reg = load_registry(file_name, config)
+        count = count_fn(reg)
+        domains[domain] = {"file": f"{file_name}.json", "count": count, "updated": now}
+    manifest = {"domains": domains, "updated": now}
+    get_registry_dir(config).mkdir(parents=True, exist_ok=True)
+    with open(_manifest_path(config), "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2, ensure_ascii=False)
+    return manifest
+
+
+def _update_manifest(updated_file_name: str, data: dict[str, Any], config: dict[str, Any] | None = None) -> None:
+    """Update manifest when a registry file is saved. updated_file_name is e.g. 'learned_colors' (no .json)."""
+    manifest = load_registry_manifest(config)
+    domains = manifest.get("domains", {})
+    now = datetime.utcnow().isoformat() + "Z"
+    for domain, (file_name, _key, count_fn) in _REGISTRY_FILE_MAP.items():
+        if file_name == updated_file_name:
+            domains[domain] = {
+                "file": f"{file_name}.json",
+                "count": count_fn(data),
+                "updated": now,
+            }
+            break
+    manifest["domains"] = domains
+    manifest["updated"] = now
+    path = _manifest_path(config)
+    get_registry_dir(config).mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2, ensure_ascii=False)
+
+
+def list_all_registry_values(config: dict[str, Any] | None = None) -> dict[str, list[dict[str, Any]]]:
+    """
+    Return every recorded value per domain. Clean, organized: domain -> list of value entries.
+    Each entry is the stored value (exact RGB, motion params, etc.) plus name/count/sources when present.
+    """
+    result: dict[str, list[dict[str, Any]]] = {d: [] for d in REGISTRY_DOMAINS}
+    for domain in REGISTRY_DOMAINS:
+        file_name, key, _ = _REGISTRY_FILE_MAP[domain]
+        reg = load_registry(file_name, config)
+        if domain == "color":
+            for k, v in reg.get("colors", {}).items():
+                result["color"].append({"key": k, **v})
+        elif domain == "blends":
+            result["blends"] = reg.get("blends", [])
+        else:
+            result[domain] = reg.get("profiles", [])
+    return result
 
 
 def _color_key(r: float, g: float, b: float, *, tolerance: int = 20) -> str:

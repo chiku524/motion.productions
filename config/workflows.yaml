@@ -1,20 +1,28 @@
 # Multi-workflow configurations for Railway / Render / local
-# Copy env vars per service when creating multiple workers
+# Copy env vars per service when creating multiple workers.
+#
+# INTENDED_LOOP dual-workflow design:
+#   - Workflow A (interpretation focus): ready for any user prompt; refine known-good.
+#   - Workflow B (growth focus): discovery; maximize new values in all three registries.
+# Both run the SAME full loop (interpret → create → render → extract → grow → sync).
+# The only difference is prompt selection: exploit (reuse good) vs explore (new combos).
+#
+# Mapping: Explorer = Workflow B focus. Exploiter = Workflow A focus. Balanced = mix.
 
 workflows:
   explorer:
-    description: 100% explore — broad discovery, maximizes variety
+    description: "Workflow B focus — 100% explore; broad discovery, maximizes registry growth"
     env:
       LOOP_EXPLOIT_RATIO_OVERRIDE: "0"
       API_BASE: https://motion.productions
 
   balanced:
-    description: Uses webapp config (default 70% exploit / 30% explore)
+    description: "Mixed — uses webapp config (default 70% exploit / 30% explore)"
     env:
       API_BASE: https://motion.productions
 
   exploiter:
-    description: 100% exploit — refines known-good prompts
+    description: "Workflow A focus — 100% exploit; refines known-good prompts"
     env:
       LOOP_EXPLOIT_RATIO_OVERRIDE: "1"
       API_BASE: https://motion.productions

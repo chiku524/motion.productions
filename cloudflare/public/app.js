@@ -62,6 +62,11 @@ function showResult(downloadUrl) {
   resultEl.hidden = false;
   feedbackUp?.classList.remove('feedback-given');
   feedbackDown?.classList.remove('feedback-given');
+  // Ensure video can play with sound (no muted attribute)
+  if (videoPlayer) {
+    videoPlayer.removeAttribute('muted');
+    videoPlayer.muted = false;
+  }
   logEvent('job_completed', currentJobId, { download_url: downloadUrl });
 }
 
@@ -177,7 +182,7 @@ async function loadLibrary() {
       const prompt = (job.prompt || '').slice(0, 80) + (job.prompt && job.prompt.length > 80 ? '…' : '');
       return `
         <article class="library-card">
-          <video class="library-video" src="${url}" controls playsinline preload="metadata"></video>
+          <video class="library-video" src="${url}" controls playsinline preload="metadata" data-has-audio="true"></video>
           <div class="library-card-body">
             <p class="library-prompt">${escapeHtml(prompt)}</p>
             <p class="library-meta">${formatDate(job.updated_at || job.created_at)}${job.duration_seconds ? ` · ${job.duration_seconds}s` : ''}</p>
@@ -230,6 +235,7 @@ let loopPollTimer = null;
 
 const loopEnabled = document.getElementById('loop-enabled');
 const loopStatusBadge = document.getElementById('loop-status-badge');
+const loopDuration = document.getElementById('loop-duration');
 const loopDelay = document.getElementById('loop-delay');
 const loopExploit = document.getElementById('loop-exploit');
 const loopExploitLabel = document.getElementById('loop-exploit-label');
@@ -253,7 +259,10 @@ function formatLoopDate(iso) {
 async function loadLoopStatus() {
   try {
     const res = await fetch(`${API_BASE}/api/loop/status`);
-    const data = await res.json();
+    const text = await res.text();
+    if (text.trimStart().startsWith('<')) throw new Error('API unavailable');
+    let data;
+    try { data = JSON.parse(text); } catch { throw new Error('Invalid response'); }
     if (!res.ok) throw new Error(data.error || 'Failed to load loop status');
 
     const cfg = data.config || {};
@@ -261,6 +270,11 @@ async function loadLoopStatus() {
     loopStatusBadge.textContent = cfg.enabled !== false ? 'Running' : 'Paused';
     loopStatusBadge.className = 'loop-badge ' + (cfg.enabled !== false ? 'running' : 'paused');
 
+    const durationSec = typeof cfg.duration_seconds === 'number' ? Math.max(1, Math.min(60, cfg.duration_seconds)) : 1;
+    if (loopDuration) {
+      loopDuration.value = String(durationSec);
+      if (![1,2,3,5,6,10,15,30].includes(durationSec)) loopDuration.value = '1';
+    }
     loopDelay.value = typeof cfg.delay_seconds === 'number' ? cfg.delay_seconds : 30;
     const ratio = typeof cfg.exploit_ratio === 'number' ? cfg.exploit_ratio : 0.7;
     loopExploit.value = Math.round(ratio * 100);
@@ -317,6 +331,7 @@ loopExploit?.addEventListener('input', () => {
 
 loopSave?.addEventListener('click', async () => {
   const enabled = loopEnabled.checked;
+  const duration_seconds = Math.max(1, Math.min(60, parseInt(loopDuration?.value || '1', 10) || 1));
   const delay_seconds = Math.max(0, Math.min(600, parseInt(loopDelay.value, 10) || 30));
   const exploit_ratio = Math.max(0, Math.min(1, parseInt(loopExploit.value, 10) / 100));
 
@@ -333,9 +348,12 @@ loopSave?.addEventListener('click', async () => {
     const res = await fetch(`${API_BASE}/api/loop/config`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled, delay_seconds, exploit_ratio }),
+      body: JSON.stringify({ enabled, duration_seconds, delay_seconds, exploit_ratio }),
     });
-    const data = await res.json();
+    const text = await res.text();
+    if (text.trimStart().startsWith('<')) throw new Error('Server returned a page instead of data. The API may be misconfigured or the loop config endpoint is not available.');
+    let data;
+    try { data = JSON.parse(text); } catch { throw new Error('Invalid response from server. Try again or check the API.'); }
     if (!res.ok) throw new Error(data.error || 'Failed to save config');
     loopSave.textContent = 'Saved';
     loopSave.classList.remove('btn-saving');
@@ -363,7 +381,10 @@ loopEnabled?.addEventListener('change', async () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ enabled }),
     });
-    const data = await res.json();
+    const text = await res.text();
+    if (text.trimStart().startsWith('<')) throw new Error('Server returned a page instead of data. The API may be misconfigured.');
+    let data;
+    try { data = JSON.parse(text); } catch { throw new Error('Invalid response from server.'); }
     if (!res.ok) throw new Error(data.error || 'Failed to update');
     loopStatusBadge.textContent = enabled ? 'Running' : 'Paused';
     loopStatusBadge.className = 'loop-badge ' + (enabled ? 'running' : 'paused');

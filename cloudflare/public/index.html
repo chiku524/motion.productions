@@ -80,6 +80,9 @@
             <div class="field">
               <label class="label" for="duration">Duration (seconds)</label>
               <select id="duration" name="duration" class="select">
+                <option value="1">1s (learning)</option>
+                <option value="2">2s</option>
+                <option value="3">3s</option>
                 <option value="5">5s</option>
                 <option value="6" selected>6s</option>
                 <option value="10">10s</option>
@@ -105,6 +108,7 @@
 
         <div id="result" class="result" hidden>
           <p class="result-label">Your video is ready</p>
+          <p class="result-audio-hint" id="result-audio-hint">Videos include procedural audio — use the speaker control on the player to unmute if needed.</p>
           <video id="video-player" class="video-player" controls playsinline></video>
           <div class="result-actions">
             <a id="download-link" class="btn btn-secondary" download>Download</a>
@@ -122,7 +126,7 @@
       <section class="loop motion-fade-in-up" id="loop-section">
         <div class="loop-header">
           <h2 class="loop-title">Automated loop</h2>
-          <p class="loop-sub">Control the continuous generation loop running on Railway — these settings apply live.</p>
+          <p class="loop-sub">Control the continuous learning loop. Each run records color, motion, and narrative into registries — settings apply live to workers (e.g. Railway).</p>
         </div>
         <div class="loop-controls">
           <div class="loop-toggle-row">
@@ -137,11 +141,25 @@
           </div>
           <div class="loop-fields">
             <div class="loop-field">
+              <label class="label" for="loop-duration">Video duration per run (sec)</label>
+              <select id="loop-duration" class="loop-select">
+                <option value="1">1s (learning-optimized)</option>
+                <option value="2">2s</option>
+                <option value="3">3s</option>
+                <option value="5">5s</option>
+                <option value="6">6s</option>
+                <option value="10">10s</option>
+                <option value="15">15s</option>
+                <option value="30">30s</option>
+              </select>
+              <span class="loop-hint">Shorter = more prompts per hour; 1s is best for filling registries.</span>
+            </div>
+            <div class="loop-field">
               <label class="label" for="loop-delay">Pace (delay between runs, sec)</label>
               <input type="number" id="loop-delay" min="0" max="600" step="5" value="30" class="loop-input">
             </div>
             <div class="loop-field">
-              <label class="label" for="loop-exploit">Exploit / Explore ratio (0–100%)</label>
+              <label class="label" for="loop-exploit">Exploit / Explore (0–100%)</label>
               <input type="range" id="loop-exploit" min="0" max="100" value="70" class="loop-slider">
               <span id="loop-exploit-label" class="loop-slider-label">70% exploit</span>
             </div>
@@ -178,7 +196,7 @@
       <section class="about">
         <p class="about-text">
           Motion uses our own procedural engine — algorithms and data we built. No Runway, no Replicate, no external APIs.
-          The system learns from your usage to improve over time.
+          Each run feeds static (color, sound per frame), dynamic (motion, palettes per window), and narrative (themes, settings) registries so the system learns and improves over time.
         </p>
       </section>
     </main>

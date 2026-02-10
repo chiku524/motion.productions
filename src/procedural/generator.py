@@ -1,6 +1,7 @@
 """
 Procedural video generator: implements VideoGenerator using interpretation + creation + renderer.
 No external "model" — only our algorithms and data. Writes frames to video with a minimal encoder.
+Supports SceneScript (multi-shot with transitions and pacing). Phase 2.
 """
 from pathlib import Path
 from typing import Any
@@ -8,6 +9,7 @@ from typing import Any
 from ..video_generator.base import VideoGenerator
 from .parser import SceneSpec
 from .renderer import render_frame
+from ..cinematography import SceneScript
 
 
 class ProceduralVideoGenerator(VideoGenerator):
@@ -22,14 +24,22 @@ class ProceduralVideoGenerator(VideoGenerator):
         width: int = 512,
         height: int = 512,
         fps: int = 24,
+        config: dict | None = None,
     ):
-        self.width = width
-        self.height = height
-        self.fps = fps
+        from ..config import resolve_output_config
+        cfg = config or {}
+        out = resolve_output_config(cfg)
+        self.width = out.get("width", width) or width
+        self.height = out.get("height", height) or height
+        self.fps = out.get("fps", fps) or fps
+        self._config = config
 
     def max_clip_seconds(self) -> float:
-        # We can generate any length; pipeline uses this for "single call" vs segmenting.
-        return 600.0  # 10 min as "one clip" so we always do one full video in one go
+        # Pipeline uses this for "single call" vs segmenting. Long-form = multiple segments.
+        if self._config:
+            v = self._config.get("video", {})
+            return float(v.get("max_single_clip_seconds", 15))
+        return 15.0
 
     def generate_clip(
         self,
@@ -40,6 +50,8 @@ class ProceduralVideoGenerator(VideoGenerator):
         conditioning_image_path: Path | None = None,
         seed: int | None = None,
         config: dict[str, Any] | None = None,
+        segment_index: int | None = None,
+        total_segments: int | None = None,
     ) -> Path:
         # Conditioning is for temporal continuation; procedural engine ignores it for now
         # (we could use it later to match last frame color/mood)
@@ -73,8 +85,17 @@ class ProceduralVideoGenerator(VideoGenerator):
 
         from ..interpretation import interpret_user_prompt
         from ..creation import build_spec_from_instruction
+        from ..creation.scene_script import build_scene_script_from_instruction, spec_from_shot
+        from ..knowledge import get_knowledge_for_creation
         instruction = interpret_user_prompt(prompt, default_duration=duration_seconds)
-        spec = build_spec_from_instruction(instruction, knowledge=None)
+        knowledge = get_knowledge_for_creation(config)
+        base_spec = build_spec_from_instruction(instruction, knowledge=knowledge)
+        scene_script = build_scene_script_from_instruction(
+            instruction,
+            duration_seconds=duration_seconds,
+            segment_index=segment_index,
+            total_segments=total_segments,
+        )
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         if output_path.suffix == "":
@@ -95,11 +116,55 @@ class ProceduralVideoGenerator(VideoGenerator):
             codec="libx264",
             quality=8,
         )
-        fps = float(fps)  # ensure scalar before division
+        fps_val = float(fps)
+        trans_duration = 0.5
+        from ..cinematography.transitions import apply_transition
+
+        # Cumulative shot end times (seconds)
+        shot_end_times: list[float] = []
+        acc = 0.0
+        for s in scene_script.shots:
+            acc += s.duration_seconds
+            shot_end_times.append(acc)
+
         try:
             for i in range(num_frames):
-                t = i / fps
-                frame = render_frame(spec, t, width, height, seed=seed)
+                t_global = i / fps_val
+                shot_index = 0
+                for k, end in enumerate(shot_end_times):
+                    if t_global < end:
+                        shot_index = k
+                        break
+                if t_global >= shot_end_times[-1]:
+                    shot_index = len(scene_script.shots) - 1
+
+                shot = scene_script.shots[shot_index]
+                t_local = t_global - (shot_end_times[shot_index - 1] if shot_index > 0 else 0)
+                pacing = getattr(shot, "pacing", 1.0) or 1.0
+                t_local *= pacing  # Pacing: faster = more motion per second
+                spec = spec_from_shot(base_spec, shot)
+                frame = render_frame(
+                    spec, t_local, width, height, seed=seed,
+                    duration_seconds=duration_seconds,
+                )
+
+                # Transitions at shot boundaries
+                shot_start = shot_end_times[shot_index - 1] if shot_index > 0 else 0.0
+                shot_end = shot_end_times[shot_index]
+                shot_elapsed = t_global - shot_start
+
+                is_first_frames = shot_elapsed < trans_duration
+                is_last_frames = (shot_end - t_global) < trans_duration
+
+                if is_first_frames and shot.transition_in != "cut":
+                    frame = apply_transition(
+                        frame, shot_elapsed, trans_duration, shot.transition_in, is_in=True
+                    )
+                elif is_last_frames and shot.transition_out != "cut":
+                    t_out = trans_duration - (shot_end - t_global)
+                    frame = apply_transition(
+                        frame, t_out, trans_duration, shot.transition_out, is_in=False
+                    )
                 writer.append_data(frame)
         finally:
             writer.close()

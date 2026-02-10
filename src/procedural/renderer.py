@@ -1,6 +1,6 @@
 """
 Procedural frame renderer: spec + time → pixels. Our algorithms only — no external model.
-Supports multiple gradient types (vertical, radial, angled, horizontal) and camera motion.
+Supports gradients, camera motion, shot types, lighting presets.
 """
 from typing import TYPE_CHECKING
 
@@ -12,6 +12,18 @@ from .parser import SceneSpec
 
 if TYPE_CHECKING:
     pass
+
+try:
+    from ..cinematography.shot_types import get_shot_params
+except ImportError:
+    def get_shot_params(_: str):
+        return 1.0, 0.1, 0.0
+
+try:
+    from ..lighting.grading import apply_lighting_preset
+except ImportError:
+    def apply_lighting_preset(fr: "np.ndarray", _: str):
+        return fr
 
 
 def _apply_camera_transform(
@@ -60,15 +72,30 @@ def render_frame(
     height: int,
     *,
     seed: int = 0,
+    duration_seconds: float | None = None,
 ) -> "np.ndarray":
     """
     Generate one RGB frame (H, W, 3) uint8 from our procedural algorithms.
     Supports vertical, radial, angled, horizontal gradients and camera motion (zoom, pan, rotate).
+    Uses values from primitive blending: palette_colors (blended RGB) is primary;
+    palette_name is fallback only when palette_colors is missing (e.g. legacy specs).
     """
-    palette = PALETTES.get(spec.palette_name, PALETTES["default"])
+    palette = getattr(spec, "palette_colors", None)
+    if not palette:
+        palette = PALETTES.get(spec.palette_name, PALETTES["default"])
     motion_fn = get_motion_func(spec.motion_type)
     motion_val = motion_fn(t)
     intensity = max(0.1, min(1.0, spec.intensity))
+    # Phase 5: tension curve modulates intensity when duration known
+    if duration_seconds and duration_seconds > 0:
+        try:
+            from ..narrative.story import get_tension_at
+            t_norm = min(1.0, t / duration_seconds)
+            tension = get_tension_at(t_norm)
+            intensity = intensity * (0.7 + 0.3 * tension)
+            intensity = max(0.1, min(1.0, intensity))
+        except ImportError:
+            pass
     gradient_type = getattr(spec, "gradient_type", "vertical") or "vertical"
     camera_motion = getattr(spec, "camera_motion", "static") or "static"
 
@@ -77,8 +104,15 @@ def render_frame(
     x = np.linspace(0, 1, width, dtype=np.float32)
     xx, yy = np.meshgrid(x, y)
 
-    # Apply camera motion
+    # Shot type affects base zoom
+    shot_type = getattr(spec, "shot_type", "medium") or "medium"
+    shot_zoom, _, handheld = get_shot_params(shot_type)
     zoom, pan_x, pan_y, rotate = get_camera_params(camera_motion, t)
+    zoom = zoom * shot_zoom
+    if handheld > 0:
+        shake = np.sin(t * 23.7) * handheld * 0.02
+        pan_x += shake
+        pan_y += np.sin(t * 17.3) * handheld * 0.02
     xx, yy = _apply_camera_transform(xx, yy, zoom, pan_x, pan_y, rotate)
 
     # Compute gradient value per pixel
@@ -127,4 +161,30 @@ def render_frame(
         b = np.clip(b * (1 - alpha) + cb * alpha, 0, 255)
 
     frame = np.stack([r, g, b], axis=-1).astype(np.uint8)
+
+    # Lighting / color grading (Phase 3)
+    lighting_preset = getattr(spec, "lighting_preset", "neutral") or "neutral"
+    frame = apply_lighting_preset(frame, lighting_preset)
+
+    # Text overlay (Phase 4)
+    text_overlay = getattr(spec, "text_overlay", None)
+    if text_overlay:
+        try:
+            from ..graphics.text import render_text_overlay
+            text_pos = getattr(spec, "text_position", "center") or "center"
+            frame = render_text_overlay(
+                frame, text_overlay, position=text_pos, font_size=44
+            )
+        except ImportError:
+            pass
+
+    # Depth parallax (Phase 7) - after text so base is fully composed
+    depth_parallax = getattr(spec, "depth_parallax", False)
+    if depth_parallax:
+        try:
+            from ..depth.parallax import apply_parallax
+            frame = apply_parallax(frame, t, depth_layers=3, motion_scale=0.05)
+        except ImportError:
+            pass
+
     return frame

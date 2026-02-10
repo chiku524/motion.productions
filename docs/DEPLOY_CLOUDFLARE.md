@@ -22,10 +22,12 @@ You can also trigger a deploy manually from **Actions → Deploy to Cloudflare �
 - **D1** — SQL database:
   - `jobs` — prompt, status, R2 key (video storage reference).
   - `learning_runs` — logged runs for learning (prompt, spec, analysis).
-  - `learned_blends`, `learned_colors`, `learned_motion`, `learned_lighting`, `learned_composition`, `learned_graphics`, `learned_temporal`, `learned_technical` — discoveries (blends, primitive depths, names) from the intended loop.
+  - **Static registry (per frame):** `static_colors`, `static_sound` — per-frame color and sound discoveries.
+  - **Dynamic registry (per window / whole-video):** `learned_blends`, `learned_colors`, `learned_motion`, `learned_lighting`, `learned_composition`, `learned_graphics`, `learned_temporal`, `learned_technical` — discoveries from the intended loop.
+  - **Narrative registry:** `narrative_entries` — themes, plots, settings, genre, mood, scene_type (film aspects).
   - `name_reserve` — used names for uniqueness.
 - **R2** — Bucket for stored video files (`jobs/{id}/video.mp4`).
-- **KV** — Cached learning stats (`learning:stats`, 5-min TTL) for fast aggregation reads.
+- **KV** — Cached learning stats (`learning:stats`, 60s TTL) for fast aggregation reads. **Optimization:** We do not use KV *delete* operations (free tier limit: 1000/day). Cache is invalidated by TTL only; GET recomputes when stale.
 
 ## Prerequisites
 
@@ -65,16 +67,24 @@ Copy the **database_id** from the output and add it to `cloudflare/wrangler.json
 
 ### 3. Apply D1 migrations
 
-Run migrations against the **remote** database (use the same database name as in your config):
+Migrations apply **all** pending migration files (current and any added in the future). From the **project root**:
 
 ```bash
-npx wrangler d1 migrations apply motion-productions-db --remote
+# Remote (production)
+python scripts/run_d1_migrations.py
+# or: bash scripts/run_d1_migrations.sh
+
+# Local (development)
+python scripts/run_d1_migrations.py --local
+# or: bash scripts/run_d1_migrations.sh --local
 ```
 
-If you use a **local** D1 for development:
+Or run Wrangler directly from the **`cloudflare/`** directory:
 
 ```bash
-npx wrangler d1 migrations apply motion-productions-db --local
+cd cloudflare
+npx wrangler d1 migrations apply motion-productions-db --remote
+npx wrangler d1 migrations apply motion-productions-db --local   # for local D1
 ```
 
 ### 4. Deploy the Worker
@@ -109,6 +119,7 @@ The Worker serves the app UI at **https://motion.productions** — prompt input,
 - **GET /api/jobs?status=pending** — List pending jobs (for the generator bridge).
 - **POST /api/learning** — Log a run for learning (D1). Body: `{ job_id?, prompt, spec, analysis }`.
 - **POST /api/knowledge/discoveries** — Record discoveries to D1 (colors, blends with primitive depths, motion, lighting, etc.). Called by generate_bridge/automate_loop when `--learn` is used.
+- **GET /api/knowledge/for-creation** — Fetch learned colors and motion for the next loop iteration. Used by creation to refine parameters from cloud-stored discoveries.
 - **POST /api/knowledge/name/take** — Reserve a unique name for a discovery.
 - **GET /api/knowledge/colors?key=...** — Check if color key exists.
 - **GET /api/learning/runs** — List learning runs (optional `?limit=100`).

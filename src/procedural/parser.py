@@ -46,10 +46,13 @@ from .data import (
 
 @dataclass
 class SceneSpec:
-    """Result of parsing a prompt: palette, motion, intensity, gradient, camera, etc."""
+    """Result of parsing a prompt: palette, motion, intensity, gradient, camera, etc.
+    INTENDED_LOOP: palette_colors from blending primitives + learned; else palette_name lookup.
+    """
     palette_name: str
     motion_type: str
     intensity: float
+    palette_colors: list[tuple[int, int, int]] | None = None  # blended from primitives + learned
     raw_prompt: str
     gradient_type: str = "vertical"   # vertical | radial | angled | horizontal
     camera_motion: str = "static"     # static | zoom | zoom_out | pan | rotate
@@ -75,22 +78,50 @@ class SceneSpec:
 def parse_prompt_to_spec(prompt: str, *, seed: int | None = None) -> SceneSpec:
     """
     Turn a text prompt into a scene specification using only our keyword tables.
-    No external model — pure lookup and rules.
+    Blends at primitive level: all matching palette/motion keywords → single blended value.
     """
+    from .data.palettes import PALETTES
+    from ..knowledge.blending import blend_palettes, blend_motion_params
+
     prompt = (prompt or "").strip().lower()
     words = set(re.findall(r"[a-z]+", prompt))
 
-    palette = DEFAULT_PALETTE
+    # Collect all palette and motion hints (primitive-level blending)
+    palette_hints: list[str] = []
+    seen_p: set[str] = set()
     for w in words:
         if w in KEYWORD_TO_PALETTE:
-            palette = KEYWORD_TO_PALETTE[w]
-            break
+            p = KEYWORD_TO_PALETTE[w]
+            if p not in seen_p:
+                palette_hints.append(p)
+                seen_p.add(p)
+    if not palette_hints:
+        palette_hints = [DEFAULT_PALETTE]
 
-    motion = DEFAULT_MOTION
+    motion_hints: list[str] = []
+    seen_m: set[str] = set()
     for w in words:
         if w in KEYWORD_TO_MOTION:
-            motion = KEYWORD_TO_MOTION[w]
-            break
+            m = KEYWORD_TO_MOTION[w]
+            if m not in seen_m:
+                motion_hints.append(m)
+                seen_m.add(m)
+    if not motion_hints:
+        motion_hints = [DEFAULT_MOTION]
+
+    # Blend palette primitives → single palette_colors
+    result = list(PALETTES.get(palette_hints[0], PALETTES["default"]))
+    for name in palette_hints[1:]:
+        other = PALETTES.get(name, PALETTES["default"])
+        result = blend_palettes(result, other, weight=0.5)
+    palette_colors = result
+
+    # Blend motion primitives → single motion_type
+    motion = motion_hints[0]
+    for hint in motion_hints[1:]:
+        motion = blend_motion_params(motion, hint, weight=0.5)
+
+    palette = palette_hints[0]  # for palette_name (label/fallback)
 
     intensity = DEFAULT_INTENSITY
     for w in words:
@@ -187,6 +218,7 @@ def parse_prompt_to_spec(prompt: str, *, seed: int | None = None) -> SceneSpec:
     return SceneSpec(
         palette_name=palette,
         motion_type=motion,
+        palette_colors=palette_colors,
         intensity=float(intensity),
         raw_prompt=prompt,
         gradient_type=gradient,

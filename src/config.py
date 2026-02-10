@@ -41,7 +41,6 @@ def _defaults() -> dict[str, Any]:
             "quality": None,
         },
         "video": {"max_single_clip_seconds": 15},
-        "audio": {"add": True},
         "prompt": {"enrich": False},
     }
 

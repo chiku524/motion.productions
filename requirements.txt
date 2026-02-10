@@ -10,6 +10,8 @@ requests>=2.28.0  # HTTP client (better Cloudflare compatibility than urllib)
 numpy>=1.24.0
 imageio>=2.31.0
 imageio-ffmpeg>=0.4.9
+Pillow>=10.0.0  # Text and graphics overlays (Phase 4)
+pydub>=0.25.0   # Audio: music, SFX, mix (Phase 6)
 
 # FFmpeg: for encoding (imageio-ffmpeg) and for concat of segments if needed.
 # Install separately: winget install FFmpeg / brew install ffmpeg / apt install ffmpeg

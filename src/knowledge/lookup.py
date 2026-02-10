@@ -3,9 +3,12 @@ Lookup: build knowledge dict for creation from aggregate + learned registries.
 Creation uses this to refine parameters from origins + learned values.
 When api_base is set, fetches from D1 via API to utilize cloud-stored discoveries.
 """
+import logging
 from typing import Any
 
 from .registry import load_registry
+
+logger = logging.getLogger(__name__)
 
 
 def get_knowledge_for_creation(
@@ -27,13 +30,16 @@ def get_knowledge_for_creation(
     # Aggregate: prefer API learning/stats when api_base set, else local log
     if base:
         try:
-            from ..api_client import api_get
-            stats = api_get(base, "/api/learning/stats", timeout=15)
+            from ..api_client import api_request_with_retry
+            stats = api_request_with_retry(base, "GET", "/api/learning/stats", timeout=15)
             knowledge["by_keyword"] = stats.get("by_keyword", {})
             knowledge["by_palette"] = stats.get("by_palette", {})
             knowledge["overall"] = stats.get("overall", {})
-        except Exception:
-            pass
+        except Exception as e:
+            from ..api_client import APIError
+            if isinstance(e, APIError):
+                logger.warning("GET /api/learning/stats failed (status=%s): %s — using local log fallback", e.status_code, e)
+            # else: pass (e.g. no local log yet)
     if not knowledge.get("by_keyword"):
         try:
             log_path = get_log_path(config)
@@ -55,12 +61,15 @@ def get_knowledge_for_creation(
     # Learned colors, motion, and audio: prefer API when api_base set, else local
     if base:
         try:
-            from ..api_client import api_get
-            data = api_get(base, "/api/knowledge/for-creation", timeout=15)
+            from ..api_client import api_request_with_retry
+            data = api_request_with_retry(base, "GET", "/api/knowledge/for-creation", timeout=15)
             knowledge["learned_colors"] = data.get("learned_colors", {})
             knowledge["learned_motion"] = data.get("learned_motion", [])
             knowledge["learned_audio"] = data.get("learned_audio", [])
-        except Exception:
+        except Exception as e:
+            from ..api_client import APIError
+            if isinstance(e, APIError):
+                logger.warning("GET /api/knowledge/for-creation failed (status=%s): %s — using local registries", e.status_code, e)
             knowledge["learned_colors"] = {}
             knowledge["learned_motion"] = []
             knowledge["learned_audio"] = []

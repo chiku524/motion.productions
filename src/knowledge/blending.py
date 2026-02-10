@@ -291,6 +291,23 @@ def blend_contrast_ratio(
     return _ordinal_blend(order, ia, ib, weight, approach)
 
 
+# Order of lighting preset names for ordinal blending
+_LIGHTING_PRESET_ORDER = ["neutral", "documentary", "noir", "golden_hour", "neon", "moody"]
+
+
+def blend_lighting_preset_names(
+    preset_a: str,
+    preset_b: str,
+    *,
+    weight: float = 0.5,
+    approach: BlendApproach = "linear",
+) -> str:
+    """Blend two lighting preset names → single preset name (primitive-level)."""
+    ia = _LIGHTING_PRESET_ORDER.index(preset_a) if preset_a in _LIGHTING_PRESET_ORDER else 0
+    ib = _LIGHTING_PRESET_ORDER.index(preset_b) if preset_b in _LIGHTING_PRESET_ORDER else 0
+    return _ordinal_blend(_LIGHTING_PRESET_ORDER, ia, ib, weight, approach)
+
+
 def blend_lighting_presets(
     preset_a: str,
     preset_b: str,

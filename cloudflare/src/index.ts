@@ -223,7 +223,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       )
         .bind(id, jobId, prompt, JSON.stringify(spec), JSON.stringify(analysis))
         .run();
-      await env.MOTION_KV.delete("learning:stats");
+      // Do not use KV delete (free tier limit). Stats cache expires via TTL; GET recomputes when stale.
       return json({ id, job_id: jobId, status: "logged" }, 201);
     }
 
@@ -266,68 +266,85 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       return json({ ok: true });
     }
 
-    // GET /api/loop/config — user-controlled loop config (enabled, delay, exploit_ratio)
+    // GET /api/loop/config — user-controlled loop config (enabled, delay, exploit_ratio, duration_seconds)
     if (path === "/api/loop/config" && request.method === "GET") {
-      const raw = await env.MOTION_KV.get("loop_config");
-      const config = raw
-        ? (JSON.parse(raw) as { enabled?: boolean; delay_seconds?: number; exploit_ratio?: number })
-        : { enabled: true, delay_seconds: 30, exploit_ratio: 0.7 };
-      return json({
-        enabled: config.enabled !== false,
-        delay_seconds: typeof config.delay_seconds === "number" ? config.delay_seconds : 30,
-        exploit_ratio: typeof config.exploit_ratio === "number" ? config.exploit_ratio : 0.7,
-      });
+      try {
+        const raw = await env.MOTION_KV.get("loop_config");
+        const config = raw
+          ? (JSON.parse(raw) as { enabled?: boolean; delay_seconds?: number; exploit_ratio?: number; duration_seconds?: number })
+          : { enabled: true, delay_seconds: 30, exploit_ratio: 0.7, duration_seconds: 1 };
+        const duration = typeof config.duration_seconds === "number" ? config.duration_seconds : 1;
+        return json({
+          enabled: config.enabled !== false,
+          delay_seconds: typeof config.delay_seconds === "number" ? config.delay_seconds : 30,
+          exploit_ratio: typeof config.exploit_ratio === "number" ? config.exploit_ratio : 0.7,
+          duration_seconds: Math.max(1, Math.min(60, duration)),
+        });
+      } catch (e) {
+        return json({ error: "Failed to load loop config", details: String(e) }, 500);
+      }
     }
 
     // POST /api/loop/config — update loop config (controls Railway loop)
     if (path === "/api/loop/config" && request.method === "POST") {
-      let body: { enabled?: boolean; delay_seconds?: number; exploit_ratio?: number };
+      let body: { enabled?: boolean; delay_seconds?: number; exploit_ratio?: number; duration_seconds?: number };
       try {
         body = (await request.json()) as typeof body;
       } catch {
         return err("Invalid JSON");
       }
-      const raw = await env.MOTION_KV.get("loop_config");
-      const current = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
-      if (typeof body.enabled === "boolean") current.enabled = body.enabled;
-      if (typeof body.delay_seconds === "number") current.delay_seconds = Math.max(0, Math.min(600, body.delay_seconds));
-      if (typeof body.exploit_ratio === "number") current.exploit_ratio = Math.max(0, Math.min(1, body.exploit_ratio));
-      await env.MOTION_KV.put("loop_config", JSON.stringify(current));
-      return json({ ok: true, config: current });
+      try {
+        const raw = await env.MOTION_KV.get("loop_config");
+        const current = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+        if (typeof body.enabled === "boolean") current.enabled = body.enabled;
+        if (typeof body.delay_seconds === "number") current.delay_seconds = Math.max(0, Math.min(600, body.delay_seconds));
+        if (typeof body.exploit_ratio === "number") current.exploit_ratio = Math.max(0, Math.min(1, body.exploit_ratio));
+        if (typeof body.duration_seconds === "number") current.duration_seconds = Math.max(1, Math.min(60, body.duration_seconds));
+        await env.MOTION_KV.put("loop_config", JSON.stringify(current));
+        return json({ ok: true, config: current });
+      } catch (e) {
+        return json({ error: "Failed to save loop config", details: String(e) }, 500);
+      }
     }
 
     // GET /api/loop/status — config + state + recent activity for webapp display
     if (path === "/api/loop/status" && request.method === "GET") {
-      const configRaw = await env.MOTION_KV.get("loop_config");
-      const config = configRaw
-        ? (JSON.parse(configRaw) as { enabled?: boolean; delay_seconds?: number; exploit_ratio?: number })
-        : { enabled: true, delay_seconds: 30, exploit_ratio: 0.7 };
-      const stateRaw = await env.MOTION_KV.get("loop_state");
-      const state = stateRaw ? (JSON.parse(stateRaw) as Record<string, unknown>) : {};
-      const rows = await env.DB.prepare(
-        "SELECT id, prompt, duration_seconds, updated_at FROM jobs WHERE status = 'completed' AND r2_key IS NOT NULL ORDER BY updated_at DESC LIMIT 10"
-      )
-        .all<{ id: string; prompt: string; duration_seconds: number | null; updated_at: string }>();
-      const recent_runs = (rows.results || []).map((r) => ({
-        id: r.id,
-        prompt: (r.prompt || "").slice(0, 60) + ((r.prompt?.length ?? 0) > 60 ? "…" : ""),
-        duration_seconds: r.duration_seconds,
-        updated_at: r.updated_at,
-        download_url: `/api/jobs/${r.id}/download`,
-      }));
-      return json({
-        config: {
-          enabled: config.enabled !== false,
-          delay_seconds: typeof config.delay_seconds === "number" ? config.delay_seconds : 30,
-          exploit_ratio: typeof config.exploit_ratio === "number" ? config.exploit_ratio : 0.7,
-        },
-        run_count: typeof state.run_count === "number" ? state.run_count : 0,
-        good_prompts_count: Array.isArray(state.good_prompts) ? state.good_prompts.length : 0,
-        last_run_at: state.last_run_at ?? null,
-        last_prompt: state.last_prompt ?? null,
-        last_job_id: state.last_job_id ?? null,
-        recent_runs,
-      });
+      try {
+        const configRaw = await env.MOTION_KV.get("loop_config");
+        const config = configRaw
+          ? (JSON.parse(configRaw) as { enabled?: boolean; delay_seconds?: number; exploit_ratio?: number; duration_seconds?: number })
+          : { enabled: true, delay_seconds: 30, exploit_ratio: 0.7, duration_seconds: 1 };
+        const duration = typeof config.duration_seconds === "number" ? config.duration_seconds : 1;
+        const stateRaw = await env.MOTION_KV.get("loop_state");
+        const state = stateRaw ? (JSON.parse(stateRaw) as Record<string, unknown>) : {};
+        const rows = await env.DB.prepare(
+          "SELECT id, prompt, duration_seconds, updated_at FROM jobs WHERE status = 'completed' AND r2_key IS NOT NULL ORDER BY updated_at DESC LIMIT 10"
+        )
+          .all<{ id: string; prompt: string; duration_seconds: number | null; updated_at: string }>();
+        const recent_runs = (rows.results || []).map((r) => ({
+          id: r.id,
+          prompt: (r.prompt || "").slice(0, 60) + ((r.prompt?.length ?? 0) > 60 ? "…" : ""),
+          duration_seconds: r.duration_seconds,
+          updated_at: r.updated_at,
+          download_url: `/api/jobs/${r.id}/download`,
+        }));
+        return json({
+          config: {
+            enabled: config.enabled !== false,
+            delay_seconds: typeof config.delay_seconds === "number" ? config.delay_seconds : 30,
+            exploit_ratio: typeof config.exploit_ratio === "number" ? config.exploit_ratio : 0.7,
+            duration_seconds: Math.max(1, Math.min(60, duration)),
+          },
+          run_count: typeof state.run_count === "number" ? state.run_count : 0,
+          good_prompts_count: Array.isArray(state.good_prompts) ? state.good_prompts.length : 0,
+          last_run_at: state.last_run_at ?? null,
+          last_prompt: state.last_prompt ?? null,
+          last_job_id: state.last_job_id ?? null,
+          recent_runs,
+        });
+      } catch (e) {
+        return json({ error: "Failed to load loop status", details: String(e) }, 500);
+      }
     }
 
     // POST /api/events — log user interaction for learning
@@ -430,7 +447,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       return json({ id: fid, rating, status: "saved" }, 201);
     }
 
-    // GET /api/learning/stats — aggregated stats (KV cache, D1 fallback)
+    // GET /api/learning/stats — aggregated stats (KV cache; no deletes to stay within free tier)
     if (path === "/api/learning/stats" && request.method === "GET") {
       const cached = await env.MOTION_KV.get("learning:stats");
       if (cached) return json(JSON.parse(cached));
@@ -440,7 +457,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       )
         .all<{ prompt: string; spec_json: string; analysis_json: string }>();
       const report = aggregateLearningRuns(rows.results || []);
-      await env.MOTION_KV.put("learning:stats", JSON.stringify(report), { expirationTtl: 300 });
+      await env.MOTION_KV.put("learning:stats", JSON.stringify(report), { expirationTtl: 60 });
       return json(report);
     }
 
@@ -452,23 +469,77 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
     }
 
     // POST /api/knowledge/discoveries — batch record discoveries (D1)
+    // Supports: static_colors, static_sound (per-frame) + colors, blends, motion, etc. (dynamic/whole-video)
     if (path === "/api/knowledge/discoveries" && request.method === "POST") {
       let body: {
+        static_colors?: Array<{ key: string; r: number; g: number; b: number; brightness?: number; luminance?: number; contrast?: number; saturation?: number; chroma?: number; hue?: number; color_variance?: number; opacity?: number; source_prompt?: string; name?: string }>;
+        static_sound?: Array<{ key: string; amplitude?: number; weight?: number; tone?: string; timbre?: string; source_prompt?: string; name?: string }>;
         colors?: Array<{ key: string; r: number; g: number; b: number; source_prompt?: string }>;
         blends?: Array<{ name: string; domain: string; inputs: Record<string, unknown>; output: Record<string, unknown>; primitive_depths?: Record<string, unknown>; source_prompt?: string }>;
-        motion?: Array<{ key: string; motion_level: number; motion_std: number; motion_trend: string; source_prompt?: string }>;
+        motion?: Array<{ key: string; motion_level: number; motion_std: number; motion_trend: string; motion_direction?: string; motion_rhythm?: string; source_prompt?: string }>;
         lighting?: Array<{ key: string; brightness: number; contrast: number; saturation: number; source_prompt?: string }>;
         composition?: Array<{ key: string; center_x: number; center_y: number; luminance_balance: number; source_prompt?: string }>;
         graphics?: Array<{ key: string; edge_density: number; spatial_variance: number; busyness: number; source_prompt?: string }>;
         temporal?: Array<{ key: string; duration: number; motion_trend: string; source_prompt?: string }>;
         technical?: Array<{ key: string; width: number; height: number; fps: number; source_prompt?: string }>;
+        audio_semantic?: Array<{ key: string; role: string; source_prompt?: string; name?: string }>;
+        time?: Array<{ key: string; duration: number; fps: number; source_prompt?: string }>;
+        narrative?: Record<string, Array<{ key: string; value?: string; source_prompt?: string; name?: string }>>;
       };
       try {
         body = (await request.json()) as typeof body;
       } catch {
         return err("Invalid JSON");
       }
-      const results: Record<string, number> = { colors: 0, blends: 0, motion: 0, lighting: 0, composition: 0, graphics: 0, temporal: 0, technical: 0 };
+      const results: Record<string, number> = { static_colors: 0, static_sound: 0, narrative: 0, colors: 0, blends: 0, motion: 0, lighting: 0, composition: 0, graphics: 0, temporal: 0, technical: 0, audio_semantic: 0, time: 0 };
+
+      // Static registry: per-frame color entries
+      for (const c of body.static_colors || []) {
+        const existing = await env.DB.prepare("SELECT id, name, count FROM static_colors WHERE color_key = ?").bind(c.key).first();
+        if (existing) {
+          await env.DB.prepare("UPDATE static_colors SET count = count + 1 WHERE color_key = ?").bind(c.key).run();
+        } else {
+          const name = (c.name && c.name.trim()) ? c.name : await generateUniqueName(env);
+          if (!c.name || !c.name.trim()) await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+          await env.DB.prepare(
+            "INSERT INTO static_colors (id, color_key, r, g, b, brightness, luminance, contrast, saturation, chroma, hue, color_variance, opacity, count, sources_json, name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)"
+          ).bind(uuid(), c.key, c.r, c.g, c.b, c.brightness ?? null, c.luminance ?? c.brightness ?? null, c.contrast ?? null, c.saturation ?? null, c.chroma ?? c.saturation ?? null, c.hue ?? null, c.color_variance ?? null, c.opacity ?? null, c.source_prompt ? JSON.stringify([c.source_prompt.slice(0, 80)]) : null, name).run();
+        }
+        results.static_colors++;
+      }
+      // Static registry: per-frame sound entries
+      for (const s of body.static_sound || []) {
+        const existing = await env.DB.prepare("SELECT id, name, count FROM static_sound WHERE sound_key = ?").bind(s.key).first();
+        if (existing) {
+          await env.DB.prepare("UPDATE static_sound SET count = count + 1 WHERE sound_key = ?").bind(s.key).run();
+        } else {
+          const name = (s.name && s.name.trim()) ? s.name : await generateUniqueName(env);
+          if (!s.name || !s.name.trim()) await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+          await env.DB.prepare(
+            "INSERT INTO static_sound (id, sound_key, amplitude, weight, tone, timbre, count, sources_json, name) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)"
+          ).bind(uuid(), s.key, s.amplitude ?? null, s.weight ?? null, s.tone ?? null, s.timbre ?? null, s.source_prompt ? JSON.stringify([s.source_prompt.slice(0, 80)]) : null, name).run();
+        }
+        results.static_sound++;
+      }
+      // Narrative registry: themes, plots, settings, genre, mood, scene_type
+      const narrativeAspects = ["genre", "mood", "plots", "settings", "themes", "scene_type"];
+      for (const aspect of narrativeAspects) {
+        for (const item of body.narrative?.[aspect] || []) {
+          const key = (item.key || "").trim().toLowerCase();
+          if (!key) continue;
+          const existing = await env.DB.prepare("SELECT id, name, count FROM narrative_entries WHERE aspect = ? AND entry_key = ?").bind(aspect, key).first();
+          if (existing) {
+            await env.DB.prepare("UPDATE narrative_entries SET count = count + 1 WHERE aspect = ? AND entry_key = ?").bind(aspect, key).run();
+          } else {
+            const name = (item.name && item.name.trim()) ? item.name : await generateUniqueName(env);
+            if (!item.name || !item.name.trim()) await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+            await env.DB.prepare(
+              "INSERT INTO narrative_entries (id, aspect, entry_key, value, count, sources_json, name) VALUES (?, ?, ?, ?, 1, ?, ?)"
+            ).bind(uuid(), aspect, key, (item.value ?? item.key ?? "").slice(0, 200), item.source_prompt ? JSON.stringify([item.source_prompt.slice(0, 80)]) : null, name).run();
+          }
+          results.narrative++;
+        }
+      }
       for (const c of body.colors || []) {
         const existing = await env.DB.prepare("SELECT id, name, count FROM learned_colors WHERE color_key = ?").bind(c.key).first();
         if (existing) {
@@ -490,6 +561,19 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         ).bind(uuid(), name, b.domain, JSON.stringify(b.inputs), JSON.stringify(b.output), b.primitive_depths ? JSON.stringify(b.primitive_depths) : null, (b.source_prompt || "").slice(0, 120)).run();
         results.blends++;
       }
+      for (const t of body.time || []) {
+        const existing = await env.DB.prepare("SELECT id FROM learned_time WHERE profile_key = ?").bind(t.key).first();
+        if (existing) {
+          await env.DB.prepare("UPDATE learned_time SET count = count + 1 WHERE profile_key = ?").bind(t.key).run();
+        } else {
+          const name = await generateUniqueName(env);
+          await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+          await env.DB.prepare(
+            "INSERT INTO learned_time (id, profile_key, duration, fps, count, sources_json, name) VALUES (?, ?, ?, ?, 1, ?, ?)"
+          ).bind(uuid(), t.key, t.duration, t.fps, t.source_prompt ? JSON.stringify([t.source_prompt.slice(0, 80)]) : null, name).run();
+        }
+        results.time++;
+      }
       for (const m of body.motion || []) {
         const existing = await env.DB.prepare("SELECT id FROM learned_motion WHERE profile_key = ?").bind(m.key).first();
         if (existing) {
@@ -498,8 +582,8 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           const name = await generateUniqueName(env);
           await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
           await env.DB.prepare(
-            "INSERT INTO learned_motion (id, profile_key, motion_level, motion_std, motion_trend, count, sources_json, name) VALUES (?, ?, ?, ?, ?, 1, ?, ?)"
-          ).bind(uuid(), m.key, m.motion_level, m.motion_std, m.motion_trend, m.source_prompt ? JSON.stringify([m.source_prompt.slice(0, 80)]) : null, name).run();
+            "INSERT INTO learned_motion (id, profile_key, motion_level, motion_std, motion_trend, motion_direction, motion_rhythm, count, sources_json, name) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)"
+          ).bind(uuid(), m.key, m.motion_level, m.motion_std, m.motion_trend, m.motion_direction ?? "neutral", m.motion_rhythm ?? "steady", m.source_prompt ? JSON.stringify([m.source_prompt.slice(0, 80)]) : null, name).run();
         }
         results.motion++;
       }
@@ -568,7 +652,20 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         }
         results.technical++;
       }
-      await env.MOTION_KV.delete("learning:stats");
+      for (const a of body.audio_semantic || []) {
+        const existing = await env.DB.prepare("SELECT id FROM learned_audio_semantic WHERE profile_key = ?").bind(a.key).first();
+        if (existing) {
+          await env.DB.prepare("UPDATE learned_audio_semantic SET count = count + 1 WHERE profile_key = ?").bind(a.key).run();
+        } else {
+          const name = (a.name && a.name.trim()) ? a.name : await generateUniqueName(env);
+          if (!a.name || !a.name.trim()) await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+          await env.DB.prepare(
+            "INSERT INTO learned_audio_semantic (id, profile_key, role, count, sources_json, name) VALUES (?, ?, ?, 1, ?, ?)"
+          ).bind(uuid(), a.key, a.role || "ambient", a.source_prompt ? JSON.stringify([a.source_prompt.slice(0, 80)]) : null, name).run();
+        }
+        results.audio_semantic++;
+      }
+      // Do not use KV delete (free tier limit). Stats cache expires via TTL; GET recomputes when stale.
       return json({ status: "recorded", results }, 201);
     }
 

@@ -1,10 +1,15 @@
 """
 HTTP client for API calls. Uses requests + browser-like headers so Cloudflare
 WAF/Bot Fight Mode does not block server-side automation.
+Step 1 (ENHANCEMENTS): explicit success/failure, retries, and error context.
 """
 import json
+import logging
+import time
 
 import requests
+
+logger = logging.getLogger(__name__)
 
 _API_HEADERS = {
     "Accept": "application/json",
@@ -13,6 +18,34 @@ _API_HEADERS = {
     "Origin": "https://motion.productions",
     "Referer": "https://motion.productions/",
 }
+
+# Retry config: only retry on transient failures
+DEFAULT_MAX_RETRIES = 3
+DEFAULT_BACKOFF_SECONDS = 2.0
+
+
+class APIError(Exception):
+    """API call failed with status or invalid response."""
+    def __init__(self, message: str, status_code: int | None = None, path: str = "", body: str | None = None):
+        super().__init__(message)
+        self.status_code = status_code
+        self.path = path
+        self.body = body
+
+
+def _parse_json_response(resp: requests.Response) -> dict:
+    """Parse JSON body; raise APIError with context if invalid."""
+    if not resp.content:
+        return {}
+    try:
+        return resp.json()
+    except json.JSONDecodeError as e:
+        raise APIError(
+            f"Invalid JSON response: {e}",
+            status_code=resp.status_code,
+            path=resp.url or "",
+            body=resp.text[:500] if resp.text else None,
+        ) from e
 
 
 def api_request(
@@ -23,7 +56,13 @@ def api_request(
     raw_body: bytes | None = None,
     content_type: str | None = None,
     timeout: int = 60,
+    max_retries: int = 0,
+    backoff_seconds: float = DEFAULT_BACKOFF_SECONDS,
 ) -> dict:
+    """
+    Execute API request. Raises APIError on failure with context.
+    If max_retries > 0, retries on 5xx and connection errors only.
+    """
     url = f"{api_base.rstrip('/')}{path}"
     headers = dict(_API_HEADERS)
     if raw_body is not None:
@@ -36,9 +75,55 @@ def api_request(
     else:
         body = None
 
-    resp = requests.request(method, url, data=body, headers=headers, timeout=timeout)
-    resp.raise_for_status()
-    return resp.json()
+    last_exc: Exception | None = None
+    for attempt in range(max(1, max_retries + 1)):
+        try:
+            resp = requests.request(method, url, data=body, headers=headers, timeout=timeout)
+            resp.raise_for_status()
+            return _parse_json_response(resp)
+        except requests.exceptions.HTTPError as e:
+            last_exc = e
+            status = e.response.status_code if e.response is not None else None
+            err_body = e.response.text[:500] if e.response and e.response.text else None
+            if status and 500 <= status < 600 and attempt < max_retries:
+                logger.warning("API %s %s → %s (attempt %s), retrying in %.1fs", method, path, status, attempt + 1, backoff_seconds)
+                time.sleep(backoff_seconds)
+                continue
+            raise APIError(
+                f"API {method} {path} failed: {e}",
+                status_code=status,
+                path=path,
+                body=err_body,
+            ) from e
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            last_exc = e
+            if attempt < max_retries:
+                logger.warning("API %s %s connection/timeout (attempt %s), retrying in %.1fs", method, path, attempt + 1, backoff_seconds)
+                time.sleep(backoff_seconds)
+                continue
+            raise APIError(f"API {method} {path} failed: {e}", path=path) from e
+    if last_exc:
+        raise last_exc
+    raise APIError(f"API {method} {path} failed", path=path)
+
+
+def api_request_with_retry(
+    api_base: str,
+    method: str,
+    path: str,
+    data: dict | None = None,
+    raw_body: bytes | None = None,
+    content_type: str | None = None,
+    timeout: int = 60,
+    max_retries: int = DEFAULT_MAX_RETRIES,
+    backoff_seconds: float = DEFAULT_BACKOFF_SECONDS,
+) -> dict:
+    """Same as api_request but with retries on 5xx and connection errors."""
+    return api_request(
+        api_base, method, path,
+        data=data, raw_body=raw_body, content_type=content_type, timeout=timeout,
+        max_retries=max_retries, backoff_seconds=backoff_seconds,
+    )
 
 
 def api_get(api_base: str, path: str, timeout: int = 60) -> dict:
@@ -50,9 +135,17 @@ def api_post(api_base: str, path: str, data: dict | None = None, raw_body: bytes
 
 
 def api_post_binary(api_base: str, path: str, body: bytes, content_type: str = "application/octet-stream", timeout: int = 120) -> None:
-    """POST raw bytes (e.g. video upload). Returns None; raises on error."""
+    """POST raw bytes (e.g. video upload). Returns None; raises APIError on error."""
     url = f"{api_base.rstrip('/')}{path}"
     headers = dict(_API_HEADERS)
     headers["Content-Type"] = content_type
-    resp = requests.post(url, data=body, headers=headers, timeout=timeout)
-    resp.raise_for_status()
+    try:
+        resp = requests.post(url, data=body, headers=headers, timeout=timeout)
+        resp.raise_for_status()
+        # Some endpoints return empty body; avoid .json() on empty
+        if resp.content:
+            _parse_json_response(resp)
+    except requests.exceptions.HTTPError as e:
+        status = e.response.status_code if e.response is not None else None
+        err_body = e.response.text[:500] if e.response and e.response.text else None
+        raise APIError(f"API POST {path} failed: {e}", status_code=status, path=path, body=err_body) from e

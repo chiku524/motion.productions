@@ -52,12 +52,8 @@ def process_job(job: dict, api_base: str, config: dict, learn: bool) -> bool:
     duration = float(job.get("duration_seconds") or 6)
     print(f"Processing job {job_id}: {prompt[:50]}... ({duration}s)")
 
-    out_cfg = config.get("output", {})
-    generator = ProceduralVideoGenerator(
-        width=out_cfg.get("width", 512),
-        height=out_cfg.get("height", 512),
-        fps=out_cfg.get("fps", 24),
-    )
+    config = {**config, "api_base": api_base}
+    generator = ProceduralVideoGenerator(config=config)
     out_dir = Path(config.get("output", {}).get("dir", "output"))
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"job_{job_id}.mp4"
@@ -77,7 +73,9 @@ def process_job(job: dict, api_base: str, config: dict, learn: bool) -> bool:
             from src.analysis import analyze_video
             from src.interpretation import interpret_user_prompt
             from src.creation import build_spec_from_instruction
-            from src.knowledge.remote_sync import grow_and_sync_to_api
+            from src.knowledge.remote_sync import grow_and_sync_to_api, post_static_discoveries, post_dynamic_discoveries, post_narrative_discoveries
+            from src.knowledge.growth_per_instance import grow_from_video
+            from src.knowledge.narrative_registry import grow_narrative_from_spec
 
             instruction = interpret_user_prompt(prompt, default_duration=duration)
             spec = build_spec_from_instruction(instruction)
@@ -90,13 +88,53 @@ def process_job(job: dict, api_base: str, config: dict, learn: bool) -> bool:
                 {"palette_name": spec.palette_name, "motion_type": spec.motion_type, "intensity": spec.intensity},
                 analysis_dict,
             )
-            # Sync discoveries (blends, colors, motion, etc.) to D1/KV
+            # Per-frame / per-window: add to registry if not found (local JSON + optional D1 sync)
             try:
-                sync_resp = grow_and_sync_to_api(analysis_dict, prompt=prompt, api_base=api_base)
-                results = sync_resp.get("results", {})
+                added, novel_for_sync = grow_from_video(
+                    path,
+                    prompt=prompt,
+                    config=config,
+                    max_frames=None,
+                    sample_every=2,
+                    window_seconds=1.0,
+                    collect_novel_for_sync=bool(api_base),
+                    spec=spec,
+                )
+                if any(added.values()):
+                    print(f"  Per-instance registry: {sum(added.values())} new entries — {added}")
+                if api_base:
+                    if novel_for_sync.get("static_colors") or novel_for_sync.get("static_sound"):
+                        post_static_discoveries(
+                            api_base,
+                            novel_for_sync.get("static_colors", []),
+                            novel_for_sync.get("static_sound"),
+                        )
+                        print(f"  Static discoveries synced to D1")
+                    post_dynamic_discoveries(api_base, novel_for_sync)
+            except Exception as e:
+                print(f"  Per-instance growth failed: {e}")
+            # Narrative registry: themes, plots, settings from spec + instruction (novel → add; unnamed → name-generator)
+            try:
+                narrative_added, narrative_novel = grow_narrative_from_spec(
+                    spec,
+                    prompt=prompt,
+                    config=config,
+                    instruction=instruction,
+                    collect_novel_for_sync=bool(api_base),
+                )
+                if any(narrative_added.values()):
+                    print(f"  Narrative registry: {sum(narrative_added.values())} new — {narrative_added}")
+                if api_base and any(narrative_novel.get(a) for a in ("genre", "mood", "plots", "settings", "themes", "scene_type")):
+                    post_narrative_discoveries(api_base, narrative_novel)
+                    print(f"  Narrative discoveries synced to D1")
+            except Exception as e:
+                print(f"  Narrative growth failed: {e}")
+            # Whole-video discoveries (blends, colors, motion, etc.) to D1/KV — pass spec for camera/audio/narrative
+            try:
+                sync_resp = grow_and_sync_to_api(analysis_dict, prompt=prompt, api_base=api_base, spec=spec)
                 print(f"  Logged for learning (D1 + KV)")
-                if results:
-                    print(f"  Discoveries recorded: {results}")
+                if sync_resp.get("results"):
+                    print(f"  Discoveries recorded: {sync_resp.get('results')}")
             except Exception as e:
                 print(f"  Learning run logged; discoveries sync failed: {e}")
         return True

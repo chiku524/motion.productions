@@ -22,7 +22,7 @@ from .schema import BaseKnowledgeExtract
 
 
 def _closest_palette(r: float, g: float, b: float) -> tuple[str, float]:
-    """Find which of our palettes (by mean color) is closest to (r,g,b)."""
+    """Find which of our palettes (by mean color) is closest to (r,g,b). Display/reference only; registry stores exact RGB."""
     from ..procedural.data.palettes import PALETTES
     best_name = "default"
     best_dist = 1e9
@@ -191,9 +191,10 @@ def extract_from_video(
     motion_std = float(np.std(per_motion)) if per_motion else 0.0
     motion_trend = _motion_trend(per_motion)
 
+    # Exact transformed value: dominant RGB as it appears in the video (no mapping to palette name for storage)
     dom = dominant_colors(frames[mid_idx], n=1)
     dominant_rgb = dom[0] if dom else (0.0, 0.0, 0.0)
-    closest_palette, palette_distance = _closest_palette(*dominant_rgb)
+    closest_palette, palette_distance = _closest_palette(*dominant_rgb)  # display only
 
     # Normalize center of mass to 0-1 (frame coords are 0..frame_w-1, 0..frame_h-1)
     frame_w, frame_h = int(frame_w), int(frame_h)
