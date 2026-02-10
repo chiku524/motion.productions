@@ -52,8 +52,8 @@ class SceneSpec:
     palette_name: str
     motion_type: str
     intensity: float
-    palette_colors: list[tuple[int, int, int]] | None = None  # blended from primitives + learned
     raw_prompt: str
+    palette_colors: list[tuple[int, int, int]] | None = None  # blended from primitives + learned
     gradient_type: str = "vertical"   # vertical | radial | angled | horizontal
     camera_motion: str = "static"     # static | zoom | zoom_out | pan | rotate
     shape_overlay: str = "none"       # none | circle | rect
