@@ -14,15 +14,18 @@ workflows:
     description: "Workflow B focus — 100% explore; broad discovery, maximizes registry growth"
     env:
       LOOP_EXPLOIT_RATIO_OVERRIDE: "0"
+      LOOP_WORKFLOW_TYPE: "explorer"
       API_BASE: https://motion.productions
 
   balanced:
     description: "Mixed — uses webapp config (default 70% exploit / 30% explore)"
     env:
       API_BASE: https://motion.productions
+      # LOOP_WORKFLOW_TYPE: "main"  # optional, for badge on site
 
   exploiter:
     description: "Workflow A focus — 100% exploit; refines known-good prompts"
     env:
       LOOP_EXPLOIT_RATIO_OVERRIDE: "1"
+      LOOP_WORKFLOW_TYPE: "exploiter"
       API_BASE: https://motion.productions

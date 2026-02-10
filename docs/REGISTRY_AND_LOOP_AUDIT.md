@@ -2,8 +2,8 @@
 
 This document audits every function and algorithm that supports the **static**, **dynamic**, and **narrative** registry goals:
 
-- **Static:** Record every instance of static elements (color, sound) **per frame**; use name-generator when unnamed.
-- **Dynamic:** Record every instance of dynamic elements (motion, time, lighting, composition, graphics, temporal, technical, audio_semantic) **per combined frames**; use name-generator when unnamed. (No separate “blends” category; lenient non-pure only.)
+- **Pure (STATIC):** Single frame/pixel — color, sound per frame. Origin values = pure primitives (e.g. black, white, R, G, B). Depth % compares discoveries to these. See [PURE_VS_NONPURE_REGISTRIES.md](PURE_VS_NONPURE_REGISTRIES.md).
+- **Non-pure (DYNAMIC):** Multi-frame blends (gradient, motion, camera, etc.); same pixel across frames → blend. Canonical non-pure = gradient_type, camera_motion, motion. Depth % vs these. Record every instance of dynamic elements (motion, time, lighting, composition, graphics, temporal, technical, audio_semantic) **per combined frames**; use name-generator when unnamed. (No separate “blends” category; lenient non-pure only.)
 - **Narrative:** Record narrative elements (genre, mood, plots, settings, themes, scene_type) from spec; use name-generator when unnamed.
 
 **Full algorithm/function audit:** For a module-by-module audit of **every** algorithm and function (interpretation, creation, renderer, pipeline, extraction, growth, registries, blending, names, sync, loop) with **100% precision** and **workflow success**, see **[ALGORITHMS_AND_FUNCTIONS_AUDIT.md](ALGORITHMS_AND_FUNCTIONS_AUDIT.md)**.

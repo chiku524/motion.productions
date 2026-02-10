@@ -82,16 +82,17 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       }
       if (status === "completed") {
         const rows = await env.DB.prepare(
-          "SELECT id, prompt, duration_seconds, created_at, updated_at FROM jobs WHERE status = 'completed' AND r2_key IS NOT NULL ORDER BY updated_at DESC LIMIT ?"
+          "SELECT id, prompt, duration_seconds, created_at, updated_at, workflow_type FROM jobs WHERE status = 'completed' AND r2_key IS NOT NULL ORDER BY updated_at DESC LIMIT ?"
         )
           .bind(limit)
-          .all<{ id: string; prompt: string; duration_seconds: number | null; created_at: string; updated_at: string }>();
+          .all<{ id: string; prompt: string; duration_seconds: number | null; created_at: string; updated_at: string; workflow_type: string | null }>();
         const jobs = (rows.results || []).map((r) => ({
           id: r.id,
           prompt: r.prompt,
           duration_seconds: r.duration_seconds,
           created_at: r.created_at,
           updated_at: r.updated_at,
+          workflow_type: r.workflow_type ?? undefined,
           download_url: `/api/jobs/${r.id}/download`,
         }));
         return json({ jobs });
@@ -99,11 +100,11 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       return err("status=pending or status=completed required", 400);
     }
 
-    // POST /api/jobs — create job
+    // POST /api/jobs — create job (optional workflow_type: explorer | exploiter | main | web)
     if (path === "/api/jobs" && request.method === "POST") {
-      let body: { prompt: string; duration_seconds?: number };
+      let body: { prompt: string; duration_seconds?: number; workflow_type?: string };
       try {
-        body = (await request.json()) as { prompt: string; duration_seconds?: number };
+        body = (await request.json()) as { prompt: string; duration_seconds?: number; workflow_type?: string };
       } catch {
         return err("Invalid JSON");
       }
@@ -111,12 +112,13 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       if (!prompt) return err("prompt is required");
       const id = uuid();
       const duration_seconds = typeof body.duration_seconds === "number" ? body.duration_seconds : null;
+      const workflow_type = typeof body.workflow_type === "string" && /^(explorer|exploiter|main|web)$/.test(body.workflow_type) ? body.workflow_type : null;
       await env.DB.prepare(
-        "INSERT INTO jobs (id, prompt, duration_seconds, status) VALUES (?, ?, ?, 'pending')"
+        "INSERT INTO jobs (id, prompt, duration_seconds, status, workflow_type) VALUES (?, ?, ?, 'pending', ?)"
       )
-        .bind(id, prompt, duration_seconds ?? null)
+        .bind(id, prompt, duration_seconds ?? null, workflow_type)
         .run();
-      return json({ id, prompt, duration_seconds, status: "pending" }, 201);
+      return json({ id, prompt, duration_seconds, workflow_type: workflow_type ?? undefined, status: "pending" }, 201);
     }
 
     // GET /api/jobs/:id — get job (and download URL if completed)
@@ -124,7 +126,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
     if (jobMatch && request.method === "GET") {
       const id = jobMatch[1];
       const row = await env.DB.prepare(
-        "SELECT id, prompt, duration_seconds, status, r2_key, created_at, updated_at FROM jobs WHERE id = ?"
+        "SELECT id, prompt, duration_seconds, status, r2_key, created_at, updated_at, workflow_type FROM jobs WHERE id = ?"
       )
         .bind(id)
         .first<{
@@ -135,6 +137,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           r2_key: string | null;
           created_at: string;
           updated_at: string;
+          workflow_type: string | null;
         }>();
       if (!row) return err("Job not found", 404);
       const out: Record<string, unknown> = {
@@ -144,6 +147,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         status: row.status,
         created_at: row.created_at,
         updated_at: row.updated_at,
+        workflow_type: row.workflow_type ?? undefined,
       };
       if (row.status === "completed" && row.r2_key) {
         const obj = await env.VIDEOS.get(row.r2_key);
@@ -350,14 +354,15 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           }
         }
         const rows = await env.DB.prepare(
-          "SELECT id, prompt, duration_seconds, updated_at FROM jobs WHERE status = 'completed' AND r2_key IS NOT NULL ORDER BY updated_at DESC LIMIT 10"
+          "SELECT id, prompt, duration_seconds, updated_at, workflow_type FROM jobs WHERE status = 'completed' AND r2_key IS NOT NULL ORDER BY updated_at DESC LIMIT 10"
         )
-          .all<{ id: string; prompt: string; duration_seconds: number | null; updated_at: string }>();
+          .all<{ id: string; prompt: string; duration_seconds: number | null; updated_at: string; workflow_type: string | null }>();
         const recent_runs = (rows.results || []).map((r) => ({
           id: r.id,
           prompt: (r.prompt || "").slice(0, 60) + ((r.prompt?.length ?? 0) > 60 ? "…" : ""),
           duration_seconds: r.duration_seconds,
           updated_at: r.updated_at,
+          workflow_type: r.workflow_type ?? undefined,
           download_url: `/api/jobs/${r.id}/download`,
         }));
         return json({
@@ -753,7 +758,188 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         presence: (JSON.parse(r.output_json) as Record<string, unknown>).presence ?? "ambient",
         source_prompt: r.source_prompt ?? "",
       }));
-      return json({ learned_colors: colors, learned_motion: motion, learned_audio });
+      // Gradient and camera from learned_blends (growth from spec) — creation picks from STATIC/registry
+      const gradientRows = await env.DB.prepare(
+        "SELECT output_json FROM learned_blends WHERE domain = 'gradient' ORDER BY created_at DESC LIMIT ?"
+      )
+        .bind(limit)
+        .all<{ output_json: string }>();
+      const gradientSeen = new Set<string>();
+      const learned_gradient: string[] = [];
+      for (const r of gradientRows.results || []) {
+        const out = JSON.parse(r.output_json) as Record<string, unknown>;
+        const v = typeof out.gradient_type === "string" ? out.gradient_type.trim() : "";
+        if (v && !gradientSeen.has(v)) {
+          gradientSeen.add(v);
+          learned_gradient.push(v);
+        }
+      }
+      const cameraRows = await env.DB.prepare(
+        "SELECT output_json FROM learned_blends WHERE domain = 'camera' ORDER BY created_at DESC LIMIT ?"
+      )
+        .bind(limit)
+        .all<{ output_json: string }>();
+      const cameraSeen = new Set<string>();
+      const learned_camera: string[] = [];
+      for (const r of cameraRows.results || []) {
+        const out = JSON.parse(r.output_json) as Record<string, unknown>;
+        const v = typeof out.camera_motion === "string" ? out.camera_motion.trim() : "";
+        if (v && !cameraSeen.has(v)) {
+          cameraSeen.add(v);
+          learned_camera.push(v);
+        }
+      }
+      // Canonical non-pure (multi-frame) options — gradient/camera/motion are non-pure; creation uses these when registry empty
+      const origin_gradient = ["vertical", "horizontal", "radial", "angled"];
+      const origin_camera = ["static", "pan", "tilt", "dolly", "crane", "zoom", "zoom_out", "handheld"];
+      const origin_motion = ["slow", "wave", "flow", "fast", "pulse"];
+      return json({
+        learned_colors: colors,
+        learned_motion: motion,
+        learned_audio,
+        learned_gradient,
+        learned_camera,
+        origin_gradient,
+        origin_camera,
+        origin_motion,
+      });
+    }
+
+    // GET /api/registries — pure (STATIC) vs non-pure (DYNAMIC + NARRATIVE); depth % vs primitives always
+    // Pure = single frame/pixel (static). Non-pure = multi-frame blends (gradient, motion, camera → dynamic).
+    if (path === "/api/registries" && request.method === "GET") {
+      const regLimit = Math.min(parseInt(new URL(request.url).searchParams.get("limit") || "200", 10), 500);
+      // Pure primitives only (single-frame/single-pixel origin values) — for depth comparison in STATIC
+      const staticPrimitives = {
+        color_primaries: [
+          { name: "black", r: 0, g: 0, b: 0 },
+          { name: "white", r: 255, g: 255, b: 255 },
+          { name: "red", r: 255, g: 0, b: 0 },
+          { name: "green", r: 0, g: 255, b: 0 },
+          { name: "blue", r: 0, g: 0, b: 255 },
+        ],
+        sound_primaries: [] as string[],
+      };
+      // Non-pure canonical (multi-frame; gradient/motion/camera need multiple frames to observe) — DYNAMIC
+      const dynamicCanonical = {
+        gradient_type: ["vertical", "horizontal", "radial", "angled"],
+        camera_motion: ["static", "pan", "tilt", "dolly", "crane", "zoom", "zoom_out", "handheld"],
+        motion: ["slow", "wave", "flow", "fast", "pulse"],
+      };
+      // Depth vs black/white for a single RGB (e.g. grey = 50% white + 50% black)
+      const colorDepthVsPrimitives = (r: number, g: number, b: number): { depth_pct: number; depth_breakdown: Record<string, number> } => {
+        const L = Math.max(0, Math.min(1, (r + g + b) / (3 * 255)));
+        const black = Math.round((1 - L) * 100) / 100;
+        const white = Math.round(L * 100) / 100;
+        const depth_breakdown: Record<string, number> = {};
+        if (black > 0.01) depth_breakdown["black"] = black * 100;
+        if (white > 0.01) depth_breakdown["white"] = white * 100;
+        const depth_pct = Math.max(black, white) * 100;
+        return { depth_pct, depth_breakdown };
+      };
+      const staticColors = await env.DB.prepare(
+        "SELECT color_key, r, g, b, name, count FROM static_colors ORDER BY count DESC LIMIT ?"
+      ).bind(regLimit).all<{ color_key: string; r: number; g: number; b: number; name: string; count: number }>();
+      const staticSound = await env.DB.prepare(
+        "SELECT sound_key, name, count FROM static_sound ORDER BY count DESC LIMIT ?"
+      ).bind(regLimit).all<{ sound_key: string; name: string; count: number }>();
+      const learnedColors = await env.DB.prepare(
+        "SELECT color_key, r, g, b, name, count FROM learned_colors ORDER BY count DESC LIMIT ?"
+      ).bind(regLimit).all<{ color_key: string; r: number; g: number; b: number; name: string; count: number }>();
+      const learnedMotion = await env.DB.prepare(
+        "SELECT profile_key, motion_trend, name, count FROM learned_motion ORDER BY count DESC LIMIT ?"
+      ).bind(regLimit).all<{ profile_key: string; motion_trend: string; name: string | null; count: number }>();
+      const blends = await env.DB.prepare(
+        "SELECT name, domain, output_json, primitive_depths_json FROM learned_blends ORDER BY created_at DESC LIMIT ?"
+      ).bind(regLimit).all<{ name: string; domain: string; output_json: string; primitive_depths_json: string | null }>();
+      const narrativeAspects = ["genre", "mood", "themes", "plots", "settings", "scene_type"];
+      const narrative: Record<string, Array<{ entry_key: string; value: string; name: string; count: number }>> = {};
+      for (const aspect of narrativeAspects) {
+        const rows = await env.DB.prepare(
+          "SELECT entry_key, value, name, count FROM narrative_entries WHERE aspect = ? ORDER BY count DESC LIMIT ?"
+        ).bind(aspect, regLimit).all<{ entry_key: string; value: string | null; name: string; count: number }>();
+        narrative[aspect] = (rows.results || []).map((r) => ({
+          entry_key: r.entry_key,
+          value: r.value || r.entry_key,
+          name: r.name,
+          count: r.count,
+        }));
+      }
+      const depthFromBlendDepths = (depths: Record<string, unknown> | null): { depth_pct: number; depth_breakdown: Record<string, number> } => {
+        const depth_breakdown: Record<string, number> = {};
+        if (!depths || typeof depths !== "object") return { depth_pct: 0, depth_breakdown };
+        for (const [k, v] of Object.entries(depths)) {
+          if (typeof v === "number") depth_breakdown[k] = v <= 1 ? Math.round(v * 100) : Math.round(v);
+        }
+        const vals = Object.values(depth_breakdown);
+        const depth_pct = vals.length ? Math.max(...vals) : 0;
+        return { depth_pct, depth_breakdown };
+      };
+      const gradientBlends = (blends.results || []).filter((b) => b.domain === "gradient").map((b) => {
+        const out = JSON.parse(b.output_json) as Record<string, unknown>;
+        const depths = b.primitive_depths_json ? (JSON.parse(b.primitive_depths_json) as Record<string, unknown>) : null;
+        const { depth_pct, depth_breakdown } = depthFromBlendDepths(depths);
+        return { name: b.name, key: String(out.gradient_type ?? b.domain), depth_pct, depth_breakdown };
+      });
+      const cameraBlends = (blends.results || []).filter((b) => b.domain === "camera").map((b) => {
+        const out = JSON.parse(b.output_json) as Record<string, unknown>;
+        const depths = b.primitive_depths_json ? (JSON.parse(b.primitive_depths_json) as Record<string, unknown>) : null;
+        const { depth_pct, depth_breakdown } = depthFromBlendDepths(depths);
+        return { name: b.name, key: String(out.camera_motion ?? b.domain), depth_pct, depth_breakdown };
+      });
+      const otherBlends = (blends.results || []).filter((b) => b.domain !== "gradient" && b.domain !== "camera").map((b) => {
+        const depths = b.primitive_depths_json ? (JSON.parse(b.primitive_depths_json) as Record<string, unknown>) : null;
+        const { depth_pct, depth_breakdown } = depthFromBlendDepths(depths);
+        return { name: b.name, domain: b.domain, key: b.output_json.slice(0, 80), depth_pct, depth_breakdown };
+      });
+      return json({
+        static_primitives: staticPrimitives,
+        dynamic_canonical: dynamicCanonical,
+        static: {
+          colors: (staticColors.results || []).map((r) => {
+            const { depth_pct, depth_breakdown } = colorDepthVsPrimitives(r.r, r.g, r.b);
+            return { key: r.color_key, r: r.r, g: r.g, b: r.b, name: r.name, count: r.count, depth_pct, depth_breakdown };
+          }),
+          sound: (staticSound.results || []).map((r) => ({ key: r.sound_key, name: r.name, count: r.count })),
+        },
+        dynamic: {
+          colors: (learnedColors.results || []).map((r) => {
+            const { depth_pct, depth_breakdown } = colorDepthVsPrimitives(r.r, r.g, r.b);
+            return { key: r.color_key, name: r.name, count: r.count, depth_pct, depth_breakdown };
+          }),
+          motion: (learnedMotion.results || []).map((r) => ({ key: r.profile_key, name: r.name || r.profile_key, trend: r.motion_trend, count: r.count })),
+          gradient: gradientBlends,
+          camera: cameraBlends,
+          blends: otherBlends,
+        },
+        narrative,
+      });
+    }
+
+    // GET /api/loop/progress — learning precision (runs with growth in last N)
+    if (path === "/api/loop/progress" && request.method === "GET") {
+      const last = Math.min(parseInt(new URL(request.url).searchParams.get("last") || "20", 10), 100);
+      const completed = await env.DB.prepare(
+        "SELECT id FROM jobs WHERE status = 'completed' AND r2_key IS NOT NULL ORDER BY updated_at DESC LIMIT ?"
+      ).bind(last).all<{ id: string }>();
+      const ids = (completed.results || []).map((r) => r.id);
+      let withLearning = 0;
+      if (ids.length > 0) {
+        const placeholders = ids.map(() => "?").join(",");
+        const r = await env.DB.prepare(
+          `SELECT COUNT(DISTINCT job_id) as c FROM learning_runs WHERE job_id IN (${placeholders})`
+        ).bind(...ids).first<{ c: number }>();
+        withLearning = r?.c ?? 0;
+      }
+      const totalRuns = ids.length;
+      const precision = totalRuns > 0 ? Math.round((withLearning / totalRuns) * 100) : 0;
+      return json({
+        last_n: last,
+        total_runs: totalRuns,
+        runs_with_learning: withLearning,
+        precision_pct: precision,
+        target_pct: 95,
+      });
     }
 
   return err("Not found", 404);

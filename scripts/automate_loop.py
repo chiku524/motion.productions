@@ -177,6 +177,8 @@ def run() -> None:
         override = os.environ.get("LOOP_EXPLOIT_RATIO_OVERRIDE")
         exploit_ratio = float(override) if override is not None and override != "" else loop_config.get("exploit_ratio", DEFAULT_EXPLOIT_RATIO)
         exploit_ratio = max(0.0, min(1.0, exploit_ratio))
+        # workflow_type for site: explorer (discovery) | exploiter (interpretation) | main (balanced)
+        workflow_type = os.environ.get("LOOP_WORKFLOW_TYPE") or ("explorer" if override == "0" else "exploiter" if override == "1" else "main")
 
         knowledge = {}
         try:
@@ -205,7 +207,7 @@ def run() -> None:
         try:
             job = api_request_with_retry(
                 args.api_base, "POST", "/api/jobs",
-                data={"prompt": prompt, "duration_seconds": duration},
+                data={"prompt": prompt, "duration_seconds": duration, "workflow_type": workflow_type},
                 timeout=30,
             )
         except APIError as e:

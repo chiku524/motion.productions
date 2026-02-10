@@ -1,13 +1,57 @@
 """
 Build output from extracted knowledge.
 Converts InterpretedInstruction (+ optional knowledge lookup) → SceneSpec for rendering.
-INTENDED_LOOP: Use origins + learned values; blend primitives, don't pick templates.
+INTENDED_LOOP: Use strictly pure elements/blends from STATIC registry (and origins); no templates.
+When interpretation used defaults (no keyword matched), pick from registry (learned_gradient,
+learned_camera, learned_motion) so growth is prioritised and pure elements can blend across frames;
+only fall back to origin primitives when registry is empty.
 """
+import random
 from typing import Any
 
 from ..interpretation import InterpretedInstruction
 from ..procedural.parser import SceneSpec
 from ..procedural.data.palettes import PALETTES
+from ..procedural.data.keywords import (
+    DEFAULT_GRADIENT,
+    DEFAULT_MOTION,
+    DEFAULT_CAMERA,
+)
+from ..knowledge.origins import GRAPHICS_ORIGINS, CAMERA_ORIGINS
+
+# Renderer-valid sets (used only to filter registry values; no fixed list used for creation)
+_GRADIENT_VALID = frozenset(GRAPHICS_ORIGINS["gradient_type"])
+_MOTION_VALID = frozenset(("slow", "wave", "flow", "fast", "pulse"))
+_CAMERA_VALID = frozenset(("static", "zoom", "zoom_out", "pan", "rotate", "dolly", "crane"))
+
+
+def _pool_from_knowledge(
+    knowledge: dict[str, Any] | None,
+    learned_key: str,
+    origin_key: str,
+    valid_set: frozenset[str],
+) -> list[str]:
+    """Registry-first pool: learned_* if non-empty (filtered to valid), else origin_* from API, else empty (caller uses origins module)."""
+    learned = (knowledge or {}).get(learned_key) or []
+    pool = [v for v in learned if isinstance(v, str) and v.strip() and v in valid_set]
+    if pool:
+        return pool
+    origin = (knowledge or {}).get(origin_key) or []
+    return [v for v in origin if isinstance(v, str) and v.strip() and v in valid_set]
+
+
+def _random_motion_from_registry(knowledge: dict[str, Any] | None) -> str | None:
+    """Pick a motion type at random from learned_motion (registry). Returns None if empty."""
+    learned = (knowledge or {}).get("learned_motion", []) or []
+    if not learned:
+        return None
+    m = random.choice(learned[:20])
+    if not isinstance(m, dict):
+        return None
+    trend = m.get("motion_trend") or (m.get("key") or "").split("_")[-1]
+    trend_to_motion = {"steady": "flow", "pulsing": "pulse", "wave": "wave", "slow": "slow", "fast": "fast", "medium": "flow", "static": "slow"}
+    motion = trend_to_motion.get(trend, trend)
+    return motion if motion in _MOTION_VALID else None
 
 
 def build_spec_from_instruction(
@@ -82,6 +126,20 @@ def build_spec_from_instruction(
     lighting = _build_lighting_from_blending(instruction, lighting)
     composition_balance = _build_composition_balance_from_blending(instruction, composition_balance)
     composition_symmetry = _build_composition_symmetry_from_blending(instruction, composition_symmetry)
+
+    # Registry-only: no fixed lists — use learned_* or origin_* from knowledge (API); only if both empty use origins module
+    if gradient == DEFAULT_GRADIENT:
+        pool = _pool_from_knowledge(knowledge, "learned_gradient", "origin_gradient", _GRADIENT_VALID)
+        gradient = random.choice(pool) if pool else random.choice(tuple(GRAPHICS_ORIGINS["gradient_type"]))
+    if motion == DEFAULT_MOTION:
+        motion = _random_motion_from_registry(knowledge)
+        if not motion:
+            origin_m = (knowledge or {}).get("origin_motion") or []
+            pool = [v for v in origin_m if isinstance(v, str) and v in _MOTION_VALID]
+            motion = random.choice(pool) if pool else random.choice(tuple(_MOTION_VALID))
+    if camera == DEFAULT_CAMERA:
+        pool = _pool_from_knowledge(knowledge, "learned_camera", "origin_camera", _CAMERA_VALID)
+        camera = random.choice(pool) if pool else random.choice([v for v in CAMERA_ORIGINS["motion_type"] if v in _CAMERA_VALID] or list(_CAMERA_VALID))
 
     return SceneSpec(
         palette_name=palette,

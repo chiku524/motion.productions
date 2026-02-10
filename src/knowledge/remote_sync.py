@@ -263,8 +263,17 @@ def grow_and_sync_to_api(
             "source_prompt": prompt[:120] if prompt else "",
         })
 
-    # Camera, Transitions, Audio, Narrative — from spec (intended values)
+    # Gradient, Camera, Transitions, Audio, Narrative — from spec (intended values; growth prioritised)
     if spec is not None:
+        gradient_type = getattr(spec, "gradient_type", "vertical") or "vertical"
+        discoveries["blends"].append({
+            "name": "",
+            "domain": "gradient",
+            "inputs": {"gradient_type": gradient_type},
+            "output": {"gradient_type": gradient_type},
+            "primitive_depths": {gradient_type: 1.0},
+            "source_prompt": prompt[:120] if prompt else "",
+        })
         camera = getattr(spec, "camera_motion", "static") or "static"
         transitions = f"{getattr(spec, 'transition_in', 'cut') or 'cut'}_{getattr(spec, 'transition_out', 'cut') or 'cut'}"
         discoveries["blends"].append({

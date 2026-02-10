@@ -59,6 +59,9 @@ This doc explains why videos on motion.productions might appear to have **audio 
 
 ### What was changed to improve variety
 
+- **Registry-driven + truly random when interpretation uses defaults**  
+  We do **not** use seed-based variety. When the prompt doesn’t match gradient/motion/camera keywords, interpretation falls back to defaults. **Creation** then uses: (1) **registry** when available (e.g. a random entry from `learned_motion` for motion type); (2) **truly random** choice from primitive options (gradient, motion, camera) otherwise. So each run gets real variety from the three registries (static/dynamic) and from `random.choice`, not from a deterministic seed. The main workflow uses **strictly pure elements/blends [STATIC]** — no template-based creation.
+
 - **Stronger use of learned color and motion in creation**  
   In `src/creation/builder.py`, when knowledge is present:
   - Learned color blend weight increased (e.g. center 0.15 → 0.28, edges 0.08 → 0.15) and more learned entries considered (5 → 8).
@@ -68,8 +71,8 @@ This doc explains why videos on motion.productions might appear to have **audio 
 - **Lower exploit ratio for more exploration**  
   In the **Loop controls** on the site (or via API `POST /api/loop/config`), set **exploit** to a lower value (e.g. **30–50%**). That makes the loop pick **new** procedural prompts more often, so you get more palette/motion combinations and less repetition of the same “good” prompts.
 
-- **Run an Explorer worker**  
-  The **Explorer** worker uses `LOOP_EXPLOIT_RATIO_OVERRIDE=0` (100% explore), so it never reuses good_prompts and always generates new subject+modifier combos. That maximizes discovery and visual variety. See `config/workflows.yaml` and `docs/INTENDED_LOOP.md` (Railway / Render section).
+- **Run both Explorer and Exploiter workers**  
+  The **Explorer** worker uses `LOOP_EXPLOIT_RATIO_OVERRIDE=0` (100% explore); the **Exploiter** uses `=1` (100% exploit). Both upload to the same API; **both workflow outputs appear in the same library** on motion.productions. Each job stores a **workflow_type** (`explorer` | `exploiter` | `main` | `web`). The site shows an **Explore** / **Exploit** (or **Web**) badge per video and in “Recent activity” so you can see progress from both workflows. See `config/workflows.yaml` and `docs/INTENDED_LOOP.md`. Run the DB migration `0009_workflow_type.sql` so new jobs can store `workflow_type`.
 
 ### Summary
 
