@@ -354,7 +354,7 @@ loopSave?.addEventListener('click', async () => {
     if (text.trimStart().startsWith('<')) throw new Error('Server returned a page instead of data. The API may be misconfigured or the loop config endpoint is not available.');
     let data;
     try { data = JSON.parse(text); } catch { throw new Error('Invalid response from server. Try again or check the API.'); }
-    if (!res.ok) throw new Error(data.error || 'Failed to save config');
+    if (!res.ok) throw new Error(data.details ? `${data.error || 'Failed to save config'}: ${data.details}` : (data.error || 'Failed to save config'));
     loopSave.textContent = 'Saved';
     loopSave.classList.remove('btn-saving');
     loopSave.classList.add('btn-saved');

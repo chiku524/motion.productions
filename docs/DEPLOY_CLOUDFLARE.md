@@ -27,7 +27,8 @@ You can also trigger a deploy manually from **Actions → Deploy to Cloudflare �
   - **Narrative registry:** `narrative_entries` — themes, plots, settings, genre, mood, scene_type (film aspects).
   - `name_reserve` — used names for uniqueness.
 - **R2** — Bucket for stored video files (`jobs/{id}/video.mp4`).
-- **KV** — Cached learning stats (`learning:stats`, 60s TTL) for fast aggregation reads. **Optimization:** We do not use KV *delete* operations (free tier limit: 1000/day). Cache is invalidated by TTL only; GET recomputes when stale.
+- **KV** — Cached learning stats (`learning:stats`, 60s TTL) and **loop config/state** (`loop_config`, `loop_state`) for the webapp and Railway workers. **Optimization:** We do not use KV *delete* operations (free tier limit: 1000/day). Cache is invalidated by TTL only; GET recomputes when stale.
+  - **KV daily limit:** Cloudflare free tier has a daily read/write limit for KV. If you receive an email that the KV worker reached its daily limit, **loop config save** (e.g. Exploit/Explore percentage, Apply settings) will fail until the limit resets. Reduce write frequency (e.g. fewer loop state saves, or upgrade plan) if you hit this often.
 
 ## Prerequisites
 

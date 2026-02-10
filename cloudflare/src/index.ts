@@ -268,11 +268,18 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
 
     // GET /api/loop/config — user-controlled loop config (enabled, delay, exploit_ratio, duration_seconds)
     if (path === "/api/loop/config" && request.method === "GET") {
+      const kv = env.MOTION_KV;
+      if (!kv) return json({ error: "Loop config unavailable: KV not bound", details: "MOTION_KV undefined" }, 500);
       try {
-        const raw = await env.MOTION_KV.get("loop_config");
-        const config = raw
-          ? (JSON.parse(raw) as { enabled?: boolean; delay_seconds?: number; exploit_ratio?: number; duration_seconds?: number })
-          : { enabled: true, delay_seconds: 30, exploit_ratio: 0.7, duration_seconds: 1 };
+        const raw = await kv.get("loop_config");
+        let config: { enabled?: boolean; delay_seconds?: number; exploit_ratio?: number; duration_seconds?: number } = { enabled: true, delay_seconds: 30, exploit_ratio: 0.7, duration_seconds: 1 };
+        if (raw && raw.length > 0) {
+          try {
+            config = JSON.parse(raw) as typeof config;
+          } catch {
+            /* use defaults */
+          }
+        }
         const duration = typeof config.duration_seconds === "number" ? config.duration_seconds : 1;
         return json({
           enabled: config.enabled !== false,
@@ -293,14 +300,25 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       } catch {
         return err("Invalid JSON");
       }
+      const kv = env.MOTION_KV;
+      if (!kv) {
+        return json({ error: "Loop config unavailable: KV namespace not bound. Check Worker bindings (MOTION_KV).", details: "MOTION_KV undefined" }, 500);
+      }
       try {
-        const raw = await env.MOTION_KV.get("loop_config");
-        const current = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+        const raw = await kv.get("loop_config");
+        let current: Record<string, unknown> = {};
+        if (raw && raw.length > 0) {
+          try {
+            current = JSON.parse(raw) as Record<string, unknown>;
+          } catch {
+            current = {};
+          }
+        }
         if (typeof body.enabled === "boolean") current.enabled = body.enabled;
         if (typeof body.delay_seconds === "number") current.delay_seconds = Math.max(0, Math.min(600, body.delay_seconds));
         if (typeof body.exploit_ratio === "number") current.exploit_ratio = Math.max(0, Math.min(1, body.exploit_ratio));
         if (typeof body.duration_seconds === "number") current.duration_seconds = Math.max(1, Math.min(60, body.duration_seconds));
-        await env.MOTION_KV.put("loop_config", JSON.stringify(current));
+        await kv.put("loop_config", JSON.stringify(current));
         return json({ ok: true, config: current });
       } catch (e) {
         return json({ error: "Failed to save loop config", details: String(e) }, 500);
@@ -309,14 +327,28 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
 
     // GET /api/loop/status — config + state + recent activity for webapp display
     if (path === "/api/loop/status" && request.method === "GET") {
+      const kv = env.MOTION_KV;
+      if (!kv) return json({ error: "Loop status unavailable: KV not bound", details: "MOTION_KV undefined" }, 500);
       try {
-        const configRaw = await env.MOTION_KV.get("loop_config");
-        const config = configRaw
-          ? (JSON.parse(configRaw) as { enabled?: boolean; delay_seconds?: number; exploit_ratio?: number; duration_seconds?: number })
-          : { enabled: true, delay_seconds: 30, exploit_ratio: 0.7, duration_seconds: 1 };
+        const configRaw = await kv.get("loop_config");
+        let config: { enabled?: boolean; delay_seconds?: number; exploit_ratio?: number; duration_seconds?: number } = { enabled: true, delay_seconds: 30, exploit_ratio: 0.7, duration_seconds: 1 };
+        if (configRaw && configRaw.length > 0) {
+          try {
+            config = JSON.parse(configRaw) as typeof config;
+          } catch {
+            /* use defaults */
+          }
+        }
         const duration = typeof config.duration_seconds === "number" ? config.duration_seconds : 1;
-        const stateRaw = await env.MOTION_KV.get("loop_state");
-        const state = stateRaw ? (JSON.parse(stateRaw) as Record<string, unknown>) : {};
+        const stateRaw = await kv.get("loop_state");
+        let state: Record<string, unknown> = {};
+        if (stateRaw && stateRaw.length > 0) {
+          try {
+            state = JSON.parse(stateRaw) as Record<string, unknown>;
+          } catch {
+            /* use empty */
+          }
+        }
         const rows = await env.DB.prepare(
           "SELECT id, prompt, duration_seconds, updated_at FROM jobs WHERE status = 'completed' AND r2_key IS NOT NULL ORDER BY updated_at DESC LIMIT 10"
         )
