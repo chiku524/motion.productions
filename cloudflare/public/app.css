@@ -92,31 +92,39 @@ body {
 
 .main {
   flex: 1;
-  max-width: 42rem;
   margin: 0 auto;
   padding: 2rem 1.5rem;
   width: 100%;
 }
 
-/* Two-column layout: left = generator + Recent videos; right = Automated loop + Registries */
+/* Single-column default (narrow for mobile) */
+.main:not(.main-grid) {
+  max-width: 42rem;
+}
+
+/* Two-column layout: left = generator + Recent videos; right = Automated loop + Registries. Centered on page. */
 .main-grid {
-  max-width: 1200px;
+  max-width: 1320px;
   display: grid;
   grid-template-columns: 1fr;
   gap: 1.5rem;
   padding: 1.25rem 1rem;
+  margin-left: auto;
+  margin-right: auto;
 }
-@media (min-width: 900px) {
+@media (min-width: 768px) {
   .main-grid {
-    grid-template-columns: minmax(300px, 1fr) minmax(320px, 1fr);
-    gap: 1.5rem 2rem;
-    align-items: start;
+    grid-template-columns: 1fr 1fr;
+    gap: 2rem 2.5rem;
+    align-items: stretch;
+    padding: 1.5rem 2rem;
   }
   .grid-left {
     grid-column: 1;
     display: flex;
     flex-direction: column;
     gap: 1.25rem;
+    min-width: 0;
     min-height: 0;
   }
   .dashboard-right {
@@ -125,8 +133,20 @@ body {
     flex-direction: column;
     gap: 1rem;
     min-width: 0;
+    min-height: 0;
     overflow-wrap: break-word;
     word-break: break-word;
+  }
+  .dashboard-right .registries {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .dashboard-right .registries-content {
+    flex: 1;
+    min-height: 0;
+    max-height: none;
   }
 }
 
@@ -158,6 +178,9 @@ body {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   padding: 1.5rem;
+  min-width: 0;
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 .generator-form {
   display: flex;
@@ -356,6 +379,7 @@ body {
 /* Loop: automated Railway loop controls */
 .loop {
   margin-top: 3rem;
+  min-width: 0;
 }
 .loop-header {
   margin-bottom: 1.25rem;
@@ -484,14 +508,6 @@ body {
   border-color: var(--color-success) !important;
   color: white !important;
 }
-.loop-fields {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 1rem;
-}
-.loop-field {
-  flex: 1 1 140px;
-}
 .loop-input {
   width: 100%;
   padding: 0.5rem 0.75rem;
@@ -515,24 +531,39 @@ body {
 }
 .loop-select {
   width: 100%;
+  max-width: 100%;
   padding: 0.5rem 0.75rem;
   background: var(--color-bg);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   color: var(--color-text-heading);
   font-family: inherit;
-  font-size: 0.9375rem;
+  font-size: 0.875rem;
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2371717a' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.6rem center;
+  padding-right: 2rem;
 }
-.loop-hint {
-  display: block;
-  font-size: 0.75rem;
-  color: var(--color-text-muted);
-  margin-top: 0.25rem;
-  overflow-wrap: break-word;
-  word-break: break-word;
+.loop-select option {
+  font-size: 0.875rem;
 }
-.loop-controls .btn {
-  align-self: flex-start;
+.loop-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  min-width: 0;
+}
+.loop-cell {
+  min-width: 0;
+}
+.loop-cell-apply {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.loop-cell-apply .btn {
   flex-shrink: 0;
 }
 .loop-status {
@@ -591,6 +622,7 @@ body {
 /* Library: recent completed videos */
 .library {
   margin-top: 3rem;
+  min-width: 0;
 }
 .library-header {
   display: flex;
@@ -618,6 +650,7 @@ body {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: 1.25rem;
+  min-width: 0;
 }
 .library-loading,
 .library-empty {
@@ -694,9 +727,11 @@ body {
 .loop-compact { margin-top: 0; }
 .loop-compact .loop-header { margin-bottom: 0.75rem; }
 .loop-compact .loop-title { font-size: 1.1rem; }
-.loop-compact .loop-sub { font-size: 0.8125rem; }
+.loop-compact .loop-sub { font-size: 0.8125rem; line-height: 1.35; }
 .loop-compact .loop-controls { padding: 0.75rem 0; }
+.loop-compact .loop-controls .label { font-size: 0.8125rem; }
 .loop-compact .loop-status { margin-top: 0.5rem; }
+.loop-compact .loop-stat { font-size: 0.8125rem; }
 
 /* Library compact (left column: balanced height with right) */
 .library-compact { margin-top: 0; }
@@ -808,8 +843,7 @@ body {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   padding: 0.75rem;
-  min-height: 100px;
-  max-height: 420px;
+  min-height: 140px;
   overflow-y: auto;
 }
 .registries-loading {

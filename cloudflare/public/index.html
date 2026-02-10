@@ -58,19 +58,20 @@
       <span class="tagline">From prompt to production.</span>
     </header>
 
-    <main class="main">
-      <section class="hero">
+    <main class="main main-grid">
+      <section class="hero hero-compact">
         <h1 class="hero-title">Turn your script into video</h1>
         <p class="hero-sub">One prompt. One video. No external models — our procedural engine creates it.</p>
       </section>
 
+      <div class="grid-left">
       <section class="generator motion-fade-in-up">
         <form id="generate-form" class="generator-form">
           <label class="label" for="prompt">Describe your video</label>
           <textarea
             id="prompt"
             name="prompt"
-            class="textarea"
+            class="textarea textarea-compact"
             placeholder="e.g. Sunset over the ocean, dreamy waves, warm tones"
             rows="3"
             required
@@ -123,7 +124,22 @@
         </div>
       </section>
 
-      <section class="loop motion-fade-in-up" id="loop-section">
+      <section class="library motion-fade-in-up library-compact" id="library-section">
+        <div class="library-header">
+          <div>
+            <h2 class="library-title">Recent videos</h2>
+            <p class="library-sub">Latest successfully generated videos — progress from our procedural engine.</p>
+          </div>
+          <button type="button" id="library-refresh" class="btn btn-secondary btn-sm">Refresh</button>
+        </div>
+        <div id="library-list" class="library-list">
+          <div id="library-loading" class="library-loading">Loading…</div>
+        </div>
+      </section>
+      </div>
+
+      <aside class="dashboard-right">
+      <section class="loop motion-fade-in-up loop-compact" id="loop-section">
         <div class="loop-header">
           <h2 class="loop-title">Automated loop</h2>
           <p class="loop-sub">Control the continuous learning loop. Each run records color, motion, and narrative into registries — settings apply live to workers (e.g. Railway).</p>
@@ -139,8 +155,8 @@
               <span class="toggle-slider"></span>
             </label>
           </div>
-          <div class="loop-fields">
-            <div class="loop-field">
+          <div class="loop-grid">
+            <div class="loop-cell">
               <label class="label" for="loop-duration">Video duration per run (sec)</label>
               <select id="loop-duration" class="loop-select">
                 <option value="1">1s (learning-optimized)</option>
@@ -152,19 +168,20 @@
                 <option value="15">15s</option>
                 <option value="30">30s</option>
               </select>
-              <span class="loop-hint">Shorter = more prompts per hour; 1s is best for filling registries.</span>
             </div>
-            <div class="loop-field">
+            <div class="loop-cell">
               <label class="label" for="loop-delay">Pace (delay between runs, sec)</label>
               <input type="number" id="loop-delay" min="0" max="600" step="5" value="30" class="loop-input">
             </div>
-            <div class="loop-field">
+            <div class="loop-cell">
               <label class="label" for="loop-exploit">Exploit / Explore (0–100%)</label>
               <input type="range" id="loop-exploit" min="0" max="100" value="70" class="loop-slider">
               <span id="loop-exploit-label" class="loop-slider-label">70% exploit</span>
             </div>
+            <div class="loop-cell loop-cell-apply">
+              <button type="button" id="loop-save" class="btn btn-secondary btn-sm">Apply settings</button>
+            </div>
           </div>
-          <button type="button" id="loop-save" class="btn btn-secondary btn-sm">Apply settings</button>
         </div>
         <div class="loop-status">
           <div class="loop-stats">
@@ -203,21 +220,9 @@
           <div id="registries-tables" class="registries-tables" hidden></div>
         </div>
       </section>
+      </aside>
 
-      <section class="library motion-fade-in-up" id="library-section">
-        <div class="library-header">
-          <div>
-            <h2 class="library-title">Recent videos</h2>
-            <p class="library-sub">Latest successfully generated videos — progress from our procedural engine.</p>
-          </div>
-          <button type="button" id="library-refresh" class="btn btn-secondary btn-sm">Refresh</button>
-        </div>
-        <div id="library-list" class="library-list">
-          <div id="library-loading" class="library-loading">Loading…</div>
-        </div>
-      </section>
-
-      <section class="about">
+      <section class="about about-compact">
         <p class="about-text">
           Motion uses our own procedural engine — algorithms and data we built. No Runway, no Replicate, no external APIs.
           Each run feeds static (color, sound per frame), dynamic (motion, palettes per window), and narrative (themes, settings) registries so the system learns and improves over time.
