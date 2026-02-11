@@ -684,6 +684,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         gradient?: Array<{ key: string; gradient_type: string; strength?: number; source_prompt?: string }>;
         camera?: Array<{ key: string; motion_type: string; speed?: string; source_prompt?: string }>;
         narrative?: Record<string, Array<{ key: string; value?: string; source_prompt?: string; name?: string }>>;
+        job_id?: string;
       };
       try {
         body = (await request.json()) as typeof body;
@@ -754,8 +755,12 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         results.colors++;
       }
       for (const b of body.blends || []) {
-        const name = (b.name && b.name.trim()) ? b.name : await generateUniqueName(env);
-        if (!b.name || !b.name.trim()) await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+        let name = (b.name && b.name.trim()) ? b.name.trim() : await generateUniqueName(env);
+        if (b.name && b.name.trim()) {
+          name = await resolveUniqueBlendName(env, name);
+        } else {
+          await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+        }
         await env.DB.prepare(
           "INSERT INTO learned_blends (id, name, domain, inputs_json, output_json, primitive_depths_json, source_prompt) VALUES (?, ?, ?, ?, ?, ?, ?)"
         ).bind(uuid(), name, b.domain, JSON.stringify(b.inputs), JSON.stringify(b.output), b.primitive_depths ? JSON.stringify(b.primitive_depths) : null, (b.source_prompt || "").slice(0, 120)).run();
@@ -891,6 +896,16 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         }
         results.camera++;
       }
+      const totalResults = Object.values(results).reduce((a, b) => a + b, 0);
+      const jobId = typeof (body as { job_id?: string }).job_id === "string" ? (body as { job_id: string }).job_id.trim() : null;
+      if (jobId && totalResults > 0) {
+        try {
+          await env.DB.prepare("INSERT INTO discovery_runs (id, job_id) VALUES (?, ?)")
+            .bind(uuid(), jobId).run();
+        } catch {
+          // Ignore duplicate or missing table
+        }
+      }
       // Do not use KV delete (free tier limit). Stats cache expires via TTL; GET recomputes when stale.
       return json({ status: "recorded", results }, 201);
       } catch (e) {
@@ -1009,7 +1024,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       }
       // Canonical non-pure (multi-frame) options — gradient/camera/motion are non-pure; creation uses these when registry empty
       const origin_gradient = ["vertical", "horizontal", "radial", "angled"];
-      const origin_camera = ["static", "pan", "tilt", "dolly", "crane", "zoom", "zoom_out", "handheld"];
+      const origin_camera = ["static", "pan", "tilt", "dolly", "crane", "zoom", "zoom_out", "handheld", "roll", "truck", "pedestal", "arc", "tracking", "birds_eye", "whip_pan", "rotate"];
       const origin_motion = ["slow", "wave", "flow", "fast", "pulse"];
       // Interpretation registry: user prompts + resolved instructions (for creation / pick_prompt)
       const interpLimit = Math.min(parseInt(new URL(request.url).searchParams.get("interpretation_limit") || "100", 10), 500);
@@ -1068,7 +1083,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       // Blended canonical — must match origins.py (gradient_type, camera motion_type, motion speed+rhythm, audio tempo/mood/presence)
       const dynamicCanonical = {
         gradient_type: ["vertical", "horizontal", "radial", "angled"],
-        camera_motion: ["static", "pan", "tilt", "dolly", "crane", "zoom", "zoom_out", "handheld"],
+        camera_motion: ["static", "pan", "tilt", "dolly", "crane", "zoom", "zoom_out", "handheld", "roll", "truck", "pedestal", "arc", "tracking", "birds_eye", "whip_pan", "rotate"],
         motion: ["static", "slow", "medium", "fast", "steady", "pulsing", "wave", "random"],
         sound: ["tempo: slow", "tempo: medium", "tempo: fast", "mood: neutral", "mood: calm", "mood: tense", "mood: uplifting", "mood: dark", "presence: silence", "presence: ambient", "presence: music", "presence: sfx", "presence: full"],
       };
@@ -1123,9 +1138,17 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       const depthFromBlendDepths = (depths: Record<string, unknown> | null): { depth_pct: number; depth_breakdown: Record<string, number> } => {
         const depth_breakdown: Record<string, number> = {};
         if (!depths || typeof depths !== "object") return { depth_pct: 0, depth_breakdown };
-        for (const [k, v] of Object.entries(depths)) {
-          if (typeof v === "number") depth_breakdown[k] = v <= 1 ? Math.round(v * 100) : Math.round(v);
-        }
+        const flatten = (obj: Record<string, unknown>, prefix = ""): void => {
+          for (const [k, v] of Object.entries(obj)) {
+            if (typeof v === "number") {
+              const key = prefix ? `${prefix}.${k}` : k;
+              depth_breakdown[key] = v <= 1 ? Math.round(v * 100) : Math.round(v);
+            } else if (v && typeof v === "object" && !Array.isArray(v)) {
+              flatten(v as Record<string, unknown>, prefix ? `${prefix}.${k}` : k);
+            }
+          }
+        };
+        flatten(depths);
         const vals = Object.values(depth_breakdown);
         const depth_pct = vals.length ? Math.max(...vals) : 0;
         return { depth_pct, depth_breakdown };
@@ -1219,16 +1242,80 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       }
       const totalRuns = ids.length;
       const precision = totalRuns > 0 ? Math.round((withLearning / totalRuns) * 100) : 0;
+      let withDiscovery = 0;
+      if (ids.length > 0) {
+        try {
+          const placeholders = ids.map(() => "?").join(",");
+          const dr = await env.DB.prepare(
+            `SELECT COUNT(DISTINCT job_id) as c FROM discovery_runs WHERE job_id IN (${placeholders})`
+          ).bind(...ids).first<{ c: number }>();
+          withDiscovery = dr?.c ?? 0;
+        } catch {
+          withDiscovery = 0;
+        }
+      }
+      const discoveryRate = totalRuns > 0 ? Math.round((withDiscovery / totalRuns) * 100) : 0;
       return json({
         last_n: last,
         total_runs: totalRuns,
         runs_with_learning: withLearning,
         precision_pct: precision,
         target_pct: 95,
+        runs_with_discovery: withDiscovery,
+        discovery_rate_pct: discoveryRate,
+      });
+    }
+
+    // GET /api/loop/diagnostics — per-job has_learning / has_discovery for debugging precision gap
+    if (path === "/api/loop/diagnostics" && request.method === "GET") {
+      const last = Math.min(parseInt(new URL(request.url).searchParams.get("last") || "20", 10), 50);
+      const completed = await env.DB.prepare(
+        "SELECT id, prompt, created_at FROM jobs WHERE status = 'completed' AND r2_key IS NOT NULL ORDER BY updated_at DESC LIMIT ?"
+      ).bind(last).all<{ id: string; prompt: string; created_at: string }>();
+      const rows = completed.results || [];
+      const ids = rows.map((r) => r.id);
+      const learningSet = new Set<string>();
+      const discoverySet = new Set<string>();
+      if (ids.length > 0) {
+        const placeholders = ids.map(() => "?").join(",");
+        const lr = await env.DB.prepare(`SELECT job_id FROM learning_runs WHERE job_id IN (${placeholders})`).bind(...ids).all<{ job_id: string }>();
+        (lr.results || []).forEach((r) => { if (r.job_id) learningSet.add(r.job_id); });
+        try {
+          const dr = await env.DB.prepare(`SELECT job_id FROM discovery_runs WHERE job_id IN (${placeholders})`).bind(...ids).all<{ job_id: string }>();
+          (dr.results || []).forEach((r) => { if (r.job_id) discoverySet.add(r.job_id); });
+        } catch { /* discovery_runs may not exist */ }
+      }
+      const jobs = rows.map((r) => ({
+        job_id: r.id,
+        prompt_preview: (r.prompt || "").slice(0, 50),
+        has_learning: learningSet.has(r.id),
+        has_discovery: discoverySet.has(r.id),
+      }));
+      const missing_learning = jobs.filter((j) => !j.has_learning).length;
+      const missing_discovery = jobs.filter((j) => !j.has_discovery).length;
+      return json({
+        last_n: last,
+        jobs,
+        summary: {
+          missing_learning,
+          missing_discovery,
+          hint: missing_learning > 0 ? "Jobs without learning_run: POST /api/learning may have failed or job completed via different path" : null,
+        },
       });
     }
 
   return err("Not found", 404);
+}
+
+async function resolveUniqueBlendName(env: Env, base: string): Promise<string> {
+  let candidate = base;
+  for (let i = 0; i < 100; i++) {
+    const inReserve = await env.DB.prepare("SELECT name FROM name_reserve WHERE name = ?").bind(candidate).first();
+    const inBlends = await env.DB.prepare("SELECT name FROM learned_blends WHERE name = ?").bind(candidate).first();
+    if (!inReserve && !inBlends) return candidate;
+    candidate = i === 0 ? base + "2" : base + (i + 2);
+  }
+  return base + (Math.floor(Math.random() * 9000) + 1000);
 }
 
 async function generateUniqueName(env: Env): Promise<string> {
@@ -1249,14 +1336,16 @@ async function generateUniqueName(env: Env): Promise<string> {
     const seed = Math.floor(Math.random() * 1000000) + attempt * 7919;
     const c1 = invent(seed);
     const c2 = invent(seed + 1237);
-    const name = c1 + c2;
-    if (name.length >= 5) {
+    const raw = c1 + c2;
+    if (raw.length >= 5) {
+      const name = raw[0].toUpperCase() + raw.slice(1).toLowerCase();
       const inReserve = await env.DB.prepare("SELECT name FROM name_reserve WHERE name = ?").bind(name).first();
       const inBlends = await env.DB.prepare("SELECT name FROM learned_blends WHERE name = ?").bind(name).first();
       if (!inReserve && !inBlends) return name;
     }
   }
-  return "dsc_" + crypto.randomUUID().slice(0, 8);
+  const n = (Math.floor(Math.random() * 100000) + 1) % 100000;
+  return "Novel" + n.toString().padStart(5, "0");
 }
 
 async function logEvent(env: Env, eventType: string, jobId: string | null, payload: Record<string, unknown> | null): Promise<void> {

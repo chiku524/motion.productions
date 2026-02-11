@@ -152,7 +152,15 @@ INTERPRET_DELAY_SECONDS=10
 
 ---
 
-## 7. Verify
+## 7. Deploy interpret worker
+
+See **`docs/DEPLOY_INTERPRET_WORKER.md`** for full step-by-step instructions.
+
+Summary: Create a new Railway service in the same project, set **Start Command** to `python scripts/interpret_loop.py`, add `API_BASE`, and deploy. The `Procfile` includes `interpret:` for local/Procfile runs.
+
+---
+
+## 8. Verify
 
 1. **Railway dashboard** — Each service shows **Active** and recent logs (e.g. `[1]`, `[2]`, … for loop; `interpreted:` / `backfill:` for interpretation).
 2. **motion.productions** — In **Recent videos** and **Recent activity** you should see new runs with **Explore** and **Exploit** badges (for jobs created after the workflow_type deploy).
@@ -160,7 +168,7 @@ INTERPRET_DELAY_SECONDS=10
 
 ---
 
-## 8. Reference
+## 9. Reference
 
 - Env source of truth: `config/workflows.yaml`
 - Loop behavior: `docs/INTENDED_LOOP.md`, `docs/AUTOMATION.md`

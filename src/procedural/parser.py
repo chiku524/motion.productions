@@ -18,6 +18,7 @@ from .data import (
     KEYWORD_TO_TRANSITION,
     KEYWORD_TO_LIGHTING,
     KEYWORD_TO_GENRE,
+    KEYWORD_TO_STYLE,
     KEYWORD_TO_COMPOSITION_BALANCE,
     KEYWORD_TO_COMPOSITION_SYMMETRY,
     KEYWORD_TO_TENSION,
@@ -34,6 +35,7 @@ from .data import (
     DEFAULT_TRANSITION,
     DEFAULT_LIGHTING,
     DEFAULT_GENRE,
+    DEFAULT_STYLE,
     DEFAULT_COMPOSITION_BALANCE,
     DEFAULT_COMPOSITION_SYMMETRY,
     DEFAULT_TENSION,
@@ -62,6 +64,7 @@ class SceneSpec:
     transition_out: str = "cut"
     lighting_preset: str = "neutral"  # noir | golden_hour | neon | documentary | moody
     genre: str = "general"            # documentary | thriller | ad | tutorial | educational
+    style: str = "cinematic"           # cinematic | abstract | minimal | realistic | anime
     composition_balance: str = "balanced"
     composition_symmetry: str = "slight"
     pacing_factor: float = 1.0
@@ -171,6 +174,12 @@ def parse_prompt_to_spec(prompt: str, *, seed: int | None = None) -> SceneSpec:
             genre_val = KEYWORD_TO_GENRE[w]
             break
 
+    style_val = DEFAULT_STYLE
+    for w in words:
+        if w in KEYWORD_TO_STYLE:
+            style_val = KEYWORD_TO_STYLE[w]
+            break
+
     comp_balance = DEFAULT_COMPOSITION_BALANCE
     for w in words:
         if w in KEYWORD_TO_COMPOSITION_BALANCE:
@@ -229,6 +238,7 @@ def parse_prompt_to_spec(prompt: str, *, seed: int | None = None) -> SceneSpec:
         transition_out=transition,
         lighting_preset=lighting,
         genre=genre_val,
+        style=style_val,
         composition_balance=comp_balance,
         composition_symmetry=comp_symmetry,
         pacing_factor=pacing,

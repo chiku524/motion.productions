@@ -5,6 +5,8 @@ Produces diverse prompts for automated knowledge-building.
 import random
 from typing import Any, Iterator
 
+from ..random_utils import secure_choice, secure_random
+
 from ..procedural.data.keywords import (
     KEYWORD_TO_PALETTE,
     KEYWORD_TO_MOTION,
@@ -14,6 +16,7 @@ from ..procedural.data.keywords import (
     KEYWORD_TO_SHAPE,
     KEYWORD_TO_LIGHTING,
     KEYWORD_TO_GENRE,
+    KEYWORD_TO_STYLE,
     KEYWORD_TO_SHOT,
     KEYWORD_TO_TRANSITION,
     KEYWORD_TO_PACING,
@@ -36,6 +39,7 @@ _MODS_CAMERA = [k for k in KEYWORD_TO_CAMERA.keys() if k not in SUBJECTS_BASE]
 _MODS_SHAPE = [k for k in KEYWORD_TO_SHAPE.keys() if k not in SUBJECTS_BASE]
 _MODS_LIGHTING = list(KEYWORD_TO_LIGHTING.keys())
 _MODS_GENRE = list(KEYWORD_TO_GENRE.keys())
+_MODS_STYLE = list(KEYWORD_TO_STYLE.keys())
 _MODS_SHOT = list(KEYWORD_TO_SHOT.keys())
 _MODS_TRANSITION = list(KEYWORD_TO_TRANSITION.keys())
 # Temporal: pacing
@@ -50,7 +54,7 @@ _MODS_AUDIO = list(dict.fromkeys(m for m in _MODS_AUDIO if m not in SUBJECTS_BAS
 
 MODIFIERS_BASE = (
     _MODS_MOTION + _MODS_INTENSITY + _MODS_GRADIENT + _MODS_CAMERA + _MODS_SHAPE
-    + _MODS_LIGHTING + _MODS_GENRE + _MODS_SHOT + _MODS_TRANSITION
+    + _MODS_LIGHTING + _MODS_GENRE + _MODS_STYLE + _MODS_SHOT + _MODS_TRANSITION
     + _MODS_PACING + _MODS_COMPOSITION + _MODS_TENSION + _MODS_AUDIO
 )
 MODIFIERS_BASE = [m for m in MODIFIERS_BASE if m not in SUBJECTS_BASE]
@@ -169,44 +173,49 @@ def generate_procedural_prompt(
         return None
 
     # Prefer modifiers that map to different palettes/motion (wider interpretation spread)
-    def _pick_diverse_mods(n: int) -> list[str]:
+    def _pick_diverse_mods(n: int, bias_audio: bool = False) -> list[str]:
         chosen: list[str] = []
         pool = list(mod_pool)
-        for _ in range(n):
+        if bias_audio and _MODS_AUDIO:
+            first = secure_choice(_MODS_AUDIO)
+            if first not in chosen:
+                chosen.append(first)
+        for _ in range(n - len(chosen)):
             if not pool:
                 break
             candidates = [m for m in pool if m not in chosen] or pool
-            m = random.choice(candidates)
+            m = secure_choice(candidates)
             chosen.append(m)
         return chosen
 
     max_attempts = 200
+    bias_audio = secure_random() < 0.18  # 18% of runs: ensure at least one audio modifier
     for _ in range(max_attempts):
-        sub = random.choice(sub_pool)
-        mods = _pick_diverse_mods(3)
-        mod1 = mods[0] if mods else random.choice(mod_pool)
+        sub = secure_choice(sub_pool)
+        mods = _pick_diverse_mods(3, bias_audio=bias_audio)
+        mod1 = mods[0] if mods else secure_choice(mod_pool)
         mod2 = mods[1] if len(mods) > 1 else mod1
         mod3 = mods[2] if len(mods) > 2 else mod2
 
         # Pick template: 40% double, 25% triple (when we have 3 distinct), 35% single — more variety
-        r = random.random()
+        r = secure_random()
         if r < 0.25 and len(mod_pool) >= 3 and mod1 != mod2 and mod2 != mod3 and mod1 != mod3:
             templates = TEMPLATES_TRIPLE
-            tmpl = random.choice(templates)
+            tmpl = secure_choice(templates)
             try:
                 prompt = tmpl.format(subject=sub, mod1=mod1, mod2=mod2, mod3=mod3)
             except (KeyError, ValueError):
                 prompt = f"{sub}, {mod1}, {mod2} and {mod3}"
         elif r < 0.65 and mod1 != mod2:
             templates = TEMPLATES_DOUBLE
-            tmpl = random.choice(templates)
+            tmpl = secure_choice(templates)
             try:
                 prompt = tmpl.format(subject=sub, mod1=mod1, mod2=mod2)
             except (KeyError, ValueError):
                 prompt = f"{sub}, {mod1} and {mod2}"
         else:
             templates = TEMPLATES_SINGLE
-            tmpl = random.choice(templates)
+            tmpl = secure_choice(templates)
             try:
                 if "mod2" in tmpl:
                     prompt = tmpl.format(subject=sub, mod1=mod1, mod2=mod2)

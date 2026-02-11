@@ -5,13 +5,25 @@ Aligned with REGISTRY_FOUNDATION: Pure color depth uses origin primitives (black
 """
 from typing import Any
 
-# Pure registry origin colors for depth_breakdown (REGISTRY_FOUNDATION: origin color %)
+# Pure registry origin colors for depth_breakdown (REGISTRY_FOUNDATION: full 16-color set)
+# Must match static primitives in Worker / static_registry
 COLOR_ORIGIN_PRIMITIVES: list[tuple[str, tuple[float, float, float]]] = [
     ("black", (0.0, 0.0, 0.0)),
     ("white", (255.0, 255.0, 255.0)),
     ("red", (255.0, 0.0, 0.0)),
     ("green", (0.0, 255.0, 0.0)),
     ("blue", (0.0, 0.0, 255.0)),
+    ("yellow", (255.0, 255.0, 0.0)),
+    ("cyan", (0.0, 255.0, 255.0)),
+    ("magenta", (255.0, 0.0, 255.0)),
+    ("orange", (255.0, 165.0, 0.0)),
+    ("purple", (128.0, 0.0, 128.0)),
+    ("pink", (255.0, 192.0, 203.0)),
+    ("brown", (165.0, 42.0, 42.0)),
+    ("navy", (0.0, 0.0, 128.0)),
+    ("gray", (128.0, 128.0, 128.0)),
+    ("olive", (128.0, 128.0, 0.0)),
+    ("teal", (0.0, 128.0, 128.0)),
 ]
 
 

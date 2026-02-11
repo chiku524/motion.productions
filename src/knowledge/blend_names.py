@@ -2,10 +2,11 @@
 Sensible name generator for registry discoveries (Pure, Temporal, Semantic, Interpretation).
 
 Requirement (REGISTRY_FOUNDATION): names must be semantic (meaningful, possibly non-existent
-words) or clearly in the category of names (e.g. place-name style). No gibberish.
+words) or clearly in the category of names. No gibberish. No underscores — resemble actual
+names (e.g. Suntor, Velvet, Rainrise).
 
 Algorithm: combine 2 parts (start + end) from curated lists of real-word or name-like
-syllables. Output: prefix_word (e.g. color_velvet, audio_drift). Pronounceable, consistent.
+syllables. Output: single word, title case (e.g. Suntor, Velvet). Pronounceable, consistent.
 See docs/NAME_GENERATOR.md.
 """
 import re
@@ -111,28 +112,26 @@ def generate_sensible_name(
     value_hint: str = "",
     *,
     existing_names: set[str] | None = None,
-    use_prefix: bool = True,
+    use_prefix: bool = False,
 ) -> str:
     """
     Generate a sensible, short name for a registry entry.
-    Format: prefix_word (e.g. color_velvet, motion_drift). Word is 4–10 chars;
-    total name stays pleasant to eye and ear. Never returns lengthy or
-    nonsensical strings.
+    Format: single word, title case (e.g. Suntor, Velvet) — no underscores.
+    Resembles actual names. Word is 4–14 chars; pronounceable.
     """
     existing = existing_names or set()
-    prefix = _DOMAIN_PREFIX.get(domain, "discovery") if use_prefix else ""
     seed = hash((domain, value_hint, len(existing))) % (2**31)
 
     for i in range(200):
         word = _invent_word(seed + i * 7919)
         if len(word) < 4:
             continue
-        candidate = f"{prefix}_{word}" if prefix else word
+        candidate = word[0].upper() + word[1:].lower() if len(word) > 1 else word.upper()
         if candidate not in existing:
             return candidate
 
     suffix = abs(hash((domain, value_hint, seed))) % 100000
-    return f"{prefix}_{suffix:05d}" if prefix else f"discovery_{suffix:05d}"
+    return f"Novel{suffix:05d}"
 
 
 def _combine_words(words: list[str], max_len: int = 14) -> str:
@@ -150,27 +149,27 @@ def generate_blend_name(
     existing_names: set[str] | None = None,
 ) -> str:
     """
-    Generate a unique, sensible name for a blend. Tries: (1) combined prompt
-    words if short enough; (2) prefix + invented word; (3) domain + invented;
-    (4) numeric fallback. Names stay short and authentic-looking.
+    Generate a unique, sensible name for a blend. No underscores — resembles
+    actual names (e.g. Suntor, Velvet). Tries: (1) combined prompt words;
+    (2) invented word; (3) numeric fallback.
     """
     existing = existing_names or set()
     words = _words_from_prompt(prompt)
 
     if words:
-        candidate = _combine_words(words)
-        if candidate and candidate not in existing:
-            return candidate
+        raw = _combine_words(words)
+        if raw and raw not in existing:
+            return raw[0].upper() + raw[1:].lower() if len(raw) > 1 else raw.upper()
 
-    sensible = generate_sensible_name(domain, prompt, existing_names=existing, use_prefix=True)
+    sensible = generate_sensible_name(domain, prompt, existing_names=existing, use_prefix=False)
     if sensible not in existing:
         return sensible
 
     seed = hash((domain, prompt, len(existing))) % (2**31)
     for i in range(100):
         word = _invent_word(seed + i * 4567)
-        candidate = f"{domain}_{word}"
+        candidate = word[0].upper() + word[1:].lower() if len(word) > 1 else word.upper()
         if candidate not in existing:
             return candidate
 
-    return f"blend_{abs(hash((domain, prompt))) % 100000:05d}"
+    return f"Blend{abs(hash((domain, prompt))) % 100000:05d}"

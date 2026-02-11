@@ -80,4 +80,37 @@ def get_camera_params(
         pan_y = 0.15 * ease_in_out(min(1.0, t / 3.0))
         s = 1.0 + 0.1 * math.sin(t * 0.4)
         return s, 0.0, pan_y, 0.0
+    if camera_motion == "tilt":
+        # Tilt: vertical pan (camera angles up/down)
+        pan_y = 0.18 * math.sin(t * 0.35)
+        return 1.0, 0.0, pan_y, 0.0
+    if camera_motion == "roll":
+        # Roll: rotation around view axis
+        return 1.0, 0.0, 0.0, t * 0.25
+    if camera_motion == "truck":
+        # Truck: lateral movement (horizontal, like pan)
+        pan_x = 0.22 * math.sin(t * 0.28)
+        return 1.0, pan_x, 0.0, 0.0
+    if camera_motion == "pedestal":
+        # Pedestal: vertical camera move
+        pan_y = 0.12 * ease_in_out(min(1.0, t / 4.0))
+        return 1.0, 0.0, pan_y, 0.0
+    if camera_motion == "arc":
+        # Arc: combine pan + vertical
+        pan_x = 0.15 * math.sin(t * 0.3)
+        pan_y = 0.1 * math.cos(t * 0.3)
+        return 1.0, pan_x, pan_y, 0.0
+    if camera_motion == "tracking":
+        # Tracking: horizontal follow (like pan)
+        pan_x = 0.2 * ease_in_out(min(1.0, t / 3.0))
+        return 1.0, pan_x, 0.0, 0.0
+    if camera_motion == "whip_pan":
+        # Whip pan: fast horizontal sweep
+        pan_x = 0.4 * math.sin(t * 2.0)
+        return 1.0, pan_x, 0.0, 0.0
+    if camera_motion == "birds_eye":
+        # Birds eye: overhead feel — zoom out + slow orbit
+        s = 0.85 - 0.1 * math.sin(t * 0.2)
+        rotate = t * 0.15
+        return max(0.6, s), 0.0, 0.0, rotate
     return 1.0, 0.0, 0.0, 0.0

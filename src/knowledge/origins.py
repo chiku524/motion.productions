@@ -44,10 +44,29 @@ MOTION_ORIGINS = {
 
 
 # -----------------------------------------------------------------------------
-# CAMERA — primitives: pan, tilt, dolly, crane, zoom, static
+# CAMERA — primitives: pan, tilt, dolly, crane, zoom, static + roll, truck, pedestal, arc, tracking
+# Publicly documented film taxonomy (StudioBinder, CineTechBench, MovieLabs)
+# See docs/MOVIELABS_TAXONOMY_AUDIT.md for ontology alignment
 # -----------------------------------------------------------------------------
 CAMERA_ORIGINS = {
-    "motion_type": ["static", "pan", "tilt", "dolly", "crane", "zoom", "zoom_out", "handheld"],
+    "motion_type": [
+        "static",
+        "pan",
+        "tilt",
+        "dolly",
+        "crane",
+        "zoom",
+        "zoom_out",
+        "handheld",
+        "roll",
+        "truck",
+        "pedestal",
+        "arc",
+        "tracking",
+        "birds_eye",
+        "whip_pan",
+        "rotate",
+    ],
     "speed": ["slow", "medium", "fast"],
     "steadiness": ["locked", "stable", "handheld", "shaky"],
 }

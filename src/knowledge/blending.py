@@ -339,7 +339,11 @@ def blend_camera(
     approach: BlendApproach = "linear",
 ) -> str:
     """Blend camera motion types."""
-    order = ["static", "pan", "tilt", "dolly", "crane", "zoom", "zoom_out", "handheld"]
+    order = [
+        "static", "pan", "tilt", "dolly", "crane", "zoom", "zoom_out",
+        "handheld", "roll", "truck", "pedestal", "arc", "tracking",
+        "birds_eye", "whip_pan", "rotate",
+    ]
     ia = order.index(motion_a) if motion_a in order else 0
     ib = order.index(motion_b) if motion_b in order else 0
     return _ordinal_blend(order, ia, ib, weight, approach)

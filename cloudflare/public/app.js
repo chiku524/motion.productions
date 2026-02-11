@@ -631,7 +631,10 @@ async function loadRegistries() {
         const prog = JSON.parse(progText);
         const pct = typeof prog.precision_pct === 'number' ? prog.precision_pct : 0;
         const target = typeof prog.target_pct === 'number' ? prog.target_pct : 95;
-        registriesPrecision.textContent = `Precision: ${pct}% (target ${target}%)`;
+        const discoveryRate = typeof prog.discovery_rate_pct === 'number' ? prog.discovery_rate_pct : null;
+        let text = `Precision: ${pct}% (target ${target}%)`;
+        if (discoveryRate != null) text += ` · Discovery: ${discoveryRate}%`;
+        registriesPrecision.textContent = text;
         registriesPrecision.className = 'registries-precision ' + (pct >= target ? 'on-target' : 'below-target');
       } catch { registriesPrecision.textContent = 'Precision: —'; }
     }
@@ -663,6 +666,30 @@ if (registriesRefresh) {
   registriesRefresh.addEventListener('click', (e) => {
     e.preventDefault();
     loadRegistries();
+  });
+}
+const registriesDiagnostics = document.getElementById('registries-diagnostics');
+const registriesDiagnosticsPanel = document.getElementById('registries-diagnostics-panel');
+if (registriesDiagnostics && registriesDiagnosticsPanel) {
+  registriesDiagnostics.addEventListener('click', async () => {
+    if (registriesDiagnosticsPanel.hidden) {
+      registriesDiagnostics.disabled = true;
+      registriesDiagnosticsPanel.textContent = 'Loading…';
+      registriesDiagnosticsPanel.hidden = false;
+      try {
+        const res = await fetch(`${API_BASE}/api/loop/diagnostics?last=20`);
+        const data = await res.json();
+        let html = `Last ${data.last_n || 0} jobs: ${data.summary?.missing_learning ?? '?'} missing learning, ${data.summary?.missing_discovery ?? '?'} missing discovery.\n`;
+        if (data.summary?.hint) html += `\n${data.summary.hint}\n`;
+        html += '\n' + (data.jobs || []).map((j) => `${j.has_learning ? '✓' : '✗'} learn | ${j.has_discovery ? '✓' : '✗'} disc | ${escapeHtml(j.prompt_preview || '')}…`).join('\n');
+        registriesDiagnosticsPanel.innerHTML = `<pre>${html}</pre>`;
+      } catch (e) {
+        registriesDiagnosticsPanel.textContent = 'Failed: ' + (e.message || e);
+      }
+      registriesDiagnostics.disabled = false;
+    } else {
+      registriesDiagnosticsPanel.hidden = true;
+    }
   });
 }
 if (registriesExport) {

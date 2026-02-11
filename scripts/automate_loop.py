@@ -13,13 +13,14 @@ Usage:
 """
 import json
 import logging
-import random
 import sys
 import time
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.random_utils import secure_choice, secure_random
 
 logger = logging.getLogger(__name__)
 
@@ -68,16 +69,16 @@ def pick_prompt(
     recent = set(state.get("recent_prompts", [])[-100:])
     interpretation_prompts = (knowledge or {}).get("interpretation_prompts", [])
 
-    if random.random() < exploit_ratio and good:
-        return random.choice(good)
+    if secure_random() < exploit_ratio and good:
+        return secure_choice(good)
     # When exploring: sometimes use a pre-interpreted user prompt from the interpretation registry
-    if interpretation_prompts and random.random() < 0.35:
+    if interpretation_prompts and secure_random() < 0.35:
         candidates = [p for p in interpretation_prompts if isinstance(p, dict) and p.get("prompt") and p["prompt"] not in recent]
         if candidates:
-            return random.choice(candidates)["prompt"]
+            return secure_choice(candidates)["prompt"]
     return (
         generate_procedural_prompt(avoid=recent, knowledge=knowledge)
-        or (random.choice(good) if good else generate_procedural_prompt(knowledge=knowledge))
+        or (secure_choice(good) if good else generate_procedural_prompt(knowledge=knowledge))
     )
 
 
@@ -312,13 +313,14 @@ def run() -> None:
                             args.api_base,
                             novel_for_sync.get("static_colors", []),
                             novel_for_sync.get("static_sound"),
+                            job_id=job_id,
                         )
-                    post_dynamic_discoveries(args.api_base, novel_for_sync)
+                    post_dynamic_discoveries(args.api_base, novel_for_sync, job_id=job_id)
                     narrative_added, narrative_novel = grow_narrative_from_spec(
                         spec, prompt=prompt, config=config, instruction=instruction, collect_novel_for_sync=True
                     )
-                    if any(narrative_novel.get(a) for a in ("genre", "mood", "plots", "settings", "themes", "scene_type")):
-                        post_narrative_discoveries(args.api_base, narrative_novel)
+                    if any(narrative_novel.get(a) for a in ("genre", "mood", "plots", "settings", "themes", "style", "scene_type")):
+                        post_narrative_discoveries(args.api_base, narrative_novel, job_id=job_id)
             except APIError as e:
                 logger.warning("Per-instance or narrative sync failed (status=%s): %s", e.status_code, e)
             except Exception as e:
@@ -326,7 +328,7 @@ def run() -> None:
 
             try:
                 from src.knowledge.remote_sync import grow_and_sync_to_api
-                grow_and_sync_to_api(analysis_dict, prompt=prompt, api_base=args.api_base, spec=spec)
+                grow_and_sync_to_api(analysis_dict, prompt=prompt, api_base=args.api_base, spec=spec, job_id=job_id)
             except APIError as e:
                 logger.warning("POST /api/knowledge/discoveries failed (status=%s): %s", e.status_code, e)
                 print(f"  (discoveries sync: {e})")

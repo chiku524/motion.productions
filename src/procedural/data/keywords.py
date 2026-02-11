@@ -91,7 +91,7 @@ KEYWORD_TO_SHAPE: dict[str, str] = {
     "letterbox": "rect",
 }
 
-# Words that suggest camera-style motion
+# Words that suggest camera-style motion (film taxonomy)
 KEYWORD_TO_CAMERA: dict[str, str] = {
     "zoom": "zoom",
     "zoom_in": "zoom",
@@ -105,7 +105,19 @@ KEYWORD_TO_CAMERA: dict[str, str] = {
     "dolly": "dolly",
     "push": "dolly",
     "crane": "crane",
-    "tilt": "crane",
+    "tilt": "tilt",
+    "roll": "roll",
+    "truck": "truck",
+    "pedestal": "pedestal",
+    "arc": "arc",
+    "tracking": "tracking",
+    "track": "tracking",
+    "follow": "tracking",
+    "birds_eye": "birds_eye",
+    "bird_eye": "birds_eye",
+    "overhead": "birds_eye",
+    "whip_pan": "whip_pan",
+    "whip": "whip_pan",
 }
 
 # Words that suggest shot type (Phase 2)
@@ -190,6 +202,20 @@ STYLE_PHRASE_TO_STYLE: dict[str, str] = {
     "anime": "anime",
     "realistic": "realistic",
 }
+
+# Single words → style (NARRATIVE_ORIGINS: cinematic, abstract, minimal, realistic, anime)
+KEYWORD_TO_STYLE: dict[str, str] = {
+    "cinematic": "cinematic",
+    "film": "cinematic",
+    "movie": "cinematic",
+    "abstract": "abstract",
+    "minimal": "minimal",
+    "realistic": "realistic",
+    "documentary": "realistic",
+    "natural": "realistic",
+    "anime": "anime",
+}
+DEFAULT_STYLE = "cinematic"
 
 # Abstract mood words → tone (for "something nostalgic", "melancholic vibe")
 MOOD_TO_TONE: dict[str, str] = {

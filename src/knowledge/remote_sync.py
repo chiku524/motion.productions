@@ -7,15 +7,21 @@ from typing import Any
 
 def post_discoveries(
     api_base: str,
-    discoveries: dict[str, list[dict[str, Any]]],
+    discoveries: dict[str, Any],
+    *,
+    job_id: str | None = None,
 ) -> dict[str, Any]:
     """
     POST discoveries to /api/knowledge/discoveries.
     Returns API response. Uses retry on 5xx/connection errors.
     Supports static_colors, static_sound (per-frame) and colors, motion, lighting, etc. (dynamic).
+    When job_id is provided, records for discovery rate metric.
     """
     from ..api_client import api_request_with_retry
-    resp = api_request_with_retry(api_base, "POST", "/api/knowledge/discoveries", data=discoveries, timeout=30)
+    payload = dict(discoveries)
+    if job_id:
+        payload["job_id"] = job_id
+    resp = api_request_with_retry(api_base, "POST", "/api/knowledge/discoveries", data=payload, timeout=30)
     return resp
 
 
@@ -23,45 +29,51 @@ def post_static_discoveries(
     api_base: str,
     static_colors: list[dict[str, Any]],
     static_sound: list[dict[str, Any]] | None = None,
+    *,
+    job_id: str | None = None,
 ) -> dict[str, Any]:
     """
     POST per-frame static discoveries to /api/knowledge/discoveries.
     Writes to D1 static_colors and static_sound tables. Uses sensible names from Python when provided.
     """
-    discoveries: dict[str, list[dict[str, Any]]] = {
+    discoveries: dict[str, Any] = {
         "static_colors": static_colors,
         "static_sound": static_sound or [],
     }
-    return post_discoveries(api_base, discoveries)
+    return post_discoveries(api_base, discoveries, job_id=job_id)
 
 
 def post_narrative_discoveries(
     api_base: str,
     novel_for_sync: dict[str, list[dict[str, Any]]],
+    *,
+    job_id: str | None = None,
 ) -> dict[str, Any]:
     """
     POST narrative discoveries (themes, plots, settings, genre, mood, scene_type) to /api/knowledge/discoveries.
     Writes to D1 narrative_entries table. Uses sensible names from Python when provided.
     """
     discoveries: dict[str, Any] = {"narrative": novel_for_sync}
-    return post_discoveries(api_base, discoveries)
+    return post_discoveries(api_base, discoveries, job_id=job_id)
 
 
 def post_dynamic_discoveries(
     api_base: str,
     novel_for_sync: dict[str, list[dict[str, Any]]],
+    *,
+    job_id: str | None = None,
 ) -> dict[str, Any]:
     """
     POST per-window dynamic discoveries (motion, lighting, composition, graphics, temporal, technical)
     to /api/knowledge/discoveries. Only sends keys that have at least one entry.
     """
     dynamic_keys = ("motion", "time", "gradient", "camera", "lighting", "composition", "graphics", "temporal", "technical", "audio_semantic", "transition", "depth")
-    discoveries: dict[str, list[dict[str, Any]]] = {
+    discoveries: dict[str, Any] = {
         k: novel_for_sync.get(k, []) for k in dynamic_keys if novel_for_sync.get(k)
     }
     if not discoveries:
         return {}
-    return post_discoveries(api_base, discoveries)
+    return post_discoveries(api_base, discoveries, job_id=job_id)
 
 
 def grow_and_sync_to_api(
@@ -70,6 +82,7 @@ def grow_and_sync_to_api(
     prompt: str = "",
     api_base: str = "",
     spec: Any = None,
+    job_id: str | None = None,
 ) -> dict[str, Any]:
     """
     Extract discoveries from analysis and POST them to the API.
@@ -314,4 +327,13 @@ def grow_and_sync_to_api(
             "source_prompt": prompt[:120] if prompt else "",
         })
 
-    return post_discoveries(api_base, discoveries)
+    # Assign semantic names (no underscores, resemble actual names) before sync
+    from .blend_names import generate_blend_name
+    used_names: set[str] = set()
+    for b in discoveries.get("blends", []):
+        if not (b.get("name") or str(b.get("name", "")).strip()):
+            hint = prompt[:60] if prompt else str(b.get("output", ""))[:40]
+            b["name"] = generate_blend_name(b.get("domain", "blend"), hint, existing_names=used_names)
+            used_names.add(b["name"])
+
+    return post_discoveries(api_base, discoveries, job_id=job_id)

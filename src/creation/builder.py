@@ -6,8 +6,9 @@ When interpretation used defaults (no keyword matched), pick from registry (lear
 learned_camera, learned_motion) so growth is prioritised and pure elements can blend across frames;
 only fall back to origin primitives when registry is empty.
 """
-import random
 from typing import Any
+
+from ..random_utils import secure_choice
 
 from ..interpretation import InterpretedInstruction
 from ..procedural.parser import SceneSpec
@@ -22,7 +23,10 @@ from ..knowledge.origins import GRAPHICS_ORIGINS, CAMERA_ORIGINS
 # Renderer-valid sets (used only to filter registry values; no fixed list used for creation)
 _GRADIENT_VALID = frozenset(GRAPHICS_ORIGINS["gradient_type"])
 _MOTION_VALID = frozenset(("slow", "wave", "flow", "fast", "pulse"))
-_CAMERA_VALID = frozenset(("static", "zoom", "zoom_out", "pan", "rotate", "dolly", "crane"))
+_CAMERA_VALID = frozenset((
+    "static", "zoom", "zoom_out", "pan", "rotate", "dolly", "crane",
+    "tilt", "roll", "truck", "pedestal", "arc", "tracking", "whip_pan", "birds_eye",
+))
 
 
 def _pool_from_knowledge(
@@ -45,7 +49,7 @@ def _random_motion_from_registry(knowledge: dict[str, Any] | None) -> str | None
     learned = (knowledge or {}).get("learned_motion", []) or []
     if not learned:
         return None
-    m = random.choice(learned[:20])
+    m = secure_choice(learned[:20])
     if not isinstance(m, dict):
         return None
     trend = m.get("motion_trend") or (m.get("key") or "").split("_")[-1]
@@ -130,16 +134,16 @@ def build_spec_from_instruction(
     # Registry-only: no fixed lists — use learned_* or origin_* from knowledge (API); only if both empty use origins module
     if gradient == DEFAULT_GRADIENT:
         pool = _pool_from_knowledge(knowledge, "learned_gradient", "origin_gradient", _GRADIENT_VALID)
-        gradient = random.choice(pool) if pool else random.choice(tuple(GRAPHICS_ORIGINS["gradient_type"]))
+        gradient = secure_choice(pool) if pool else secure_choice(tuple(GRAPHICS_ORIGINS["gradient_type"]))
     if motion == DEFAULT_MOTION:
         motion = _random_motion_from_registry(knowledge)
         if not motion:
             origin_m = (knowledge or {}).get("origin_motion") or []
             pool = [v for v in origin_m if isinstance(v, str) and v in _MOTION_VALID]
-            motion = random.choice(pool) if pool else random.choice(tuple(_MOTION_VALID))
+            motion = secure_choice(pool) if pool else secure_choice(tuple(_MOTION_VALID))
     if camera == DEFAULT_CAMERA:
         pool = _pool_from_knowledge(knowledge, "learned_camera", "origin_camera", _CAMERA_VALID)
-        camera = random.choice(pool) if pool else random.choice([v for v in CAMERA_ORIGINS["motion_type"] if v in _CAMERA_VALID] or list(_CAMERA_VALID))
+        camera = secure_choice(pool) if pool else secure_choice([v for v in CAMERA_ORIGINS["motion_type"] if v in _CAMERA_VALID] or list(_CAMERA_VALID))
 
     return SceneSpec(
         palette_name=palette,
@@ -155,6 +159,7 @@ def build_spec_from_instruction(
         transition_out=transition,
         lighting_preset=lighting,
         genre=genre_val,
+        style=style_val or "cinematic",
         composition_balance=composition_balance,
         composition_symmetry=composition_symmetry,
         pacing_factor=pacing_factor,
@@ -199,10 +204,9 @@ def _build_palette_from_blending(
     # Optionally blend with learned color (novel from discoveries) — stronger weight for visible variety
     learned = (knowledge or {}).get("learned_colors", {}) or {}
     if learned:
-        import random
         items = list(learned.items())[:8]
         if items:
-            key, data = random.choice(items)
+            key, data = secure_choice(items)
             if isinstance(data, dict) and "r" in data and "g" in data and "b" in data:
                 lr, lg, lb = data["r"], data["g"], data["b"]
                 learned_rgb = (float(lr), float(lg), float(lb))
@@ -246,8 +250,7 @@ def _build_motion_from_blending(
     # Optionally blend with learned motion (from discoveries) — stronger weight for visible variety
     learned = (knowledge or {}).get("learned_motion", []) or []
     if learned:
-        import random
-        m = random.choice(learned[:15]) if learned else None
+        m = secure_choice(learned[:15]) if learned else None
         if isinstance(m, dict):
             trend = m.get("motion_trend") or m.get("key", "").split("_")[-1]
             if trend and trend in ("static", "slow", "medium", "fast", "steady", "pulsing", "wave"):

@@ -82,14 +82,14 @@ This document tracks the seven enhancement steps for the continuous loop. Use it
 
 | Already Done | Needs to Be Done |
 |--------------|------------------|
-| `pick_prompt` uses `random.choice` | Use `secrets` or equivalent for high-quality randomness |
-| `random.choice` for learned colors in blending | Growth/creation: select domain values at random (primitives + registry) |
+| `pick_prompt` uses `secure_choice` (secrets) | ✅ |
+| `secure_choice` for learned colors in blending | Growth/creation: select domain values with crypto-quality RNG |
 | Name reserve and `take()` exist | Define "choose value at random" per domain |
 | `generate_blend_name` invents names | Ensure all new blended values are extracted, recorded, and named |
 | | Single, consistent random-selection algorithm across domains |
 | | Distinguish "truly new" vs "already known" before naming |
 
-**Status:** ⬜ Not started
+**Status:** ✅ Done
 
 ---
 
@@ -118,7 +118,7 @@ This document tracks the seven enhancement steps for the continuous loop. Use it
 | **2** | ✅ Done — mandatory audio; failures logged/raised; missing deps surfaced |
 | **3 & 4** | ✅ Done — prompt → primitive values; creation/renderer use blended values; blend cause documented |
 | **5** | ✅ Done — extraction/registry use exact values; closest_palette is display-only |
-| **6** | No structured "choose at random" algorithm for domain values; need crypto-quality RNG |
+| **6** | ✅ Done — `src/random_utils.py`: secure_choice/secure_random (secrets); pick_prompt, prompt_gen, builder use crypto RNG |
 | **7** | ✅ Done — English-like names; unified registry; all domains recorded |
 
 ---
@@ -131,4 +131,4 @@ This document tracks the seven enhancement steps for the continuous loop. Use it
 
 ---
 
-*Last updated: 2025-02-08 — Registry, extraction, names, primitive blending (color, motion, lighting, composition)*
+*Last updated: 2026-02-10 — Step 6: crypto-quality RNG (secure_choice/secure_random) in automate_loop, prompt_gen, builder*

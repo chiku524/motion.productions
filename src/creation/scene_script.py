@@ -121,6 +121,7 @@ def spec_from_shot(
         transition_out=shot.transition_out,
         lighting_preset=getattr(base_spec, "lighting_preset", "neutral") or "neutral",
         genre=getattr(base_spec, "genre", "general") or "general",
+        style=getattr(base_spec, "style", "cinematic") or "cinematic",
         text_overlay=getattr(base_spec, "text_overlay", None),
         text_position=getattr(base_spec, "text_position", "center") or "center",
         educational_template=getattr(base_spec, "educational_template", None),
