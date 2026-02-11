@@ -4,60 +4,27 @@ Potential enhancements for better loop performance, reliability, and output qual
 
 ---
 
-## High impact
+## Implemented (2026-02-10)
 
-### 1. Batch interpretation backfill
-
-**Current:** `interpret_loop.py` backfills prompts from jobs table one-by-one.  
-**Improvement:** Batch fetch N jobs without interpretation, interpret in parallel (or sequentially with connection pooling), then batch-insert. Reduces API round-trips.
-
-### 2. Discovery rate feedback to exploit ratio
-
-**Current:** Exploit ratio (70/30) is fixed or UI-controlled.  
-**Improvement:** When `discovery_rate_pct` drops (e.g. < 10%), auto-increase explore ratio temporarily so the loop discovers more before saturating.
-
-### 3. Health/readiness endpoints
-
-**Current:** Railway workers run until crash; no liveness check.  
-**Improvement:** Add a minimal HTTP health endpoint (if loop exposes one) or use Railway's process health. Enables faster restarts and better observability.
+| # | Item | Implementation |
+|---|------|----------------|
+| 1 | Batch interpretation backfill | `POST /api/interpretations/batch`; interpret_loop fetches 50, interprets, batch POSTs |
+| 2 | Discovery rate feedback | `_get_discovery_adjusted_exploit_ratio()` caps exploit at 0.4 when discovery_rate_pct < 10% |
+| 3 | Health endpoints | `--health-port` / `HEALTH_PORT`; Worker `/health`, `/api/health`; `src/workflow_utils.start_health_server()` |
+| 4 | KV rate-limit | State save uses `max_retries=5`; api_request already retries 429 with backoff |
+| 5 | Queue prioritization | `ORDER BY CASE WHEN source = 'web' THEN 0 ELSE 1 END` in GET /api/interpret/queue |
+| 6 | Prompt deduplication | `_is_near_duplicate()` in prompt_gen; skip if >80% word overlap with avoid set |
+| 7 | Structured logging | `log_structured()` in workflow_utils; automate_loop logs phase, run, job_id, prompt_preview |
+| 8 | Graceful shutdown | `setup_graceful_shutdown()`; SIGTERM/SIGINT set flag; loop checks `request_shutdown()` |
+| 9 | Metrics export | `GET /api/metrics` returns Prometheus text format (total_runs, precision_pct, discovery_rate_pct) |
 
 ---
 
-## Medium impact
+## Future ideas
 
-### 4. KV rate-limit awareness
-
-**Current:** State saved every N runs; 1 write/sec per KV key.  
-**Improvement:** If POST /api/loop/state returns 429, back off and retry with exponential delay instead of logging and continuing.
-
-### 5. Interpretation queue prioritization
-
-**Current:** Queue processed FIFO.  
-**Improvement:** Prioritize prompts from recent jobs or from user-submitted queue over old backfill items when both exist.
-
-### 6. Procedural prompt deduplication
-
-**Current:** `avoid` set prevents repeats within recent prompts, but exploration can still produce near-duplicates.  
-**Improvement:** Semantic or keyword-based dedup (e.g. skip if prompt shares >80% words with recent) to reduce redundant exploration.
-
----
-
-## Lower priority
-
-### 7. Structured logging for diagnostics
-
-**Current:** Logs are free-form.  
-**Improvement:** JSON or structured log format (job_id, workflow_type, phase, duration) for easier parsing in Railway logs / external monitoring.
-
-### 8. Graceful shutdown
-
-**Current:** Loop exits on SIGTERM mid-run.  
-**Improvement:** Catch SIGTERM, finish current run if possible, then exit. Avoids partial state.
-
-### 9. Metrics export
-
-**Current:** Discovery rate, precision in API/UI.  
-**Improvement:** Prometheus-compatible `/metrics` or periodic stats push for dashboards.
+- **Batch discovery POST:** Reduce round-trips when syncing many discoveries.
+- **Interpretation cache:** Skip re-interpreting identical prompts.
+- **Adaptive delay:** Adjust LOOP_DELAY based on queue depth or error rate.
 
 ---
 

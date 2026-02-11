@@ -43,7 +43,7 @@ def baseline_state() -> dict:
     }
 
 
-from src.api_client import APIError, api_request_with_retry
+from src.api_client import APIError, api_request, api_request_with_retry
 
 
 def is_good_outcome(analysis: dict) -> bool:
@@ -103,18 +103,44 @@ STATE_SAVE_EVERY_N_RUNS = 5
 
 
 def _save_state(api_base: str, state: dict, run_count: int) -> None:
-    """Persist state to API (KV). Saves only every N runs to avoid KV rate limit (1 write/sec per key)."""
+    """Persist state to API (KV). Saves only every N runs. Retries on 429 with backoff."""
     if run_count % STATE_SAVE_EVERY_N_RUNS != 0:
         return
     try:
-        api_request_with_retry(
+        # KV 1 write/sec — use extra retries for 429
+        api_request(
             api_base, "POST", "/api/loop/state",
             data={"state": state},
             timeout=15,
+            max_retries=5,
+            backoff_seconds=2.0,
         )
     except APIError as e:
         detail = f" {e.body}" if getattr(e, "body", None) else ""
         logger.warning("POST /api/loop/state failed (status=%s, path=%s): %s%s — state not persisted", e.status_code, e.path, e, detail)
+
+
+def _load_progress(api_base: str) -> dict:
+    """Load loop progress (discovery rate, precision) for adaptive exploit ratio."""
+    try:
+        return api_request_with_retry(api_base, "GET", "/api/loop/progress?last=20", timeout=10)
+    except APIError:
+        return {}
+
+
+def _get_discovery_adjusted_exploit_ratio(
+    base_ratio: float,
+    progress: dict,
+    override_active: bool,
+) -> float:
+    """When discovery_rate_pct < 10%, temporarily reduce exploit to boost exploration."""
+    if override_active:
+        return base_ratio
+    rate = progress.get("discovery_rate_pct")
+    if rate is not None and rate < 10 and progress.get("total_runs", 0) >= 5:
+        # Cap exploit at 0.4 when discovery is low
+        return min(base_ratio, 0.4)
+    return base_ratio
 
 
 def _load_loop_config(api_base: str) -> dict:
@@ -158,7 +184,15 @@ def run() -> None:
     parser.add_argument("--duration", type=float, default=6, help="Base duration (s). Use 1 for learning-optimized (more videos, one window each).")
     parser.add_argument("--delay", type=float, default=None, help="Seconds to wait between runs (e.g. 30 to view results); env LOOP_DELAY_SECONDS")
     parser.add_argument("--config", type=Path, default=None)
+    parser.add_argument("--health-port", type=int, default=None, help="Port for health HTTP server (0=disabled); env HEALTH_PORT")
     args = parser.parse_args()
+
+    from src.workflow_utils import setup_graceful_shutdown, start_health_server, request_shutdown, log_structured
+    setup_graceful_shutdown()
+    health_port = args.health_port if args.health_port is not None else int(os.environ.get("HEALTH_PORT", "0"))
+    if health_port > 0:
+        start_health_server(health_port)
+        log_structured("info", msg="Health server started", port=health_port)
     delay_seconds = args.delay if args.delay is not None else (float(os.environ.get("LOOP_DELAY_SECONDS", "0")) or 0)
 
     from src.config import load_config
@@ -186,6 +220,10 @@ def run() -> None:
     print("Each output triggers the next run. Toggle loop in webapp to pause.\n")
 
     while True:
+        if request_shutdown():
+            log_structured("info", msg="Shutdown requested, exiting")
+            break
+
         loop_config = _load_loop_config(args.api_base)
         if not loop_config.get("enabled", True):
             print("Loop paused (disabled in webapp). Rechecking in 30s...")
@@ -194,8 +232,11 @@ def run() -> None:
 
         delay_seconds = loop_config.get("delay_seconds") or (args.delay if args.delay is not None else float(os.environ.get("LOOP_DELAY_SECONDS", "0")) or 0)
         override = os.environ.get("LOOP_EXPLOIT_RATIO_OVERRIDE")
-        exploit_ratio = float(override) if override is not None and override != "" else loop_config.get("exploit_ratio", DEFAULT_EXPLOIT_RATIO)
+        override_active = override is not None and override != ""
+        exploit_ratio = float(override) if override_active else loop_config.get("exploit_ratio", DEFAULT_EXPLOIT_RATIO)
         exploit_ratio = max(0.0, min(1.0, exploit_ratio))
+        progress = _load_progress(args.api_base)
+        exploit_ratio = _get_discovery_adjusted_exploit_ratio(exploit_ratio, progress, override_active)
         # workflow_type for site: explorer (discovery) | exploiter (interpretation) | main (balanced)
         workflow_type = os.environ.get("LOOP_WORKFLOW_TYPE") or ("explorer" if override == "0" else "exploiter" if override == "1" else "main")
 
@@ -241,6 +282,7 @@ def run() -> None:
             continue
 
         out_path = out_dir / f"loop_{job_id}.mp4"
+        log_structured("info", phase="run", run=state["run_count"] + 1, job_id=job_id, prompt_preview=prompt[:50], duration=duration)
         print(f"[{state['run_count'] + 1}] {prompt[:50]}... ({duration}s) ", end="", flush=True)
 
         run_succeeded = False
@@ -376,6 +418,8 @@ def run() -> None:
             state["last_prompt"] = (prompt or "")[:80] + ("…" if len(prompt or "") > 80 else "")
             state["last_job_id"] = job_id
             _save_state(args.api_base, state, state["run_count"])
+
+    print("Loop stopped.")
 
 
 if __name__ == "__main__":

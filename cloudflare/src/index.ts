@@ -39,7 +39,7 @@ export default {
     const path = url.pathname;
 
     // Health (API)
-    if (path === "/health") {
+    if (path === "/health" || path === "/api/health") {
       return json({ ok: true, service: "motion-productions" });
     }
 
@@ -456,8 +456,9 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
     // GET /api/interpret/queue — fetch pending prompts for interpretation worker
     if (path === "/api/interpret/queue" && request.method === "GET") {
       const limit = Math.min(parseInt(new URL(request.url).searchParams.get("limit") || "20", 10), 50);
+      // Prioritize user-submitted (web) over worker-enqueued
       const rows = await env.DB.prepare(
-        "SELECT id, prompt, source, created_at FROM interpretations WHERE status = 'pending' ORDER BY created_at ASC LIMIT ?"
+        "SELECT id, prompt, source, created_at FROM interpretations WHERE status = 'pending' ORDER BY CASE WHEN source = 'web' THEN 0 ELSE 1 END, created_at ASC LIMIT ?"
       )
         .bind(limit)
         .all<{ id: string; prompt: string; source: string; created_at: string }>();
@@ -506,6 +507,40 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         .all<{ prompt: string }>();
       const prompts = (rows.results || []).map((r) => r.prompt);
       return json({ prompts });
+    }
+
+    // POST /api/interpretations/batch — store multiple completed interpretations (batch backfill)
+    if (path === "/api/interpretations/batch" && request.method === "POST") {
+      let body: { items: Array<{ prompt: string; instruction: Record<string, unknown>; source?: string }> };
+      try {
+        body = (await request.json()) as typeof body;
+      } catch {
+        return err("Invalid JSON");
+      }
+      const items = Array.isArray(body.items) ? body.items : [];
+      if (items.length === 0) return json({ inserted: 0 });
+      const maxBatch = 50;
+      const toInsert = items.slice(0, maxBatch);
+      let inserted = 0;
+      for (const it of toInsert) {
+        const prompt = typeof it.prompt === "string" ? it.prompt.trim() : "";
+        if (!prompt) continue;
+        const instruction = it.instruction && typeof it.instruction === "object" ? it.instruction : null;
+        if (!instruction) continue;
+        const source = typeof it.source === "string" && /^(web|worker|loop|backfill)$/.test(it.source) ? it.source : "backfill";
+        const id = uuid();
+        try {
+          await env.DB.prepare(
+            "INSERT INTO interpretations (id, prompt, instruction_json, source, status) VALUES (?, ?, ?, ?, 'done')"
+          )
+            .bind(id, prompt, JSON.stringify(instruction), source)
+            .run();
+          inserted++;
+        } catch {
+          // Skip duplicate or constraint error
+        }
+      }
+      return json({ inserted }, inserted > 0 ? 201 : 200);
     }
 
     // POST /api/interpretations — store completed interpretation directly (e.g. backfill from jobs)
@@ -1264,6 +1299,51 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         runs_with_discovery: withDiscovery,
         discovery_rate_pct: discoveryRate,
       });
+    }
+
+    // GET /api/metrics — Prometheus-compatible metrics for dashboards
+    if (path === "/api/metrics" && request.method === "GET") {
+      try {
+        const last = 20;
+        const completed = await env.DB.prepare(
+          "SELECT id FROM jobs WHERE status = 'completed' AND r2_key IS NOT NULL ORDER BY updated_at DESC LIMIT ?"
+        ).bind(last).all<{ id: string }>();
+        const ids = (completed.results || []).map((r) => r.id);
+        let withLearning = 0;
+        let withDiscovery = 0;
+        if (ids.length > 0) {
+          const ph = ids.map(() => "?").join(",");
+          const lr = await env.DB.prepare(`SELECT COUNT(DISTINCT job_id) as c FROM learning_runs WHERE job_id IN (${ph})`).bind(...ids).first<{ c: number }>();
+          withLearning = lr?.c ?? 0;
+          try {
+            const dr = await env.DB.prepare(`SELECT COUNT(DISTINCT job_id) as c FROM discovery_runs WHERE job_id IN (${ph})`).bind(...ids).first<{ c: number }>();
+            withDiscovery = dr?.c ?? 0;
+          } catch { /* discovery_runs may not exist */ }
+        }
+        const totalRuns = ids.length;
+        const precision = totalRuns > 0 ? (withLearning / totalRuns) * 100 : 0;
+        const discoveryRate = totalRuns > 0 ? (withDiscovery / totalRuns) * 100 : 0;
+        const jobCount = await env.DB.prepare("SELECT COUNT(*) as c FROM jobs WHERE status = 'completed'").first<{ c: number }>();
+        const lines = [
+          "# HELP motion_productions_total_runs Completed jobs in last N",
+          "# TYPE motion_productions_total_runs gauge",
+          `motion_productions_total_runs{last="${last}"} ${totalRuns}`,
+          "# HELP motion_productions_precision_pct Runs with learning (%)",
+          "# TYPE motion_productions_precision_pct gauge",
+          `motion_productions_precision_pct ${precision}`,
+          "# HELP motion_productions_discovery_rate_pct Runs with discovery (%)",
+          "# TYPE motion_productions_discovery_rate_pct gauge",
+          `motion_productions_discovery_rate_pct ${discoveryRate}`,
+          "# HELP motion_productions_jobs_total Total completed jobs",
+          "# TYPE motion_productions_jobs_total gauge",
+          `motion_productions_jobs_total ${jobCount?.c ?? 0}`,
+        ];
+        return new Response(lines.join("\n") + "\n", {
+          headers: { "Content-Type": "text/plain; charset=utf-8", ...corsHeaders },
+        });
+      } catch (e) {
+        return json({ error: "Metrics failed", details: String(e) }, 500);
+      }
     }
 
     // GET /api/loop/diagnostics — per-job has_learning / has_discovery for debugging precision gap

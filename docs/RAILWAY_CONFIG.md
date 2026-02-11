@@ -148,6 +148,7 @@ LOOP_WORKFLOW_TYPE=main
 ```env
 API_BASE=https://motion.productions
 INTERPRET_DELAY_SECONDS=10
+HEALTH_PORT=8080
 ```
 
 ---

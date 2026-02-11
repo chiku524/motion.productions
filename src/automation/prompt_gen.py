@@ -140,6 +140,23 @@ def _expand_from_knowledge(knowledge: dict[str, Any] | None) -> tuple[list[str],
     return extra_subjects, extra_modifiers
 
 
+def _word_overlap_ratio(a: str, b: str) -> float:
+    """Fraction of words in a that also appear in b (0–1). Used for near-duplicate detection."""
+    words_a = set(w.lower() for w in a.split() if len(w) > 1)
+    words_b = set(w.lower() for w in b.split() if len(w) > 1)
+    if not words_a:
+        return 0.0
+    return len(words_a & words_b) / len(words_a)
+
+
+def _is_near_duplicate(prompt: str, avoid: set[str], threshold: float = 0.8) -> bool:
+    """True if prompt shares >threshold fraction of words with any avoid item."""
+    for other in avoid:
+        if _word_overlap_ratio(prompt, other) >= threshold:
+            return True
+    return False
+
+
 def generate_procedural_prompt(
     *,
     subjects: list[str] | None = None,
@@ -226,7 +243,7 @@ def generate_procedural_prompt(
             except (KeyError, ValueError):
                 prompt = f"{sub}, {mod1}"
 
-        if prompt and prompt not in avoid:
+        if prompt and prompt not in avoid and not _is_near_duplicate(prompt, avoid):
             return prompt
 
     return None

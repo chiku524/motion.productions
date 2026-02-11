@@ -49,11 +49,18 @@ def run() -> None:
         action="store_true",
         help="Disable backfill of prompts from jobs table",
     )
+    parser.add_argument("--health-port", type=int, default=None, help="Port for health HTTP server (0=disabled); env HEALTH_PORT")
     args = parser.parse_args()
     delay = args.delay if args.delay is not None else float(os.environ.get("INTERPRET_DELAY_SECONDS", DEFAULT_DELAY_SECONDS))
 
     from src.api_client import APIError, api_request_with_retry
     from src.interpretation import interpret_user_prompt
+    from src.workflow_utils import setup_graceful_shutdown, start_health_server, request_shutdown
+
+    setup_graceful_shutdown()
+    health_port = args.health_port if args.health_port is not None else int(os.environ.get("HEALTH_PORT", "0"))
+    if health_port > 0:
+        start_health_server(health_port)
 
     api_base = args.api_base.rstrip("/")
     print("Interpretation worker started (no create/render)")
@@ -62,6 +69,9 @@ def run() -> None:
 
     cycle = 0
     while True:
+        if request_shutdown():
+            print("Shutdown requested, exiting")
+            break
         cycle += 1
         try:
             # 1) Process queue: GET pending → interpret → PATCH result
@@ -96,31 +106,44 @@ def run() -> None:
                 except Exception as e:
                     logger.warning("Interpret failed for %s: %s", prompt[:40], e)
 
-            # 2) Backfill: interpret prompts from jobs that don't have an interpretation yet
+            # 2) Backfill: batch fetch → interpret all → batch POST (reduces round-trips)
             if not args.no_backfill and api_base:
                 try:
                     backfill = api_request_with_retry(
-                        api_base, "GET", "/api/interpret/backfill-prompts?limit=15",
+                        api_base, "GET", "/api/interpret/backfill-prompts?limit=50",
                         timeout=15,
                     )
-                    prompts = backfill.get("prompts", [])
-                    for prompt in prompts:
-                        if not (prompt and isinstance(prompt, str)):
-                            continue
-                        prompt = prompt.strip()
-                        try:
-                            instruction = interpret_user_prompt(prompt, default_duration=6.0)
-                            payload = instruction.to_api_dict() if hasattr(instruction, "to_api_dict") else instruction.to_dict()
-                            api_request_with_retry(
-                                api_base, "POST", "/api/interpretations",
-                                data={"prompt": prompt, "instruction": payload, "source": "backfill"},
-                                timeout=15,
-                            )
-                            print(f"[{cycle}] backfill: {prompt[:50]}…")
-                        except APIError as e:
-                            logger.warning("POST /api/interpretations (backfill) failed: %s", e)
-                        except Exception as e:
-                            logger.warning("Backfill interpret failed for %s: %s", prompt[:40], e)
+                    prompts = [p.strip() for p in backfill.get("prompts", []) if p and isinstance(p, str)]
+                    if prompts:
+                        batch: list[dict] = []
+                        for prompt in prompts:
+                            try:
+                                instruction = interpret_user_prompt(prompt, default_duration=6.0)
+                                payload = instruction.to_api_dict() if hasattr(instruction, "to_api_dict") else instruction.to_dict()
+                                batch.append({"prompt": prompt, "instruction": payload, "source": "backfill"})
+                            except Exception as e:
+                                logger.warning("Backfill interpret failed for %s: %s", prompt[:40], e)
+                        if batch:
+                            try:
+                                resp = api_request_with_retry(
+                                    api_base, "POST", "/api/interpretations/batch",
+                                    data={"items": batch},
+                                    timeout=30,
+                                )
+                                n = resp.get("inserted", 0)
+                                if n:
+                                    print(f"[{cycle}] backfill: {n} interpreted")
+                            except APIError as e:
+                                logger.warning("POST /api/interpretations/batch failed: %s — falling back to single POSTs", e)
+                                for it in batch:
+                                    try:
+                                        api_request_with_retry(
+                                            api_base, "POST", "/api/interpretations",
+                                            data=it, timeout=15,
+                                        )
+                                        print(f"[{cycle}] backfill: {it['prompt'][:50]}…")
+                                    except APIError:
+                                        pass
                 except APIError as e:
                     logger.warning("GET /api/interpret/backfill-prompts failed: %s", e)
 

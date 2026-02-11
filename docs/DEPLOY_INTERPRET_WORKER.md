@@ -38,6 +38,7 @@ Or use the **Custom start command** field if your Railway UI shows it.
 |----------|--------|
 | `API_BASE` | `https://motion.productions` |
 | `INTERPRET_DELAY_SECONDS` | `10` (optional; default 10) |
+| `HEALTH_PORT` | `8080` (optional; enables HTTP health check for Railway) |
 
 ### 5. Deploy
 

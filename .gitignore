@@ -35,3 +35,8 @@ models/
 # OS
 .DS_Store
 Thumbs.db
+nul
+
+# Cloudflare local dev
+cloudflare/.wrangler/
+cloudflare/node_modules/
