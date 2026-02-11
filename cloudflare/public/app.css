@@ -148,9 +148,9 @@ body {
   .main-grid .dashboard-right .loop-compact {
     flex-shrink: 0;
   }
-  /* Registries content: fixed height so right column doesn't exceed left; user scrolls for tables */
+  /* Registries content: capped height so right column doesn't exceed left; user scrolls for tables */
   .main-grid .dashboard-right .registries-content {
-    max-height: 50vh;
+    max-height: 65vh;
     overflow-y: auto;
     overflow-x: hidden;
     -webkit-overflow-scrolling: touch;
