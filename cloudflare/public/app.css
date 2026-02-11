@@ -105,8 +105,10 @@ body {
   max-width: 42rem;
 }
 
-/* Two-column layout: left = generator + Recent videos; right = Automated loop + Registries. Equal column height, Registries scrolls. */
+/* Two-column layout: left = generator + Recent videos; right = Automated loop + Registries. */
 .main-grid {
+  flex: 1;
+  min-height: 0;
   max-width: 1320px;
   display: grid;
   grid-template-columns: 1fr;
@@ -118,8 +120,8 @@ body {
 @media (min-width: 768px) {
   .main-grid {
     grid-template-columns: 1fr 1fr;
-    /* Row 2: sizes to max(left, right); both columns match; Registries fills and scrolls */
-    grid-template-rows: auto auto auto;
+    /* Row 2: fixed height so both columns match; Registries is contained and scrolls */
+    grid-template-rows: auto minmax(50vh, 1fr) auto;
     gap: 2rem 2.5rem;
     align-items: stretch;
     padding: 1.5rem 2rem;
@@ -127,22 +129,30 @@ body {
   .main-grid .hero-compact {
     grid-column: 1 / -1;
   }
-  /* Left: full content, no scroll */
+  /* Column wrappers: same height, overflow handled */
+  .col-container {
+    min-height: 0;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .col-container-left {
+    gap: 1.25rem;
+    overflow-y: auto;
+  }
+  .col-container-right {
+    gap: 1rem;
+  }
   .main-grid .grid-left {
     grid-column: 1;
     grid-row: 2;
-    display: flex;
-    flex-direction: column;
-    gap: 1.25rem;
     min-width: 0;
+    min-height: 0;
   }
-  /* Right: loop full + registries scrolls within */
   .main-grid .dashboard-right {
     grid-column: 2;
     grid-row: 2;
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
     min-width: 0;
     min-height: 0;
     overflow: hidden;
@@ -152,6 +162,7 @@ body {
   .main-grid .dashboard-right .loop-compact {
     flex-shrink: 0;
   }
+  /* Registries: fills remaining space in right container; content scrolls */
   .main-grid .dashboard-right .registries {
     flex: 1;
     display: flex;
@@ -159,7 +170,6 @@ body {
     min-height: 0;
     overflow: hidden;
   }
-  /* Registries content fills remaining space; scrolls when it overflows */
   .main-grid .dashboard-right .registries-content {
     flex: 1;
     min-height: 0;
