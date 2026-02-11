@@ -45,8 +45,23 @@ export default {
 
     // API routes
     if (path.startsWith("/api/")) {
-      const apiResponse = await handleApi(request, env, path);
-      if (apiResponse) return apiResponse;
+      try {
+        const apiResponse = await handleApi(request, env, path);
+        if (apiResponse) return apiResponse;
+      } catch (e) {
+        console.error("handleApi threw:", e);
+        return new Response(
+          JSON.stringify({ error: "Service temporarily unavailable", details: String(e) }),
+          {
+            status: 503,
+            headers: {
+              "Content-Type": "application/json",
+              ...corsHeaders,
+              "Retry-After": "3",
+            },
+          }
+        );
+      }
     }
 
     // Static assets (app UI)
@@ -615,20 +630,27 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       return json({ id: fid, rating, status: "saved" }, 201);
     }
 
-    // GET /api/learning/stats — aggregated stats (KV cache; no deletes to stay within free tier)
+    // GET /api/learning/stats — aggregated stats (KV cache; fallback to D1-only on KV failure)
     if (path === "/api/learning/stats" && request.method === "GET") {
-      if (!env.DB || !env.MOTION_KV) return json({ error: "Learning stats unavailable: DB or KV not bound" }, 503);
       const safeDefault = { total_runs: 0, by_palette: {}, by_keyword: {}, overall: {} };
+      if (!env.DB) return json(safeDefault);
       try {
-        const cached = await env.MOTION_KV.get("learning:stats");
-        if (cached) return json(JSON.parse(cached));
-
+        if (env.MOTION_KV) {
+          const cached = await env.MOTION_KV.get("learning:stats");
+          if (cached) return json(JSON.parse(cached));
+        }
         const rows = await env.DB.prepare(
           "SELECT prompt, spec_json, analysis_json FROM learning_runs ORDER BY created_at DESC LIMIT 500"
         )
           .all<{ prompt: string; spec_json: string; analysis_json: string }>();
         const report = aggregateLearningRuns(rows.results || []);
-        await env.MOTION_KV.put("learning:stats", JSON.stringify(report), { expirationTtl: 60 });
+        if (env.MOTION_KV) {
+          try {
+            await env.MOTION_KV.put("learning:stats", JSON.stringify(report), { expirationTtl: 60 });
+          } catch {
+            /* ignore KV write failure */
+          }
+        }
         return json(report);
       } catch (e) {
         console.error("GET /api/learning/stats failed:", e);
@@ -646,7 +668,6 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
     // POST /api/knowledge/discoveries — batch record discoveries (D1)
     // Supports: static_colors, static_sound (per-frame) + colors, blends, motion, etc. (dynamic/whole-video)
     if (path === "/api/knowledge/discoveries" && request.method === "POST") {
-      if (!env.DB) return json({ error: "Discoveries unavailable: DB not bound" }, 503);
       let body: {
         static_colors?: Array<{ key: string; r: number; g: number; b: number; brightness?: number; luminance?: number; contrast?: number; saturation?: number; chroma?: number; hue?: number; color_variance?: number; opacity?: number; depth_breakdown?: Record<string, unknown>; source_prompt?: string; name?: string }>;
         static_sound?: Array<{ key: string; amplitude?: number; weight?: number; strength_pct?: number; tone?: string; timbre?: string; depth_breakdown?: Record<string, unknown>; source_prompt?: string; name?: string }>;
@@ -888,7 +909,6 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
 
     // GET /api/knowledge/for-creation — learned colors and motion for creation (closes the loop)
     if (path === "/api/knowledge/for-creation" && request.method === "GET") {
-      if (!env.DB) return json({ error: "For-creation unavailable: DB not bound" }, 503);
       try {
       const limit = Math.min(parseInt(new URL(request.url).searchParams.get("limit") || "500", 10), 2000);
       const colorRows = await env.DB.prepare(

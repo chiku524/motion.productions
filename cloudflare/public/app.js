@@ -453,8 +453,12 @@ const registriesTables = document.getElementById('registries-tables');
 const registriesPrecision = document.getElementById('registries-precision');
 const registriesUpdated = document.getElementById('registries-updated');
 const registriesRefresh = document.getElementById('registries-refresh');
+const registriesExport = document.getElementById('registries-export');
 const registriesTabs = document.querySelectorAll('.registries-tab');
 const registriesContent = document.getElementById('registries-content');
+
+let lastRegistriesData = null;
+let lastProgressData = null;
 
 function registriesTable(headers, rows) {
   const th = headers.map((h) => `<th>${escapeHtml(h)}</th>`).join('');
@@ -608,7 +612,7 @@ async function loadRegistries() {
   if (registriesTables) registriesTables.hidden = true;
   try {
     const [regRes, progRes] = await Promise.all([
-      fetch(`${API_BASE}/api/registries?limit=200`),
+      fetch(`${API_BASE}/api/registries?limit=500`),
       fetch(`${API_BASE}/api/loop/progress?last=20`),
     ]);
     const regText = await regRes.text();
@@ -617,6 +621,9 @@ async function loadRegistries() {
     let data;
     try { data = JSON.parse(regText); } catch { throw new Error('Invalid registries response'); }
     if (!regRes.ok) throw new Error(data.error || 'Failed to load registries');
+    lastRegistriesData = data;
+    lastProgressData = null;
+    try { lastProgressData = JSON.parse(progText); } catch { /* ignore */ }
     renderRegistries(data);
     registriesUpdated.textContent = `Updated ${new Date().toLocaleTimeString()}`;
     if (registriesPrecision && !progText.trimStart().startsWith('<')) {
@@ -657,6 +664,42 @@ if (registriesRefresh) {
     e.preventDefault();
     loadRegistries();
   });
+}
+if (registriesExport) {
+  registriesExport.addEventListener('click', () => {
+    if (!lastRegistriesData) {
+      loadRegistries().then(() => {
+        if (lastRegistriesData) exportRegistries();
+      });
+      return;
+    }
+    exportRegistries();
+  });
+}
+function exportRegistries() {
+  if (!lastRegistriesData) return;
+  const payload = {
+    exported_at: new Date().toISOString(),
+    registries: {
+      pure_static: {
+        primitives: lastRegistriesData.static_primitives,
+        discoveries: lastRegistriesData.static,
+      },
+      blended_dynamic: {
+        canonical: lastRegistriesData.dynamic_canonical,
+        discoveries: lastRegistriesData.dynamic,
+      },
+      semantic_narrative: lastRegistriesData.narrative,
+      interpretation: lastRegistriesData.interpretation,
+    },
+    loop_progress: lastProgressData || null,
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `motion-registries-${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
 }
 loadRegistries();
 
