@@ -659,3 +659,19 @@ if (registriesRefresh) {
   });
 }
 loadRegistries();
+
+// Match right column height to left so registries-content doesn't exceed
+function syncColumnHeights() {
+  if (window.innerWidth < 768) return;
+  const left = document.querySelector('.main-grid .grid-left');
+  const right = document.querySelector('.main-grid .dashboard-right');
+  if (!left || !right) return;
+  const h = left.offsetHeight;
+  right.style.maxHeight = h + 'px';
+}
+syncColumnHeights();
+window.addEventListener('resize', syncColumnHeights);
+// Re-sync after registries load (content may affect left height)
+const ob = new ResizeObserver(syncColumnHeights);
+const gridLeft = document.querySelector('.main-grid .grid-left');
+if (gridLeft) ob.observe(gridLeft);
