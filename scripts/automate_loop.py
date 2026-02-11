@@ -97,27 +97,20 @@ def _load_state(api_base: str) -> dict:
         return baseline_state()
 
 
-_last_state_save_time = 0.0
-KV_MIN_SAVE_INTERVAL = 2.0  # KV allows 1 write/sec per key; throttle to avoid 429
+# KV allows 1 write/sec per key. Save only every N runs to stay under the limit.
+STATE_SAVE_EVERY_N_RUNS = 5
 
 
-def _save_state(api_base: str, state: dict) -> None:
-    """Persist state to API (KV) for cross-restart continuity. Throttled to avoid KV rate limit (1 write/sec)."""
-    global _last_state_save_time
-    now = time.time()
-    elapsed = now - _last_state_save_time
-    if elapsed < KV_MIN_SAVE_INTERVAL:
-        # Skip save; will retry next run. Prevents 429 when multiple runs complete quickly.
+def _save_state(api_base: str, state: dict, run_count: int) -> None:
+    """Persist state to API (KV). Saves only every N runs to avoid KV rate limit (1 write/sec per key)."""
+    if run_count % STATE_SAVE_EVERY_N_RUNS != 0:
         return
     try:
         api_request_with_retry(
             api_base, "POST", "/api/loop/state",
             data={"state": state},
             timeout=15,
-            max_retries=6,
-            backoff_seconds=3.0,  # longer backoff for KV rate limit (1 write/sec)
         )
-        _last_state_save_time = time.time()
     except APIError as e:
         detail = f" {e.body}" if getattr(e, "body", None) else ""
         logger.warning("POST /api/loop/state failed (status=%s, path=%s): %s%s — state not persisted", e.status_code, e.path, e, detail)
@@ -380,7 +373,7 @@ def run() -> None:
             state["last_run_at"] = __import__("datetime").datetime.utcnow().isoformat() + "Z"
             state["last_prompt"] = (prompt or "")[:80] + ("…" if len(prompt or "") > 80 else "")
             state["last_job_id"] = job_id
-            _save_state(args.api_base, state)
+            _save_state(args.api_base, state, state["run_count"])
 
 
 if __name__ == "__main__":

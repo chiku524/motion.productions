@@ -60,9 +60,6 @@ body {
   display: flex;
   flex-direction: column;
 }
-@media (min-width: 768px) {
-  .app { height: 100vh; overflow: hidden; }
-}
 
 .header {
   padding: 1.5rem 2rem;
@@ -123,7 +120,8 @@ body {
 @media (min-width: 768px) {
   .main-grid {
     grid-template-columns: 1fr 1fr;
-    grid-template-rows: auto minmax(0, 1fr) auto;
+    /* Two-column row: min 400px, max 55vh so columns match height + Registries scrolls; page scrolls for rest */
+    grid-template-rows: auto minmax(400px, 55vh) auto;
     gap: 2rem 2.5rem;
     align-items: stretch;
     padding: 1.5rem 2rem;
@@ -139,7 +137,7 @@ body {
     gap: 1.25rem;
     min-width: 0;
     min-height: 0;
-    overflow: hidden;
+    overflow-y: auto;
   }
   .main-grid .dashboard-right {
     grid-column: 2;
