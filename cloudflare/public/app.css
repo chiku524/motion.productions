@@ -60,6 +60,9 @@ body {
   display: flex;
   flex-direction: column;
 }
+@media (min-width: 768px) {
+  .app { height: 100vh; overflow: hidden; }
+}
 
 .header {
   padding: 1.5rem 2rem;
@@ -136,7 +139,7 @@ body {
     gap: 1.25rem;
     min-width: 0;
     min-height: 0;
-    overflow-y: auto;
+    overflow: hidden;
   }
   .main-grid .dashboard-right {
     grid-column: 2;
@@ -150,6 +153,9 @@ body {
     overflow-wrap: break-word;
     word-break: break-word;
   }
+  .main-grid .dashboard-right .loop-compact {
+    flex-shrink: 0;
+  }
   .main-grid .dashboard-right .registries {
     flex: 1;
     display: flex;
@@ -161,6 +167,7 @@ body {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
+    overflow-x: hidden;
     -webkit-overflow-scrolling: touch;
   }
   .main-grid .about-compact {

@@ -97,10 +97,27 @@ def _load_state(api_base: str) -> dict:
         return baseline_state()
 
 
+_last_state_save_time = 0.0
+KV_MIN_SAVE_INTERVAL = 2.0  # KV allows 1 write/sec per key; throttle to avoid 429
+
+
 def _save_state(api_base: str, state: dict) -> None:
-    """Persist state to API (KV) for cross-restart continuity. Retries on 5xx/429/connection; logs on failure."""
+    """Persist state to API (KV) for cross-restart continuity. Throttled to avoid KV rate limit (1 write/sec)."""
+    global _last_state_save_time
+    now = time.time()
+    elapsed = now - _last_state_save_time
+    if elapsed < KV_MIN_SAVE_INTERVAL:
+        # Skip save; will retry next run. Prevents 429 when multiple runs complete quickly.
+        return
     try:
-        api_request_with_retry(api_base, "POST", "/api/loop/state", data={"state": state}, timeout=15)
+        api_request_with_retry(
+            api_base, "POST", "/api/loop/state",
+            data={"state": state},
+            timeout=15,
+            max_retries=6,
+            backoff_seconds=3.0,  # longer backoff for KV rate limit (1 write/sec)
+        )
+        _last_state_save_time = time.time()
     except APIError as e:
         detail = f" {e.body}" if getattr(e, "body", None) else ""
         logger.warning("POST /api/loop/state failed (status=%s, path=%s): %s%s — state not persisted", e.status_code, e.path, e, detail)

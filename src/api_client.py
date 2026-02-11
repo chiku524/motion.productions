@@ -89,11 +89,15 @@ def api_request(
             retryable = status and (500 <= status < 600 or status == 429) and attempt < max_retries
             if retryable:
                 delay = backoff_seconds
-                if status == 429 and e.response and "Retry-After" in e.response.headers:
-                    try:
-                        delay = float(e.response.headers["Retry-After"])
-                    except (ValueError, TypeError):
-                        pass
+                if status == 429:
+                    if e.response and "Retry-After" in e.response.headers:
+                        try:
+                            delay = float(e.response.headers["Retry-After"])
+                        except (ValueError, TypeError):
+                            pass
+                    # Exponential backoff for 429: 3s, 5s, 8s, 12s...
+                    else:
+                        delay = backoff_seconds + attempt * 2.0
                 logger.warning("API %s %s → %s (attempt %s), retrying in %.1fs", method, path, status, attempt + 1, delay)
                 time.sleep(delay)
                 continue
