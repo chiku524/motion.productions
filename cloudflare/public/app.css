@@ -160,11 +160,10 @@ body {
     min-height: 0;
     overflow: hidden;
   }
-  /* Only the registries content scrolls; max-height caps it so it doesn't push column */
+  /* Registries content fills remaining space; scrolls when it overflows */
   .main-grid .dashboard-right .registries-content {
     flex: 1;
     min-height: 0;
-    max-height: 50vh;
     overflow-y: auto;
     overflow-x: hidden;
     -webkit-overflow-scrolling: touch;
