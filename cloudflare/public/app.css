@@ -107,8 +107,6 @@ body {
 
 /* Two-column layout: left = generator + Recent videos; right = Automated loop + Registries. */
 .main-grid {
-  flex: 1;
-  min-height: 0;
   max-width: 1320px;
   display: grid;
   grid-template-columns: 1fr;
@@ -120,8 +118,8 @@ body {
 @media (min-width: 768px) {
   .main-grid {
     grid-template-columns: 1fr 1fr;
-    /* Row 2: fixed height so both columns match; Registries is contained and scrolls */
-    grid-template-rows: auto minmax(50vh, 1fr) auto;
+    /* Row 2: height = max(left, right); both columns match; left shows fully, Registries scrolls */
+    grid-template-rows: auto auto auto;
     gap: 2rem 2.5rem;
     align-items: stretch;
     padding: 1.5rem 2rem;
@@ -129,26 +127,30 @@ body {
   .main-grid .hero-compact {
     grid-column: 1 / -1;
   }
-  /* Column wrappers: same height, overflow handled */
+  /* Column containers: fill grid cell, both same height; left no scroll, right Registries scrolls */
   .col-container {
+    flex: 1;
     min-height: 0;
-    height: 100%;
     display: flex;
     flex-direction: column;
-    overflow: hidden;
   }
   .col-container-left {
     gap: 1.25rem;
-    overflow-y: auto;
+    overflow: visible;
   }
   .col-container-right {
     gap: 1rem;
+    overflow: hidden;
+  }
+  .main-grid .grid-left,
+  .main-grid .dashboard-right {
+    display: flex;
+    flex-direction: column;
   }
   .main-grid .grid-left {
     grid-column: 1;
     grid-row: 2;
     min-width: 0;
-    min-height: 0;
   }
   .main-grid .dashboard-right {
     grid-column: 2;
