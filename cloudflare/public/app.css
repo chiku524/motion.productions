@@ -155,12 +155,16 @@ body {
     min-height: 0;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
   }
-  /* Registries content: fills remaining space, scrolls; max-height caps so right column doesn't exceed left */
+  .main-grid .dashboard-right .registries .registries-header,
+  .main-grid .dashboard-right .registries .registries-tabs {
+    flex-shrink: 0;
+  }
+  /* Registries content: fills remaining space in right column, scrolls when tables overflow */
   .main-grid .dashboard-right .registries-content {
     flex: 1;
     min-height: 0;
-    max-height: 65vh;
     overflow-y: auto;
     overflow-x: hidden;
     -webkit-overflow-scrolling: touch;
