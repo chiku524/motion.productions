@@ -107,8 +107,6 @@ body {
 
 /* Two-column layout: left = generator + Recent videos; right = Automated loop + Registries. Equal column height, Registries scrolls. */
 .main-grid {
-  flex: 1;
-  min-height: 0;
   max-width: 1320px;
   display: grid;
   grid-template-columns: 1fr;
@@ -120,6 +118,7 @@ body {
 @media (min-width: 768px) {
   .main-grid {
     grid-template-columns: 1fr 1fr;
+    /* Row 2: sizes to max(left, right); both columns match; Registries fills and scrolls */
     grid-template-rows: auto auto auto;
     gap: 2rem 2.5rem;
     align-items: stretch;
