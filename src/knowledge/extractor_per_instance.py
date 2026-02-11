@@ -18,6 +18,8 @@ from ..analysis.metrics import (
     center_of_mass,
     edge_density,
     spatial_variance,
+    gradient_strength,
+    gradient_direction,
 )
 
 
@@ -273,7 +275,7 @@ def extract_dynamic_per_window(
         # Rhythm: steady vs pulsing from variance of per-frame motion
         motion_rhythm = "pulsing" if (per_motion and motion_std > max(2.0, motion_level * 0.5)) else "steady"
 
-        # Lighting/composition/graphics from middle frame of window
+        # Lighting/composition/graphics/gradient/camera from middle frame and motion
         mid_idx = len(window_frames) // 2
         mid_fr = window_frames[mid_idx]
         bc = brightness_and_contrast(mid_fr)
@@ -284,6 +286,22 @@ def extract_dynamic_per_window(
         cx_norm = cx / width if width else 0.5
         cy_norm = cy / height if height else 0.5
         lum_bal = min(1.0, max(0.0, bc["brightness"] / 255.0))
+        grad_str = gradient_strength(mid_fr)
+        grad_dir = gradient_direction(mid_fr)
+        gradient_type = grad_dir if grad_str > 0.05 else "static"
+        # Infer camera motion from window motion: direction + level → pan/tilt/zoom/static
+        if motion_level < 1.0:
+            camera_motion = "static"
+        elif motion_direction == "horizontal":
+            camera_motion = "pan"
+        elif motion_direction == "vertical":
+            camera_motion = "tilt"
+        elif motion_trend == "increasing" and motion_level > 5.0:
+            camera_motion = "zoom"
+        elif motion_trend == "decreasing" and motion_level > 5.0:
+            camera_motion = "zoom_out"
+        else:
+            camera_motion = "static"
 
         yield {
             "window_index": w,
@@ -297,8 +315,12 @@ def extract_dynamic_per_window(
                 "rhythm": motion_rhythm,
             },
             "time": {"duration": (end_i - start_i) / fps, "fps": fps, "rate": fps},
+            "gradient": {"gradient_type": gradient_type, "strength": grad_str},
+            "camera": {"motion_type": camera_motion, "speed": "medium" if motion_level > 5 else "slow"},
             "lighting": {"brightness": bc["brightness"], "contrast": bc["contrast"], "saturation": sh["saturation"]},
             "composition": {"center_x": cx_norm, "center_y": cy_norm, "luminance_balance": lum_bal},
             "graphics": {"edge_density": edge_den, "spatial_variance": spat_var, "busyness": 0.5 * edge_den + 0.5 * spat_var},
-            "audio_semantic": {},  # TODO: music/melody/dialogue/SFX when semantic audio is implemented
+            "audio_semantic": {},  # Filled from spec in grow_dynamic_from_video when not from decoded audio
+            "transition": {},   # Filled from spec or future cut-detection
+            "depth": {},        # Filled from spec or future parallax/layer extraction
         }

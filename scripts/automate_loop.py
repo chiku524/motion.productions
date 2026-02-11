@@ -60,14 +60,21 @@ def pick_prompt(
     exploit_ratio: float = DEFAULT_EXPLOIT_RATIO,
     knowledge: dict | None = None,
 ) -> str:
-    """Exploit (good prompts) vs explore (new) based on exploit_ratio. Uses knowledge for dynamic exploration."""
+    """Exploit (good prompts) vs explore (new) based on exploit_ratio. Uses knowledge for dynamic exploration.
+    When exploring, may pick from interpretation_prompts (user-prompt registry) so creation has more prompts."""
     from src.automation import generate_procedural_prompt
 
     good = state.get("good_prompts", [])
     recent = set(state.get("recent_prompts", [])[-100:])
+    interpretation_prompts = (knowledge or {}).get("interpretation_prompts", [])
 
     if random.random() < exploit_ratio and good:
         return random.choice(good)
+    # When exploring: sometimes use a pre-interpreted user prompt from the interpretation registry
+    if interpretation_prompts and random.random() < 0.35:
+        candidates = [p for p in interpretation_prompts if isinstance(p, dict) and p.get("prompt") and p["prompt"] not in recent]
+        if candidates:
+            return random.choice(candidates)["prompt"]
     return (
         generate_procedural_prompt(avoid=recent, knowledge=knowledge)
         or (random.choice(good) if good else generate_procedural_prompt(knowledge=knowledge))

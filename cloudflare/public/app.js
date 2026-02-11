@@ -162,10 +162,32 @@ function formatDate(iso) {
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
+const LIBRARY_DISPLAY_LIMIT = 6;
+
+function workflowLabel(wt) {
+  if (wt === 'explorer') return 'Explore';
+  if (wt === 'exploiter') return 'Exploit';
+  if (wt === 'web') return 'Web';
+  if (wt === 'main') return 'Main';
+  return 'Loop';
+}
+
+function workflowBadgeClass(wt) {
+  if (wt === 'explorer' || wt === 'exploiter' || wt === 'web' || wt === 'main') return `library-badge-${wt}`;
+  return 'library-badge-loop';
+}
+
+function shortenPrompt(promptText, maxLen = 42) {
+  const s = (promptText || '').trim();
+  if (!s) return '';
+  if (s.length <= maxLen) return s;
+  return s.slice(0, maxLen).trim() + '…';
+}
+
 async function loadLibrary() {
   if (!libraryList) return;
   try {
-    const res = await fetch(`${API_BASE}/api/jobs?status=completed&limit=24`);
+    const res = await fetch(`${API_BASE}/api/jobs?status=completed&limit=${LIBRARY_DISPLAY_LIMIT}`);
     const data = await res.json();
     libraryLoading?.remove();
     if (!res.ok || !Array.isArray(data.jobs)) {
@@ -177,17 +199,20 @@ async function loadLibrary() {
       return;
     }
     const base = window.location.origin;
-    const workflowLabel = (wt) => (wt === 'explorer' ? 'Explore' : wt === 'exploiter' ? 'Exploit' : wt === 'web' ? 'Web' : null);
     libraryList.innerHTML = data.jobs.map((job) => {
       const url = base + job.download_url;
-      const prompt = (job.prompt || '').slice(0, 80) + (job.prompt && job.prompt.length > 80 ? '…' : '');
-      const badge = workflowLabel(job.workflow_type) ? `<span class="library-badge library-badge-${job.workflow_type}">${workflowLabel(job.workflow_type)}</span>` : '';
+      const fullPrompt = (job.prompt || '').trim();
+      const displayPrompt = shortenPrompt(fullPrompt);
+      const wt = job.workflow_type || null;
+      const label = workflowLabel(wt);
+      const badgeClass = workflowBadgeClass(wt);
+      const badge = `<span class="library-badge ${badgeClass}">${escapeHtml(label)}</span>`;
       return `
         <article class="library-card">
           <video class="library-video" src="${url}" controls playsinline preload="metadata" data-has-audio="true"></video>
           <div class="library-card-body">
             ${badge}
-            <p class="library-prompt">${escapeHtml(prompt)}</p>
+            <p class="library-prompt" title="${escapeHtml(fullPrompt)}">${escapeHtml(displayPrompt)}</p>
             <p class="library-meta">${formatDate(job.updated_at || job.created_at)}${job.duration_seconds ? ` · ${job.duration_seconds}s` : ''}</p>
             <a href="${url}" class="library-download" download="motion-${job.id}.mp4">Download</a>
           </div>
@@ -308,9 +333,14 @@ async function loadLoopStatus() {
     }
 
     const runs = data.recent_runs || [];
-    const runLabel = (wt) => (wt === 'explorer' ? 'Explore' : wt === 'exploiter' ? 'Exploit' : wt === 'web' ? 'Web' : '');
+    const runLabel = (wt) => (wt === 'explorer' ? 'Explore' : wt === 'exploiter' ? 'Exploit' : wt === 'web' ? 'Web' : wt === 'main' ? 'Main' : 'Loop');
+    const runBadgeClass = (wt) => (wt === 'explorer' || wt === 'exploiter' || wt === 'web' || wt === 'main' ? `loop-badge-${wt}` : 'loop-badge-loop');
     loopRecent.innerHTML = runs.length
-      ? runs.map((r) => `<li>${runLabel(r.workflow_type) ? `<span class="loop-badge loop-badge-${r.workflow_type}">${runLabel(r.workflow_type)}</span> ` : ''}<a href="${window.location.origin}/api/jobs/${r.id}/download" download>${escapeHtml(r.prompt || r.id)}</a> · ${formatLoopDate(r.updated_at)}</li>`).join('')
+      ? runs.map((r) => {
+          const label = runLabel(r.workflow_type);
+          const shortPrompt = shortenPrompt(r.prompt || r.id, 50);
+          return `<li><span class="loop-badge ${runBadgeClass(r.workflow_type)}">${escapeHtml(label)}</span> <a href="${window.location.origin}/api/jobs/${r.id}/download" download title="${escapeHtml((r.prompt || '').trim())}">${escapeHtml(shortPrompt || r.id)}</a> · ${formatLoopDate(r.updated_at)}</li>`;
+        }).join('')
       : '<li>No recent runs</li>';
   } catch (e) {
     loopStatusBadge.textContent = 'Error';
@@ -448,20 +478,24 @@ function renderRegistries(data) {
   const dynamic = data.dynamic || {};
   const narrative = data.narrative || {};
 
+  const colorPrimaries = (staticPrimitives.color_primaries || []).map((p) => `${p.name} (${p.r},${p.g},${p.b})`).join(' · ') || '—';
+  const soundPrimaries = (staticPrimitives.sound_primaries || []).join(' · ') || '—';
   const staticHtml = `
     <div class="registries-pane" data-pane="static">
-      <p class="registries-primitives-desc">Pure primitives (single frame/pixel). Discoveries compared to these for depth %.</p>
+      <p class="registries-primitives-desc">Pure primitives (single frame/pixel). Color depth % = luminance vs black/white. Discoveries fill as loop runs complete and sync; static sound is from spec (mood/tempo/presence) until per-frame audio extraction.</p>
       <h3 class="registries-pane-title">Static — Color primitives (pure)</h3>
-      <p class="registries-primitives">${(staticPrimitives.color_primaries || []).map((p) => `${p.name} (${p.r},${p.g},${p.b})`).join(' · ') || '—'}</p>
+      <p class="registries-primitives">${escapeHtml(colorPrimaries)}</p>
       <h3 class="registries-pane-title">Static — Colors (per-frame discoveries)</h3>
       ${static_.colors && static_.colors.length
-        ? registriesTable(['Key', 'Name', 'Count', 'RGB', 'Depth %', 'Depth vs primitives'], static_.colors.map((c) => [
+        ? registriesTable(['Key', 'Name', 'Count', 'RGB', 'Depth %', 'Depth (B/W)'], static_.colors.map((c) => [
             c.key, c.name, c.count, `(${c.r},${c.g},${c.b})`,
             c.depth_pct != null ? c.depth_pct.toFixed(1) + '%' : '—',
             depthBreakdownStr(c.depth_breakdown),
           ]))
         : '<p class="registries-empty">No static colors yet.</p>'}
-      <h3 class="registries-pane-title">Static — Sound</h3>
+      <h3 class="registries-pane-title">Static — Sound primitives (origin)</h3>
+      <p class="registries-primitives">${escapeHtml(soundPrimaries)}</p>
+      <h3 class="registries-pane-title">Static — Sound (per-frame discoveries)</h3>
       ${static_.sound && static_.sound.length
         ? registriesTable(['Key', 'Name', 'Count'], static_.sound.map((s) => [s.key, s.name, s.count]))
         : '<p class="registries-empty">No static sound yet.</p>'}
@@ -469,29 +503,39 @@ function renderRegistries(data) {
 
   const dynamicHtml = `
     <div class="registries-pane" data-pane="dynamic">
-      <p class="registries-primitives-desc">Non-pure canonical (multi-frame; gradient/motion/camera). Discoveries vs these for depth %.</p>
+      <p class="registries-primitives-desc">Non-pure canonical (multi-frame; gradient, motion, camera, sound). Discoveries fill as loop runs complete and sync.</p>
       <h3 class="registries-pane-title">Dynamic — Gradient (canonical → discoveries)</h3>
       <p class="registries-primitives">Canonical: ${escapeHtml((dynamicCanonical.gradient_type || []).join(', ') || '—')}</p>
-      ${dynamic_.gradient && dynamic_.gradient.length
-        ? registriesTable(['Name', 'Key', 'Depth %', 'Depth vs primitives'], dynamic_.gradient.map((g) => [g.name, g.key, (g.depth_pct != null ? g.depth_pct.toFixed(1) : '') + '%', depthBreakdownStr(g.depth_breakdown)]))
+      ${dynamic.gradient && dynamic.gradient.length
+        ? registriesTable(['Name', 'Key', 'Depth %', 'Depth vs primitives'], dynamic.gradient.map((g) => [g.name, g.key, (g.depth_pct != null ? g.depth_pct.toFixed(1) : '') + '%', depthBreakdownStr(g.depth_breakdown)]))
         : '<p class="registries-empty">No gradient discoveries yet.</p>'}
       <h3 class="registries-pane-title">Dynamic — Camera</h3>
       <p class="registries-primitives">Canonical: ${escapeHtml((dynamicCanonical.camera_motion || []).join(', ') || '—')}</p>
-      ${dynamic_.camera && dynamic_.camera.length
-        ? registriesTable(['Name', 'Key', 'Depth %', 'Depth vs primitives'], dynamic_.camera.map((c) => [c.name, c.key, (c.depth_pct != null ? c.depth_pct.toFixed(1) : '') + '%', depthBreakdownStr(c.depth_breakdown)]))
+      ${dynamic.camera && dynamic.camera.length
+        ? registriesTable(['Name', 'Key', 'Depth %', 'Depth vs primitives'], dynamic.camera.map((c) => [c.name, c.key, (c.depth_pct != null ? c.depth_pct.toFixed(1) : '') + '%', depthBreakdownStr(c.depth_breakdown)]))
         : '<p class="registries-empty">No camera discoveries yet.</p>'}
       <h3 class="registries-pane-title">Dynamic — Motion</h3>
       <p class="registries-primitives">Canonical: ${escapeHtml((dynamicCanonical.motion || []).join(', ') || '—')}</p>
-      ${dynamic_.motion && dynamic_.motion.length
-        ? registriesTable(['Key', 'Name', 'Trend', 'Count'], dynamic_.motion.map((m) => [m.key, m.name, m.trend || '—', m.count]))
+      ${dynamic.motion && dynamic.motion.length
+        ? registriesTable(['Key', 'Name', 'Trend', 'Count'], dynamic.motion.map((m) => [m.key, m.name, m.trend || '—', m.count]))
         : '<p class="registries-empty">No motion discoveries yet.</p>'}
+      <h3 class="registries-pane-title">Dynamic — Sound</h3>
+      <p class="registries-primitives">Canonical: ${escapeHtml((dynamicCanonical.sound || []).join(', ') || '—')}</p>
+      ${dynamic.sound && dynamic.sound.length
+        ? registriesTable(['Name', 'Key', 'Depth %', 'Depth vs primitives'], dynamic.sound.map((s) => [
+            s.name || '—',
+            typeof s.key === 'string' ? s.key : (s.tempo || s.mood || s.presence || '—'),
+            (s.depth_pct != null ? s.depth_pct.toFixed(1) : '') + '%',
+            depthBreakdownStr(s.depth_breakdown),
+          ]))
+        : '<p class="registries-empty">No sound discoveries yet.</p>'}
       <h3 class="registries-pane-title">Dynamic — Colors (learned)</h3>
-      ${dynamic_.colors && dynamic_.colors.length
-        ? registriesTable(['Key', 'Name', 'Count', 'Depth %', 'Depth vs primitives'], dynamic_.colors.map((c) => [c.key, c.name, c.count, (c.depth_pct != null ? c.depth_pct.toFixed(1) : '') + '%', depthBreakdownStr(c.depth_breakdown)]))
+      ${dynamic.colors && dynamic.colors.length
+        ? registriesTable(['Key', 'Name', 'Count', 'Depth %', 'Depth vs primitives'], dynamic.colors.map((c) => [c.key, c.name, c.count, (c.depth_pct != null ? c.depth_pct.toFixed(1) : '') + '%', depthBreakdownStr(c.depth_breakdown)]))
         : '<p class="registries-empty">No learned colors yet.</p>'}
       <h3 class="registries-pane-title">Dynamic — Blends (other)</h3>
-      ${dynamic_.blends && dynamic_.blends.length
-        ? registriesTable(['Name', 'Domain', 'Key', 'Depth %', 'Depth vs primitives'], dynamic_.blends.map((b) => [b.name, b.domain || '—', (b.key || '').slice(0, 40), (b.depth_pct != null ? b.depth_pct.toFixed(1) : '') + '%', depthBreakdownStr(b.depth_breakdown)]))
+      ${dynamic.blends && dynamic.blends.length
+        ? registriesTable(['Name', 'Domain', 'Key', 'Depth %', 'Depth vs primitives'], dynamic.blends.map((b) => [b.name, b.domain || '—', (b.key || '').slice(0, 40), (b.depth_pct != null ? b.depth_pct.toFixed(1) : '') + '%', depthBreakdownStr(b.depth_breakdown)]))
         : '<p class="registries-empty">No other blends yet.</p>'}
     </div>`;
 
@@ -518,6 +562,16 @@ function renderRegistries(data) {
 
 async function loadRegistries() {
   if (!registriesContent) return;
+  const btnText = registriesRefresh ? registriesRefresh.textContent : '';
+  if (registriesRefresh) {
+    registriesRefresh.disabled = true;
+    registriesRefresh.textContent = 'Loading…';
+  }
+  if (registriesLoading) {
+    registriesLoading.textContent = 'Loading registries…';
+    registriesLoading.hidden = false;
+  }
+  if (registriesTables) registriesTables.hidden = true;
   try {
     const [regRes, progRes] = await Promise.all([
       fetch(`${API_BASE}/api/registries?limit=200`),
@@ -546,6 +600,11 @@ async function loadRegistries() {
       registriesLoading.hidden = false;
     }
     if (registriesTables) registriesTables.hidden = true;
+  } finally {
+    if (registriesRefresh) {
+      registriesRefresh.disabled = false;
+      registriesRefresh.textContent = btnText || 'Refresh now';
+    }
   }
 }
 
@@ -559,7 +618,12 @@ function showRegistriesTab(tab) {
 registriesTabs.forEach((t) => {
   t.addEventListener('click', () => showRegistriesTab(t.getAttribute('data-tab')));
 });
-if (registriesRefresh) registriesRefresh.addEventListener('click', () => loadRegistries());
+if (registriesRefresh) {
+  registriesRefresh.addEventListener('click', (e) => {
+    e.preventDefault();
+    loadRegistries();
+  });
+}
 
 function scheduleRegistriesPoll() {
   if (document.visibilityState !== 'visible') return;

@@ -1,25 +1,152 @@
 """
 Static registry: one frame = one instance.
-Pure elements only: COLOR and SOUND. Every pixel = color; every sample = sound.
-Records every instance of color and sound per frame. Accuracy of recorded values
-is paramount; extraction/growth use precise keys and metrics.
-See docs/REGISTRY_TAXONOMY.md for the definitive category list.
+Pure elements only — no categories like brightness/contrast/saturation (those live in DYNAMIC).
+Static holds: (1) pure color (R, G, B, opacity), (2) pure sound (amplitude, tone, timbre at sample/beat level).
+Pure blends are recorded with depth % = weights/densities of other pure elements.
+Every primitive (origin) known is seeded so the loop can blend from them.
+See docs/REGISTRIES.md.
 """
 from pathlib import Path
 from typing import Any
 
-# All aspects recorded in the STATIC registry (per frame)
-# Each aspect has: key used in JSON, short description for readers
+# -----------------------------------------------------------------------------
+# COLOR PRIMITIVES — every pure color known (origin values). R, G, B, opacity only.
+# Brightness/luminance/contrast/saturation are dynamic (per-window), not static.
+# -----------------------------------------------------------------------------
+def _rgb(r: int, g: int, b: int) -> dict[str, Any]:
+    return {"r": r, "g": g, "b": b, "opacity": 1.0}
+
+
+STATIC_COLOR_PRIMITIVES = [
+    _rgb(0, 0, 0),           # black
+    _rgb(255, 255, 255),     # white
+    _rgb(255, 0, 0),         # red
+    _rgb(0, 255, 0),         # green (lime)
+    _rgb(0, 0, 255),         # blue
+    _rgb(255, 255, 0),       # yellow
+    _rgb(0, 255, 255),       # cyan / aqua
+    _rgb(255, 0, 255),       # magenta / fuchsia
+    _rgb(255, 165, 0),       # orange
+    _rgb(128, 0, 128),       # purple
+    _rgb(255, 192, 203),     # pink
+    _rgb(75, 0, 130),        # indigo
+    _rgb(238, 130, 238),     # violet
+    _rgb(102, 51, 153),      # rebeccapurple
+    _rgb(147, 112, 219),     # mediumpurple
+    _rgb(218, 112, 214),     # orchid
+    _rgb(255, 105, 180),     # hotpink
+    _rgb(255, 20, 147),      # deeppink
+    _rgb(199, 21, 133),      # mediumvioletred
+    _rgb(255, 0, 255),       # fuchsia
+    _rgb(128, 0, 0),         # maroon
+    _rgb(139, 0, 0),         # darkred
+    _rgb(220, 20, 60),       # crimson
+    _rgb(178, 34, 34),       # firebrick
+    _rgb(205, 92, 92),       # indianred
+    _rgb(255, 99, 71),       # tomato
+    _rgb(255, 69, 0),        # orangered
+    _rgb(255, 127, 80),      # coral
+    _rgb(255, 140, 0),       # darkorange
+    _rgb(255, 215, 0),       # gold
+    _rgb(184, 134, 11),      # darkgoldenrod
+    _rgb(210, 180, 140),     # tan
+    _rgb(139, 69, 19),       # saddlebrown
+    _rgb(160, 82, 45),       # sienna
+    _rgb(210, 105, 30),      # chocolate
+    _rgb(205, 133, 63),      # peru
+    _rgb(165, 42, 42),       # brown
+    _rgb(128, 128, 0),       # olive
+    _rgb(85, 107, 47),       # darkolivegreen
+    _rgb(107, 142, 35),      # olivedrab
+    _rgb(34, 139, 34),       # forestgreen
+    _rgb(0, 128, 0),         # green
+    _rgb(0, 255, 127),       # springgreen
+    _rgb(46, 139, 87),       # seagreen
+    _rgb(60, 179, 113),      # mediumseagreen
+    _rgb(0, 206, 209),       # darkturquoise
+    _rgb(0, 255, 255),       # aqua (cyan)
+    _rgb(0, 191, 255),       # deepskyblue
+    _rgb(30, 144, 255),      # dodgerblue
+    _rgb(70, 130, 180),      # steelblue
+    _rgb(0, 0, 128),         # navy
+    _rgb(25, 25, 112),       # midnightblue
+    _rgb(65, 105, 225),      # royalblue
+    _rgb(106, 90, 205),      # slateblue
+    _rgb(72, 61, 139),       # darkslateblue
+    _rgb(230, 230, 250),     # lavender
+    _rgb(216, 191, 216),     # thistle
+    _rgb(221, 160, 221),     # plum
+    _rgb(238, 232, 170),     # palegoldenrod
+    _rgb(245, 245, 220),     # beige
+    _rgb(255, 248, 220),     # cornsilk
+    _rgb(255, 250, 205),     # lemonchiffon
+    _rgb(255, 255, 224),     # lightyellow
+    _rgb(240, 255, 240),     # honeydew
+    _rgb(245, 255, 250),     # mintcream
+    _rgb(240, 255, 255),     # azure
+    _rgb(255, 250, 250),     # snow
+    _rgb(245, 245, 245),     # whitesmoke
+    _rgb(220, 220, 220),     # gainsboro
+    _rgb(211, 211, 211),     # lightgray
+    _rgb(169, 169, 169),     # darkgray
+    _rgb(128, 128, 128),     # gray
+    _rgb(105, 105, 105),     # dimgray
+    _rgb(47, 79, 79),        # darkslategray
+    _rgb(112, 128, 144),     # slategray
+    _rgb(192, 192, 192),     # silver
+]
+
+# -----------------------------------------------------------------------------
+# SOUND PRIMITIVES — actual sound noises (pure elements), not measurements.
+# Measurements (low/mid/high = frequency band; amplitude = level) are used for
+# depth_breakdown and keys; the pure elements we name are the noises themselves.
+# Kick, snare, melody, speech, etc. are Blended (temporal) elements, not here.
+#
+# Actual noise primitives: silence + low-band / mid-band / high-band noises
+# (rumble, tone, hiss). Each discovered sound gets a name + strength_pct (0-1).
+# -----------------------------------------------------------------------------
+# Noise names (pure elements). Tone measurement "low"|"mid"|"high" maps to these.
+STATIC_SOUND_NOISE_NAMES = ["silence", "rumble", "tone", "hiss"]
+
+
+def _snd(noise: str, strength_pct: float, tone_measurement: str = "") -> dict[str, Any]:
+    """One pure sound: noise name + strength (0-1). tone_measurement is for keying only."""
+    return {
+        "noise": noise,
+        "strength_pct": strength_pct,
+        "amplitude": strength_pct,
+        "weight": strength_pct,
+        "tone": tone_measurement or ("silent" if noise == "silence" else "mid"),
+        "timbre": noise,
+    }
+
+
+# Minimal primitive set: silence + one strength band per noise type (rumble/tone/hiss).
+# Full discovery may add more strength levels; each gets name + strength_pct recorded.
+STATIC_SOUND_PRIMITIVES = [
+    _snd("silence", 0.0, "silent"),
+    _snd("rumble", 0.25, "low"),
+    _snd("rumble", 0.5, "low"),
+    _snd("rumble", 0.75, "low"),
+    _snd("tone", 0.25, "mid"),
+    _snd("tone", 0.5, "mid"),
+    _snd("tone", 0.75, "mid"),
+    _snd("hiss", 0.25, "high"),
+    _snd("hiss", 0.5, "high"),
+    _snd("hiss", 0.75, "high"),
+]
+
+# All aspects in STATIC: pure elements only. Depth % = weights of other pure elements (pure blends).
 STATIC_ASPECTS = [
     {
         "id": "color",
-        "description": "Color at the pixel level (R, G, B, A; blending, opacity, chroma, luminance).",
-        "sub_aspects": ["blending", "opacity", "chroma", "luminance", "hue", "saturation", "brightness", "contrast"],
+        "description": "Pure color (R, G, B, opacity). Pure blends store depth_breakdown = weights of other pure colors.",
+        "sub_aspects": ["r", "g", "b", "opacity", "depth_breakdown"],
     },
     {
         "id": "sound",
-        "description": "Sound at the sample level (amplitude/weight; tone and timbre derived from sample runs).",
-        "sub_aspects": ["weight", "tone", "timbre", "amplitude"],
+        "description": "Pure sound = actual sound noises (named). low/mid/high are measurements; strength_pct is recorded per entry.",
+        "sub_aspects": ["noise", "strength_pct", "amplitude", "tone", "timbre", "depth_breakdown"],
     },
 ]
 
@@ -81,3 +208,5 @@ def _empty_static_registry(aspect: str) -> dict[str, Any]:
         "entries": [],
         "count": 0,
     }
+
+

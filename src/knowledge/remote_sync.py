@@ -55,7 +55,7 @@ def post_dynamic_discoveries(
     POST per-window dynamic discoveries (motion, lighting, composition, graphics, temporal, technical)
     to /api/knowledge/discoveries. Only sends keys that have at least one entry.
     """
-    dynamic_keys = ("motion", "time", "lighting", "composition", "graphics", "temporal", "technical", "audio_semantic")
+    dynamic_keys = ("motion", "time", "gradient", "camera", "lighting", "composition", "graphics", "temporal", "technical", "audio_semantic", "transition", "depth")
     discoveries: dict[str, list[dict[str, Any]]] = {
         k: novel_for_sync.get(k, []) for k in dynamic_keys if novel_for_sync.get(k)
     }

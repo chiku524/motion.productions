@@ -1,17 +1,19 @@
-# Railway config checklist — both workflows on motion.productions
+# Railway config checklist — workflows on motion.productions
 
-Use this to confirm **Explorer** (discovery) and **Exploiter** (interpretation) are both running and posting to the same site. Both outputs appear in the **Recent videos** library and **Recent activity** on [motion.productions](https://motion.productions), with badges so you can tell which workflow produced each run.
+Use this to confirm **Explorer**, **Exploiter**, and optionally **Balanced** and **Interpretation** are running. Explorer/Exploiter/Balanced output appears in **Recent videos** and **Recent activity** on [motion.productions](https://motion.productions). The **Interpretation** worker does not create videos; it only interprets user prompts and stores them in D1 so the main pipeline has more prompts to work with.
 
 ---
 
 ## 1. Project layout
 
-- **One Railway project** with **two services** (or three if you also run Balanced).
+- **One Railway project** with **two to four services** (Explorer, Exploiter, optional Balanced, optional Interpretation).
 - **Same repo** for all: root = repo root (not `cloudflare/`).
 - **Same build**: Dockerfile.
-- **Same start command**: `python scripts/automate_loop.py`.
+- **Start command**:
+  - Explorer / Exploiter / Balanced: `python scripts/automate_loop.py`
+  - Interpretation (no create/render): `python scripts/interpret_loop.py`
 
-Only **environment variables** differ per service.
+Only **environment variables** and **start command** differ per service.
 
 ---
 
@@ -88,7 +90,34 @@ Do **not** set `LOOP_EXPLOIT_RATIO_OVERRIDE`. Optionally set `LOOP_WORKFLOW_TYPE
 
 ---
 
-## 5. Quick reference (copy-paste)
+## 5. Service 4 — Interpretation (user-prompt interpretation only; no create/render)
+
+This worker **does not create or render videos**. It polls the interpretation queue, interprets prompts with `interpret_user_prompt()`, and stores (prompt, instruction) in D1. The main loop’s `GET /api/knowledge/for-creation` returns these as `interpretation_prompts`; `pick_prompt()` sometimes chooses from them so creation has more user-like prompts to work with.
+
+| Setting | Value |
+|--------|--------|
+| **Service name** | e.g. `motion-interpret` or `motion-interpretation` |
+| **Root Directory** | (empty or repo root) |
+| **Builder** | Dockerfile |
+| **Start Command** | `python scripts/interpret_loop.py` |
+
+**Environment variables:**
+
+| Variable | Value |
+|----------|--------|
+| `API_BASE` | `https://motion.productions` |
+
+**Optional:**
+
+| Variable | Value |
+|----------|--------|
+| `INTERPRET_DELAY_SECONDS` | `10` (seconds between poll cycles) |
+
+Effect: Fills the **interpretation registry** (D1 `interpretations` table) from queue items and from backfill (prompts from jobs that don’t yet have an interpretation). Stored values are used by the main pipeline via `interpretation_prompts` in knowledge for creation.
+
+---
+
+## 6. Quick reference (copy-paste)
 
 **Explorer**
 
@@ -114,17 +143,24 @@ API_BASE=https://motion.productions
 LOOP_WORKFLOW_TYPE=main
 ```
 
+**Interpretation (no create/render)**
+
+```env
+API_BASE=https://motion.productions
+INTERPRET_DELAY_SECONDS=10
+```
+
 ---
 
-## 6. Verify
+## 7. Verify
 
-1. **Railway dashboard** — Both services show **Active** and recent logs (e.g. `[1]`, `[2]`, …).
-2. **motion.productions** — Open the site; in **Recent videos** and **Recent activity** you should see new runs with **Explore** and **Exploit** badges (for jobs created after the workflow_type deploy).
-3. **API** — `GET https://motion.productions/api/jobs?status=completed&limit=5` — each job should include `workflow_type` when set.
+1. **Railway dashboard** — Each service shows **Active** and recent logs (e.g. `[1]`, `[2]`, … for loop; `interpreted:` / `backfill:` for interpretation).
+2. **motion.productions** — In **Recent videos** and **Recent activity** you should see new runs with **Explore** and **Exploit** badges (for jobs created after the workflow_type deploy).
+3. **API** — `GET https://motion.productions/api/jobs?status=completed&limit=5` — each job should include `workflow_type` when set. `GET /api/knowledge/for-creation` returns `interpretation_prompts` when the interpretation worker has stored results.
 
 ---
 
-## 7. Reference
+## 8. Reference
 
 - Env source of truth: `config/workflows.yaml`
 - Loop behavior: `docs/INTENDED_LOOP.md`, `docs/AUTOMATION.md`

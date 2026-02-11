@@ -384,6 +384,103 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       }
     }
 
+    // POST /api/interpret/queue — enqueue a prompt for interpretation (no create/render)
+    if (path === "/api/interpret/queue" && request.method === "POST") {
+      let body: { prompt: string; source?: string };
+      try {
+        body = (await request.json()) as typeof body;
+      } catch {
+        return err("Invalid JSON");
+      }
+      const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
+      if (!prompt) return err("prompt is required");
+      const source = typeof body.source === "string" && /^(web|worker|loop)$/.test(body.source) ? body.source : "worker";
+      const id = uuid();
+      await env.DB.prepare(
+        "INSERT INTO interpretations (id, prompt, source, status) VALUES (?, ?, ?, 'pending')"
+      )
+        .bind(id, prompt, source)
+        .run();
+      return json({ id, prompt: prompt.slice(0, 200), source, status: "pending" }, 201);
+    }
+
+    // GET /api/interpret/queue — fetch pending prompts for interpretation worker
+    if (path === "/api/interpret/queue" && request.method === "GET") {
+      const limit = Math.min(parseInt(new URL(request.url).searchParams.get("limit") || "20", 10), 50);
+      const rows = await env.DB.prepare(
+        "SELECT id, prompt, source, created_at FROM interpretations WHERE status = 'pending' ORDER BY created_at ASC LIMIT ?"
+      )
+        .bind(limit)
+        .all<{ id: string; prompt: string; source: string; created_at: string }>();
+      const items = (rows.results || []).map((r) => ({
+        id: r.id,
+        prompt: r.prompt,
+        source: r.source,
+        created_at: r.created_at,
+      }));
+      return json({ items });
+    }
+
+    // PATCH /api/interpret/:id — store interpretation result (called by interpretation worker)
+    const interpretMatch = path.match(/^\/api\/interpret\/([a-f0-9-]+)$/);
+    if (interpretMatch && request.method === "PATCH") {
+      const id = interpretMatch[1];
+      let body: { instruction: Record<string, unknown> };
+      try {
+        body = (await request.json()) as typeof body;
+      } catch {
+        return err("Invalid JSON");
+      }
+      const instruction = body.instruction && typeof body.instruction === "object" ? body.instruction : null;
+      if (!instruction) return err("instruction is required");
+      const row = await env.DB.prepare("SELECT id, status FROM interpretations WHERE id = ?").bind(id).first();
+      if (!row) return err("Interpretation job not found", 404);
+      if ((row as { status: string }).status !== "pending") return err("Already interpreted", 400);
+      await env.DB.prepare(
+        "UPDATE interpretations SET instruction_json = ?, status = 'done', updated_at = datetime('now') WHERE id = ?"
+      )
+        .bind(JSON.stringify(instruction), id)
+        .run();
+      return json({ id, status: "done" });
+    }
+
+    // GET /api/interpret/backfill-prompts — prompts from jobs not yet in interpretations (for interpretation worker)
+    if (path === "/api/interpret/backfill-prompts" && request.method === "GET") {
+      const limit = Math.min(parseInt(new URL(request.url).searchParams.get("limit") || "30", 10), 100);
+      const rows = await env.DB.prepare(
+        `SELECT DISTINCT j.prompt FROM jobs j
+         LEFT JOIN interpretations i ON i.prompt = j.prompt AND i.status = 'done'
+         WHERE j.prompt IS NOT NULL AND j.prompt != '' AND i.id IS NULL
+         ORDER BY j.created_at DESC LIMIT ?`
+      )
+        .bind(limit)
+        .all<{ prompt: string }>();
+      const prompts = (rows.results || []).map((r) => r.prompt);
+      return json({ prompts });
+    }
+
+    // POST /api/interpretations — store completed interpretation directly (e.g. backfill from jobs)
+    if (path === "/api/interpretations" && request.method === "POST") {
+      let body: { prompt: string; instruction: Record<string, unknown>; source?: string };
+      try {
+        body = (await request.json()) as typeof body;
+      } catch {
+        return err("Invalid JSON");
+      }
+      const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
+      if (!prompt) return err("prompt is required");
+      const instruction = body.instruction && typeof body.instruction === "object" ? body.instruction : null;
+      if (!instruction) return err("instruction is required");
+      const source = typeof body.source === "string" && /^(web|worker|loop|backfill)$/.test(body.source) ? body.source : "worker";
+      const id = uuid();
+      await env.DB.prepare(
+        "INSERT INTO interpretations (id, prompt, instruction_json, source, status) VALUES (?, ?, ?, ?, 'done')"
+      )
+        .bind(id, prompt, JSON.stringify(instruction), source)
+        .run();
+      return json({ id, prompt: prompt.slice(0, 200), status: "done" }, 201);
+    }
+
     // POST /api/events — log user interaction for learning
     if (path === "/api/events" && request.method === "POST") {
       let body: { event_type: string; job_id?: string; payload?: Record<string, unknown> };
@@ -486,16 +583,22 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
 
     // GET /api/learning/stats — aggregated stats (KV cache; no deletes to stay within free tier)
     if (path === "/api/learning/stats" && request.method === "GET") {
-      const cached = await env.MOTION_KV.get("learning:stats");
-      if (cached) return json(JSON.parse(cached));
+      const safeDefault = { total_runs: 0, by_palette: {}, by_keyword: {}, overall: {} };
+      try {
+        const cached = await env.MOTION_KV.get("learning:stats");
+        if (cached) return json(JSON.parse(cached));
 
-      const rows = await env.DB.prepare(
-        "SELECT prompt, spec_json, analysis_json FROM learning_runs ORDER BY created_at DESC LIMIT 500"
-      )
-        .all<{ prompt: string; spec_json: string; analysis_json: string }>();
-      const report = aggregateLearningRuns(rows.results || []);
-      await env.MOTION_KV.put("learning:stats", JSON.stringify(report), { expirationTtl: 60 });
-      return json(report);
+        const rows = await env.DB.prepare(
+          "SELECT prompt, spec_json, analysis_json FROM learning_runs ORDER BY created_at DESC LIMIT 500"
+        )
+          .all<{ prompt: string; spec_json: string; analysis_json: string }>();
+        const report = aggregateLearningRuns(rows.results || []);
+        await env.MOTION_KV.put("learning:stats", JSON.stringify(report), { expirationTtl: 60 });
+        return json(report);
+      } catch (e) {
+        console.error("GET /api/learning/stats failed:", e);
+        return json(safeDefault);
+      }
     }
 
     // POST /api/knowledge/name/take — reserve a unique name for a discovery
@@ -509,8 +612,8 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
     // Supports: static_colors, static_sound (per-frame) + colors, blends, motion, etc. (dynamic/whole-video)
     if (path === "/api/knowledge/discoveries" && request.method === "POST") {
       let body: {
-        static_colors?: Array<{ key: string; r: number; g: number; b: number; brightness?: number; luminance?: number; contrast?: number; saturation?: number; chroma?: number; hue?: number; color_variance?: number; opacity?: number; source_prompt?: string; name?: string }>;
-        static_sound?: Array<{ key: string; amplitude?: number; weight?: number; tone?: string; timbre?: string; source_prompt?: string; name?: string }>;
+        static_colors?: Array<{ key: string; r: number; g: number; b: number; brightness?: number; luminance?: number; contrast?: number; saturation?: number; chroma?: number; hue?: number; color_variance?: number; opacity?: number; depth_breakdown?: Record<string, unknown>; source_prompt?: string; name?: string }>;
+        static_sound?: Array<{ key: string; amplitude?: number; weight?: number; strength_pct?: number; tone?: string; timbre?: string; depth_breakdown?: Record<string, unknown>; source_prompt?: string; name?: string }>;
         colors?: Array<{ key: string; r: number; g: number; b: number; source_prompt?: string }>;
         blends?: Array<{ name: string; domain: string; inputs: Record<string, unknown>; output: Record<string, unknown>; primitive_depths?: Record<string, unknown>; source_prompt?: string }>;
         motion?: Array<{ key: string; motion_level: number; motion_std: number; motion_trend: string; motion_direction?: string; motion_rhythm?: string; source_prompt?: string }>;
@@ -519,8 +622,10 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         graphics?: Array<{ key: string; edge_density: number; spatial_variance: number; busyness: number; source_prompt?: string }>;
         temporal?: Array<{ key: string; duration: number; motion_trend: string; source_prompt?: string }>;
         technical?: Array<{ key: string; width: number; height: number; fps: number; source_prompt?: string }>;
-        audio_semantic?: Array<{ key: string; role: string; source_prompt?: string; name?: string }>;
+        audio_semantic?: Array<{ key: string; role: string; mood?: string; tempo?: string; source_prompt?: string; name?: string }>;
         time?: Array<{ key: string; duration: number; fps: number; source_prompt?: string }>;
+        gradient?: Array<{ key: string; gradient_type: string; strength?: number; source_prompt?: string }>;
+        camera?: Array<{ key: string; motion_type: string; speed?: string; source_prompt?: string }>;
         narrative?: Record<string, Array<{ key: string; value?: string; source_prompt?: string; name?: string }>>;
       };
       try {
@@ -528,7 +633,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       } catch {
         return err("Invalid JSON");
       }
-      const results: Record<string, number> = { static_colors: 0, static_sound: 0, narrative: 0, colors: 0, blends: 0, motion: 0, lighting: 0, composition: 0, graphics: 0, temporal: 0, technical: 0, audio_semantic: 0, time: 0 };
+      const results: Record<string, number> = { static_colors: 0, static_sound: 0, narrative: 0, colors: 0, blends: 0, motion: 0, lighting: 0, composition: 0, graphics: 0, temporal: 0, technical: 0, audio_semantic: 0, time: 0, gradient: 0, camera: 0 };
 
       // Static registry: per-frame color entries
       for (const c of body.static_colors || []) {
@@ -539,8 +644,8 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           const name = (c.name && c.name.trim()) ? c.name : await generateUniqueName(env);
           if (!c.name || !c.name.trim()) await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
           await env.DB.prepare(
-            "INSERT INTO static_colors (id, color_key, r, g, b, brightness, luminance, contrast, saturation, chroma, hue, color_variance, opacity, count, sources_json, name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)"
-          ).bind(uuid(), c.key, c.r, c.g, c.b, c.brightness ?? null, c.luminance ?? c.brightness ?? null, c.contrast ?? null, c.saturation ?? null, c.chroma ?? c.saturation ?? null, c.hue ?? null, c.color_variance ?? null, c.opacity ?? null, c.source_prompt ? JSON.stringify([c.source_prompt.slice(0, 80)]) : null, name).run();
+            "INSERT INTO static_colors (id, color_key, r, g, b, brightness, luminance, contrast, saturation, chroma, hue, color_variance, opacity, count, sources_json, name, depth_breakdown_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)"
+          ).bind(uuid(), c.key, c.r, c.g, c.b, c.brightness ?? null, c.luminance ?? c.brightness ?? null, c.contrast ?? null, c.saturation ?? null, c.chroma ?? c.saturation ?? null, c.hue ?? null, c.color_variance ?? null, c.opacity ?? null, c.source_prompt ? JSON.stringify([c.source_prompt.slice(0, 80)]) : null, name, c.depth_breakdown ? JSON.stringify(c.depth_breakdown) : null).run();
         }
         results.static_colors++;
       }
@@ -553,13 +658,13 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           const name = (s.name && s.name.trim()) ? s.name : await generateUniqueName(env);
           if (!s.name || !s.name.trim()) await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
           await env.DB.prepare(
-            "INSERT INTO static_sound (id, sound_key, amplitude, weight, tone, timbre, count, sources_json, name) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)"
-          ).bind(uuid(), s.key, s.amplitude ?? null, s.weight ?? null, s.tone ?? null, s.timbre ?? null, s.source_prompt ? JSON.stringify([s.source_prompt.slice(0, 80)]) : null, name).run();
+            "INSERT INTO static_sound (id, sound_key, amplitude, weight, tone, timbre, count, sources_json, name, depth_breakdown_json, strength_pct) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)"
+          ).bind(uuid(), s.key, s.amplitude ?? null, s.weight ?? null, s.tone ?? null, s.timbre ?? null, s.source_prompt ? JSON.stringify([s.source_prompt.slice(0, 80)]) : null, name, s.depth_breakdown ? JSON.stringify(s.depth_breakdown) : null, s.strength_pct ?? s.amplitude ?? s.weight ?? null).run();
         }
         results.static_sound++;
       }
       // Narrative registry: themes, plots, settings, genre, mood, scene_type
-      const narrativeAspects = ["genre", "mood", "plots", "settings", "themes", "scene_type"];
+      const narrativeAspects = ["genre", "mood", "plots", "settings", "themes", "style", "scene_type"];
       for (const aspect of narrativeAspects) {
         for (const item of body.narrative?.[aspect] || []) {
           const key = (item.key || "").trim().toLowerCase();
@@ -702,6 +807,32 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         }
         results.audio_semantic++;
       }
+      for (const g of body.gradient || []) {
+        const existing = await env.DB.prepare("SELECT id FROM learned_gradient WHERE profile_key = ?").bind(g.key).first();
+        if (existing) {
+          await env.DB.prepare("UPDATE learned_gradient SET count = count + 1 WHERE profile_key = ?").bind(g.key).run();
+        } else {
+          const name = await generateUniqueName(env);
+          await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+          await env.DB.prepare(
+            "INSERT INTO learned_gradient (id, profile_key, gradient_type, strength, count, sources_json, name) VALUES (?, ?, ?, ?, 1, ?, ?)"
+          ).bind(uuid(), g.key, g.gradient_type ?? "angled", g.strength ?? null, g.source_prompt ? JSON.stringify([g.source_prompt.slice(0, 80)]) : null, name).run();
+        }
+        results.gradient++;
+      }
+      for (const c of body.camera || []) {
+        const existing = await env.DB.prepare("SELECT id FROM learned_camera WHERE profile_key = ?").bind(c.key).first();
+        if (existing) {
+          await env.DB.prepare("UPDATE learned_camera SET count = count + 1 WHERE profile_key = ?").bind(c.key).run();
+        } else {
+          const name = await generateUniqueName(env);
+          await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+          await env.DB.prepare(
+            "INSERT INTO learned_camera (id, profile_key, motion_type, speed, count, sources_json, name) VALUES (?, ?, ?, ?, 1, ?, ?)"
+          ).bind(uuid(), c.key, c.motion_type ?? "static", c.speed ?? null, c.source_prompt ? JSON.stringify([c.source_prompt.slice(0, 80)]) : null, name).run();
+        }
+        results.camera++;
+      }
       // Do not use KV delete (free tier limit). Stats cache expires via TTL; GET recomputes when stale.
       return json({ status: "recorded", results }, 201);
     }
@@ -759,14 +890,14 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         source_prompt: r.source_prompt ?? "",
       }));
       // Gradient and camera from learned_blends (growth from spec) — creation picks from STATIC/registry
-      const gradientRows = await env.DB.prepare(
+      const gradientSeen = new Set<string>();
+      const learned_gradient: string[] = [];
+      const gradientBlendRows = await env.DB.prepare(
         "SELECT output_json FROM learned_blends WHERE domain = 'gradient' ORDER BY created_at DESC LIMIT ?"
       )
         .bind(limit)
         .all<{ output_json: string }>();
-      const gradientSeen = new Set<string>();
-      const learned_gradient: string[] = [];
-      for (const r of gradientRows.results || []) {
+      for (const r of gradientBlendRows.results || []) {
         const out = JSON.parse(r.output_json) as Record<string, unknown>;
         const v = typeof out.gradient_type === "string" ? out.gradient_type.trim() : "";
         if (v && !gradientSeen.has(v)) {
@@ -774,16 +905,40 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           learned_gradient.push(v);
         }
       }
-      const cameraRows = await env.DB.prepare(
+      const gradientTableRows = await env.DB.prepare(
+        "SELECT gradient_type FROM learned_gradient ORDER BY count DESC LIMIT ?"
+      )
+        .bind(limit)
+        .all<{ gradient_type: string }>();
+      for (const r of gradientTableRows.results || []) {
+        const v = (r.gradient_type || "").trim();
+        if (v && !gradientSeen.has(v)) {
+          gradientSeen.add(v);
+          learned_gradient.push(v);
+        }
+      }
+      const cameraSeen = new Set<string>();
+      const learned_camera: string[] = [];
+      const cameraBlendRows = await env.DB.prepare(
         "SELECT output_json FROM learned_blends WHERE domain = 'camera' ORDER BY created_at DESC LIMIT ?"
       )
         .bind(limit)
         .all<{ output_json: string }>();
-      const cameraSeen = new Set<string>();
-      const learned_camera: string[] = [];
-      for (const r of cameraRows.results || []) {
+      for (const r of cameraBlendRows.results || []) {
         const out = JSON.parse(r.output_json) as Record<string, unknown>;
         const v = typeof out.camera_motion === "string" ? out.camera_motion.trim() : "";
+        if (v && !cameraSeen.has(v)) {
+          cameraSeen.add(v);
+          learned_camera.push(v);
+        }
+      }
+      const cameraTableRows = await env.DB.prepare(
+        "SELECT motion_type FROM learned_camera ORDER BY count DESC LIMIT ?"
+      )
+        .bind(limit)
+        .all<{ motion_type: string }>();
+      for (const r of cameraTableRows.results || []) {
+        const v = (r.motion_type || "").trim();
         if (v && !cameraSeen.has(v)) {
           cameraSeen.add(v);
           learned_camera.push(v);
@@ -793,6 +948,17 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       const origin_gradient = ["vertical", "horizontal", "radial", "angled"];
       const origin_camera = ["static", "pan", "tilt", "dolly", "crane", "zoom", "zoom_out", "handheld"];
       const origin_motion = ["slow", "wave", "flow", "fast", "pulse"];
+      // Interpretation registry: user prompts + resolved instructions (for creation / pick_prompt)
+      const interpLimit = Math.min(parseInt(new URL(request.url).searchParams.get("interpretation_limit") || "100", 10), 500);
+      const interpRows = await env.DB.prepare(
+        "SELECT prompt, instruction_json FROM interpretations WHERE status = 'done' AND instruction_json IS NOT NULL ORDER BY updated_at DESC LIMIT ?"
+      )
+        .bind(interpLimit)
+        .all<{ prompt: string; instruction_json: string }>();
+      const interpretation_prompts = (interpRows.results || []).map((r) => ({
+        prompt: r.prompt,
+        instruction: r.instruction_json ? (JSON.parse(r.instruction_json) as Record<string, unknown>) : {},
+      }));
       return json({
         learned_colors: colors,
         learned_motion: motion,
@@ -802,6 +968,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         origin_gradient,
         origin_camera,
         origin_motion,
+        interpretation_prompts,
       });
     }
 
@@ -818,13 +985,14 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           { name: "green", r: 0, g: 255, b: 0 },
           { name: "blue", r: 0, g: 0, b: 255 },
         ],
-        sound_primaries: [] as string[],
+        sound_primaries: ["silence", "ambient", "tone", "music", "sfx", "speech", "full", "neutral", "calm", "tense", "uplifting", "dark"],
       };
-      // Non-pure canonical (multi-frame; gradient/motion/camera need multiple frames to observe) — DYNAMIC
+      // Non-pure canonical (multi-frame; gradient, motion, camera, sound need multiple frames to observe) — DYNAMIC
       const dynamicCanonical = {
         gradient_type: ["vertical", "horizontal", "radial", "angled"],
         camera_motion: ["static", "pan", "tilt", "dolly", "crane", "zoom", "zoom_out", "handheld"],
         motion: ["slow", "wave", "flow", "fast", "pulse"],
+        sound: ["tempo: slow", "tempo: medium", "tempo: fast", "mood: neutral", "mood: calm", "mood: tense", "mood: uplifting", "mood: dark", "presence: silence", "presence: ambient", "presence: music", "presence: sfx", "presence: full"],
       };
       // Depth vs black/white for a single RGB (e.g. grey = 50% white + 50% black)
       const colorDepthVsPrimitives = (r: number, g: number, b: number): { depth_pct: number; depth_breakdown: Record<string, number> } => {
@@ -838,11 +1006,11 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         return { depth_pct, depth_breakdown };
       };
       const staticColors = await env.DB.prepare(
-        "SELECT color_key, r, g, b, name, count FROM static_colors ORDER BY count DESC LIMIT ?"
-      ).bind(regLimit).all<{ color_key: string; r: number; g: number; b: number; name: string; count: number }>();
+        "SELECT color_key, r, g, b, name, count, depth_breakdown_json FROM static_colors ORDER BY count DESC LIMIT ?"
+      ).bind(regLimit).all<{ color_key: string; r: number; g: number; b: number; name: string; count: number; depth_breakdown_json: string | null }>();
       const staticSound = await env.DB.prepare(
-        "SELECT sound_key, name, count FROM static_sound ORDER BY count DESC LIMIT ?"
-      ).bind(regLimit).all<{ sound_key: string; name: string; count: number }>();
+        "SELECT sound_key, name, count, depth_breakdown_json, strength_pct FROM static_sound ORDER BY count DESC LIMIT ?"
+      ).bind(regLimit).all<{ sound_key: string; name: string; count: number; depth_breakdown_json: string | null; strength_pct: number | null }>();
       const learnedColors = await env.DB.prepare(
         "SELECT color_key, r, g, b, name, count FROM learned_colors ORDER BY count DESC LIMIT ?"
       ).bind(regLimit).all<{ color_key: string; r: number; g: number; b: number; name: string; count: number }>();
@@ -852,7 +1020,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       const blends = await env.DB.prepare(
         "SELECT name, domain, output_json, primitive_depths_json FROM learned_blends ORDER BY created_at DESC LIMIT ?"
       ).bind(regLimit).all<{ name: string; domain: string; output_json: string; primitive_depths_json: string | null }>();
-      const narrativeAspects = ["genre", "mood", "themes", "plots", "settings", "scene_type"];
+      const narrativeAspects = ["genre", "mood", "themes", "plots", "settings", "style", "scene_type"];
       const narrative: Record<string, Array<{ entry_key: string; value: string; name: string; count: number }>> = {};
       for (const aspect of narrativeAspects) {
         const rows = await env.DB.prepare(
@@ -887,7 +1055,14 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         const { depth_pct, depth_breakdown } = depthFromBlendDepths(depths);
         return { name: b.name, key: String(out.camera_motion ?? b.domain), depth_pct, depth_breakdown };
       });
-      const otherBlends = (blends.results || []).filter((b) => b.domain !== "gradient" && b.domain !== "camera").map((b) => {
+      const audioBlends = (blends.results || []).filter((b) => b.domain === "audio").map((b) => {
+        const out = JSON.parse(b.output_json) as Record<string, unknown>;
+        const depths = b.primitive_depths_json ? (JSON.parse(b.primitive_depths_json) as Record<string, unknown>) : null;
+        const { depth_pct, depth_breakdown } = depthFromBlendDepths(depths);
+        const key = [out.tempo, out.mood, out.presence].filter(Boolean).join(" / ") || b.output_json.slice(0, 60);
+        return { name: b.name, key, tempo: out.tempo, mood: out.mood, presence: out.presence, depth_pct, depth_breakdown };
+      });
+      const otherBlends = (blends.results || []).filter((b) => b.domain !== "gradient" && b.domain !== "camera" && b.domain !== "audio").map((b) => {
         const depths = b.primitive_depths_json ? (JSON.parse(b.primitive_depths_json) as Record<string, unknown>) : null;
         const { depth_pct, depth_breakdown } = depthFromBlendDepths(depths);
         return { name: b.name, domain: b.domain, key: b.output_json.slice(0, 80), depth_pct, depth_breakdown };
@@ -897,10 +1072,32 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         dynamic_canonical: dynamicCanonical,
         static: {
           colors: (staticColors.results || []).map((r) => {
-            const { depth_pct, depth_breakdown } = colorDepthVsPrimitives(r.r, r.g, r.b);
+            let depth_pct: number;
+            let depth_breakdown: Record<string, number>;
+            if (r.depth_breakdown_json) {
+              try {
+                const stored = JSON.parse(r.depth_breakdown_json) as Record<string, unknown>;
+                depth_breakdown = {};
+                for (const [k, v] of Object.entries(stored)) {
+                  if (typeof v === "number") depth_breakdown[k] = v;
+                }
+                depth_pct = Object.keys(depth_breakdown).length ? 100 : 0;
+              } catch {
+                const comp = colorDepthVsPrimitives(r.r, r.g, r.b);
+                depth_pct = comp.depth_pct;
+                depth_breakdown = comp.depth_breakdown;
+              }
+            } else {
+              const comp = colorDepthVsPrimitives(r.r, r.g, r.b);
+              depth_pct = comp.depth_pct;
+              depth_breakdown = comp.depth_breakdown;
+            }
             return { key: r.color_key, r: r.r, g: r.g, b: r.b, name: r.name, count: r.count, depth_pct, depth_breakdown };
           }),
-          sound: (staticSound.results || []).map((r) => ({ key: r.sound_key, name: r.name, count: r.count })),
+          sound: (staticSound.results || []).map((r) => {
+            const depth_breakdown = r.depth_breakdown_json ? (JSON.parse(r.depth_breakdown_json) as Record<string, unknown>) : undefined;
+            return { key: r.sound_key, name: r.name, count: r.count, strength_pct: r.strength_pct ?? undefined, depth_breakdown };
+          }),
         },
         dynamic: {
           colors: (learnedColors.results || []).map((r) => {
@@ -910,6 +1107,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           motion: (learnedMotion.results || []).map((r) => ({ key: r.profile_key, name: r.name || r.profile_key, trend: r.motion_trend, count: r.count })),
           gradient: gradientBlends,
           camera: cameraBlends,
+          sound: audioBlends,
           blends: otherBlends,
         },
         narrative,

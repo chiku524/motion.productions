@@ -11,17 +11,28 @@ from pathlib import Path
 from typing import Any
 
 from .extractor_per_instance import extract_static_per_frame, extract_dynamic_per_window
-from .static_registry import load_static_registry, save_static_registry
+from .static_registry import (
+    load_static_registry,
+    save_static_registry,
+    STATIC_COLOR_PRIMITIVES,
+    STATIC_SOUND_PRIMITIVES,
+)
 from .dynamic_registry import load_dynamic_registry, save_dynamic_registry
+from .origins import get_all_origins
 from .registry import _color_key
 from .blend_names import generate_sensible_name
 
 
-def _static_color_key(color: dict[str, Any], tolerance: int = 25) -> str:
+def _static_color_key(color: dict[str, Any], tolerance: int = 25, opacity_steps: int = 21) -> str:
+    """Key includes R,G,B and opacity so each color at each level of opaqueness is distinct (pure blend)."""
     r = color.get("r", 0)
     g = color.get("g", 0)
     b = color.get("b", 0)
-    return _color_key(float(r), float(g), float(b), tolerance=tolerance)
+    opacity = float(color.get("opacity", 1.0))
+    # Quantize opacity to steps 0, 0.05, ..., 1.0 so we name each level
+    o_step = round(opacity * (opacity_steps - 1)) / (opacity_steps - 1) if opacity_steps > 1 else round(opacity, 2)
+    rgb_key = _color_key(float(r), float(g), float(b), tolerance=tolerance)
+    return f"{rgb_key}_{round(o_step, 2)}"
 
 
 def _static_sound_key(sound: dict[str, Any]) -> str:
@@ -29,30 +40,40 @@ def _static_sound_key(sound: dict[str, Any]) -> str:
         return ""
     amp = sound.get("amplitude") or sound.get("weight") or 0
     tone = sound.get("tone") or "unknown"
-    return f"{round(float(amp), 2)}_{tone}"
+    timbre = sound.get("timbre") or ""
+    tempo = sound.get("tempo") or ""
+    return f"{round(float(amp), 2)}_{tone}_{timbre}_{tempo}".rstrip("_")
 
 
 def derive_audio_semantic_from_spec(spec: Any) -> dict[str, Any]:
     """
-    Build one audio_semantic dict from spec (audio_presence -> role: ambient|music|sfx).
-    Use until semantic audio classification from decoded audio is implemented.
+    Build one audio_semantic dict from spec: role (ambient|music|sfx), mood, tempo.
+    Recorded in DYNAMIC (audio_semantic) so spec-derived sound is non-pure / time-bound.
     """
     presence = getattr(spec, "audio_presence", None) or "ambient"
     role = "music" if presence == "full" else ("sfx" if presence == "sfx" else "ambient")
-    return {"role": role, "type": role}
+    mood = getattr(spec, "audio_mood", None) or "neutral"
+    tempo = getattr(spec, "audio_tempo", None) or "medium"
+    return {"role": role, "type": role, "mood": str(mood), "tempo": str(tempo), "presence": str(presence)}
 
 
 def derive_static_sound_from_spec(spec: Any) -> dict[str, Any]:
     """
     Build one static sound dict from creation spec (audio_mood, audio_tempo, audio_presence).
     Use when per-frame audio extraction is not yet implemented, so we still record intended sound.
+    Key includes mood, tempo, presence so each combo becomes a distinct registry entry.
     """
     mood = getattr(spec, "audio_mood", None) or "neutral"
     tempo = getattr(spec, "audio_tempo", None) or "medium"
     presence = getattr(spec, "audio_presence", None) or "ambient"
-    # Map presence to a simple amplitude hint; tone from mood
     weight = 0.3 if presence == "silence" else (0.7 if presence == "full" else 0.5)
-    return {"amplitude": weight, "weight": weight, "tone": str(mood), "timbre": str(presence)}
+    return {
+        "amplitude": weight,
+        "weight": weight,
+        "tone": str(mood),
+        "timbre": str(presence),
+        "tempo": str(tempo),
+    }
 
 
 def _motion_key(motion: dict[str, Any]) -> str:
@@ -104,8 +125,36 @@ def _technical_key(window: dict[str, Any], width: int = 0, height: int = 0, fps:
     return f"{int(width)}x{int(height)}_{round(float(f), 1)}"
 
 
+def _gradient_key(grad: dict[str, Any]) -> str:
+    gtype = (grad.get("gradient_type") or "angled").strip().lower()
+    strength = round(float(grad.get("strength", 0) or 0), 2)
+    return f"{gtype}_{strength}"
+
+
+def _camera_key(cam: dict[str, Any]) -> str:
+    mtype = (cam.get("motion_type") or "static").strip().lower()
+    speed = (cam.get("speed") or "medium").strip().lower()
+    return f"{mtype}_{speed}"
+
+
+def _transition_key(trans: dict[str, Any]) -> str:
+    ttype = (trans.get("type") or "cut").strip().lower()
+    dur = round(float(trans.get("duration_seconds", trans.get("duration", 0)) or 0), 2)
+    return f"{ttype}_{dur}"
+
+
+def _depth_key(dep: dict[str, Any]) -> str:
+    para = round(float(dep.get("parallax_strength", 0) or 0), 2)
+    layers = int(dep.get("layer_count", 1) or 1)
+    return f"{para}_{layers}"
+
+
 def _audio_semantic_key(audio: dict[str, Any]) -> str:
     role = (audio.get("role") or audio.get("type") or "ambient").strip().lower()
+    mood = (audio.get("mood") or "").strip().lower()
+    tempo = (audio.get("tempo") or "").strip().lower()
+    if mood or tempo:
+        return f"{role}_{mood}_{tempo}".rstrip("_")
     return role
 
 
@@ -141,22 +190,28 @@ def ensure_static_color_in_registry(
         return None
     names = {e.get("name", "") for e in data.get("entries", []) if e.get("name")}
     name = generate_sensible_name("color", key, existing_names=names)
+    r_val = float(color.get("r", 0))
+    g_val = float(color.get("g", 0))
+    b_val = float(color.get("b", 0))
+    opacity_val = float(color.get("opacity", 1.0))
+    # Depth breakdown required: origin color % and opacity level (per REGISTRY_FOUNDATION)
+    from .blend_depth import compute_color_depth
+    origin_colors = compute_color_depth(r_val, g_val, b_val)
+    depth_breakdown: dict[str, Any] = {
+        "origin_colors": origin_colors,
+        "opacity": round(opacity_val, 2),
+    }
+    # Static = pure only: R, G, B, opacity; depth_breakdown = weights of origin + opaque level
     entry: dict[str, Any] = {
         "key": key,
-        "r": round(float(color.get("r", 0)), 1),
-        "g": round(float(color.get("g", 0)), 1),
-        "b": round(float(color.get("b", 0)), 1),
-        "brightness": color.get("brightness"),
-        "luminance": color.get("luminance", color.get("brightness")),
-        "contrast": color.get("contrast"),
-        "saturation": color.get("saturation"),
-        "chroma": color.get("chroma", color.get("saturation")),
-        "hue": color.get("hue"),
-        "color_variance": color.get("color_variance"),
-        "opacity": color.get("opacity", 1.0),
+        "r": round(r_val, 1),
+        "g": round(g_val, 1),
+        "b": round(b_val, 1),
+        "opacity": round(opacity_val, 2),
         "name": name,
         "count": 1,
         "sources": [source_prompt[:80]] if source_prompt else [],
+        "depth_breakdown": depth_breakdown,
     }
     data.setdefault("entries", []).append(entry)
     data["count"] = len(data["entries"])
@@ -165,14 +220,40 @@ def ensure_static_color_in_registry(
         out_novel.append({
             "key": key,
             "r": entry["r"], "g": entry["g"], "b": entry["b"],
-            "brightness": entry.get("brightness"), "luminance": entry.get("luminance"),
-            "contrast": entry.get("contrast"), "saturation": entry.get("saturation"),
-            "chroma": entry.get("chroma"), "hue": entry.get("hue"),
-            "color_variance": entry.get("color_variance"), "opacity": entry.get("opacity"),
+            "opacity": entry["opacity"],
+            "depth_breakdown": depth_breakdown,
             "source_prompt": source_prompt[:80] if source_prompt else "",
             "name": name,
         })
     return name
+
+
+def ensure_static_primitives_seeded(config: dict[str, Any] | None = None) -> None:
+    """
+    Ensure every primitive (origin) color and sound is in the static registry.
+    Idempotent: only adds entries whose key is missing. Call at start of grow_from_video.
+    """
+    for color in STATIC_COLOR_PRIMITIVES:
+        ensure_static_color_in_registry(color, config=config)
+    for sound in STATIC_SOUND_PRIMITIVES:
+        ensure_static_sound_in_registry(sound, config=config)
+
+
+def ensure_dynamic_primitives_seeded(config: dict[str, Any] | None = None) -> None:
+    """
+    Seed dynamic registry with origin primitives (gradient, camera, transition) so
+    every known non-pure origin exists for depth and workflow. Idempotent.
+    """
+    origins = get_all_origins()
+    for gtype in (origins.get("graphics") or {}).get("gradient_type", ["vertical", "horizontal", "radial", "angled"]):
+        window = {"gradient": {"gradient_type": gtype, "strength": 0.0}}
+        ensure_dynamic_gradient_in_registry(window, config=config)
+    for mtype in (origins.get("camera") or {}).get("motion_type", ["static", "pan", "tilt", "dolly", "crane", "zoom", "zoom_out", "handheld"]):
+        window = {"camera": {"motion_type": mtype, "speed": "medium"}}
+        ensure_dynamic_camera_in_registry(window, config=config)
+    for ttype in (origins.get("transition") or {}).get("type", ["cut", "fade", "dissolve", "wipe"]):
+        window = {"transition": {"type": ttype, "duration_seconds": 0.0}}
+        ensure_dynamic_transition_in_registry(window, config=config)
 
 
 def ensure_static_sound_in_registry(
@@ -205,15 +286,23 @@ def ensure_static_sound_in_registry(
         return None
     names = {e.get("name", "") for e in data.get("entries", []) if e.get("name")}
     name = generate_sensible_name("sound", key, existing_names=names)
+    amp = float(sound.get("amplitude") or sound.get("weight") or 0)
+    tone = (sound.get("tone") or "mid").strip()
+    from .blend_depth import compute_sound_depth
+    depth_breakdown = compute_sound_depth(amp, tone)
+    strength_pct = depth_breakdown.get("strength_pct") if isinstance(depth_breakdown, dict) else amp
     entry = {
         "key": key,
         "amplitude": sound.get("amplitude"),
         "weight": sound.get("weight"),
+        "strength_pct": strength_pct,
         "tone": sound.get("tone"),
         "timbre": sound.get("timbre"),
+        "tempo": sound.get("tempo", ""),
         "name": name,
         "count": 1,
         "sources": [source_prompt[:80]] if source_prompt else [],
+        "depth_breakdown": depth_breakdown,
     }
     data.setdefault("entries", []).append(entry)
     data["count"] = len(data["entries"])
@@ -223,8 +312,10 @@ def ensure_static_sound_in_registry(
             "key": key,
             "amplitude": entry.get("amplitude"),
             "weight": entry.get("weight"),
+            "strength_pct": strength_pct,
             "tone": entry.get("tone"),
             "timbre": entry.get("timbre"),
+            "depth_breakdown": depth_breakdown,
             "source_prompt": source_prompt[:80] if source_prompt else "",
             "name": name,
         })
@@ -377,6 +468,74 @@ def ensure_dynamic_technical_in_registry(
     return _ensure_dynamic_in_registry("technical", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api)
 
 
+def ensure_dynamic_gradient_in_registry(
+    window: dict[str, Any],
+    *,
+    source_prompt: str = "",
+    config: dict[str, Any] | None = None,
+    out_novel: list[dict[str, Any]] | None = None,
+) -> str | None:
+    """Add gradient (type + strength) to dynamic registry if novel."""
+    grad = window.get("gradient", {})
+    if not grad:
+        return None
+    key = _gradient_key(grad)
+    payload = {"gradient_type": grad.get("gradient_type", "angled"), "strength": grad.get("strength", 0)}
+    api = {"key": key, "gradient_type": payload["gradient_type"], "strength": payload["strength"]}
+    return _ensure_dynamic_in_registry("gradient", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api)
+
+
+def ensure_dynamic_camera_in_registry(
+    window: dict[str, Any],
+    *,
+    source_prompt: str = "",
+    config: dict[str, Any] | None = None,
+    out_novel: list[dict[str, Any]] | None = None,
+) -> str | None:
+    """Add camera motion (type + speed) to dynamic registry if novel."""
+    cam = window.get("camera", {})
+    if not cam:
+        return None
+    key = _camera_key(cam)
+    payload = {"motion_type": cam.get("motion_type", "static"), "speed": cam.get("speed", "medium")}
+    api = {"key": key, "motion_type": payload["motion_type"], "speed": payload["speed"]}
+    return _ensure_dynamic_in_registry("camera", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api)
+
+
+def ensure_dynamic_transition_in_registry(
+    window: dict[str, Any],
+    *,
+    source_prompt: str = "",
+    config: dict[str, Any] | None = None,
+    out_novel: list[dict[str, Any]] | None = None,
+) -> str | None:
+    """Add transition (type, duration) to dynamic registry if novel."""
+    trans = window.get("transition", {})
+    if not trans or not trans.get("type"):
+        return None
+    key = _transition_key(trans)
+    payload = {"type": trans.get("type", "cut"), "duration_seconds": trans.get("duration_seconds", trans.get("duration", 0))}
+    api = {"key": key, "type": payload["type"], "duration_seconds": payload["duration_seconds"]}
+    return _ensure_dynamic_in_registry("transition", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api)
+
+
+def ensure_dynamic_depth_in_registry(
+    window: dict[str, Any],
+    *,
+    source_prompt: str = "",
+    config: dict[str, Any] | None = None,
+    out_novel: list[dict[str, Any]] | None = None,
+) -> str | None:
+    """Add depth (parallax, layer_count) to dynamic registry if novel."""
+    dep = window.get("depth", {})
+    if not dep:
+        return None
+    key = _depth_key(dep)
+    payload = {"parallax_strength": dep.get("parallax_strength", 0), "layer_count": dep.get("layer_count", 1)}
+    api = {"key": key, "parallax_strength": payload["parallax_strength"], "layer_count": payload["layer_count"]}
+    return _ensure_dynamic_in_registry("depth", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api)
+
+
 def ensure_dynamic_audio_semantic_in_registry(
     window: dict[str, Any],
     *,
@@ -384,7 +543,7 @@ def ensure_dynamic_audio_semantic_in_registry(
     config: dict[str, Any] | None = None,
     out_novel: list[dict[str, Any]] | None = None,
 ) -> str | None:
-    """Add audio_semantic (role/type) to dynamic registry if novel; when out_novel given, append API payload when added."""
+    """Add audio_semantic (role, mood, tempo) to dynamic registry if novel."""
     audio = window.get("audio_semantic", {})
     if not audio:
         return None
@@ -392,8 +551,20 @@ def ensure_dynamic_audio_semantic_in_registry(
     if not key:
         return None
     role = audio.get("role", "ambient")
-    payload = {"role": role, "type": audio.get("type", role)}
-    api = {"key": key, "role": role}
+    mood = (audio.get("mood") or "").strip()
+    tempo = (audio.get("tempo") or "").strip()
+    presence = (audio.get("presence") or "").strip()
+    payload = {
+        "role": role,
+        "type": audio.get("type", role),
+        "mood": mood,
+        "tempo": tempo,
+        "presence": presence,
+    }
+    # Depth breakdown: what this non-pure blend consists of (per REGISTRY_FOUNDATION)
+    depth_breakdown: dict[str, Any] = {"role": role, "mood": mood or "neutral", "tempo": tempo or "medium", "presence": presence or "ambient"}
+    payload["depth_breakdown"] = depth_breakdown
+    api = {"key": key, "role": role, "mood": mood, "tempo": tempo, "depth_breakdown": depth_breakdown}
     return _ensure_dynamic_in_registry("audio_semantic", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api)
 
 
@@ -435,10 +606,12 @@ def grow_from_video(
     if not path.exists():
         return added, novel_for_sync
 
+    ensure_static_primitives_seeded(config)
+
     out_static_colors = novel_for_sync["static_colors"] if collect_novel_for_sync else None
     out_sound = novel_for_sync["static_sound"] if collect_novel_for_sync else None
 
-    # Static only: every frame (color + sound)
+    # Static only: every frame (color + sound); primitives already seeded above
     for frame in extract_static_per_frame(
         path, max_frames=max_frames, sample_every=sample_every
     ):
@@ -454,13 +627,8 @@ def grow_from_video(
         ):
             added["static_sound"] += 1
 
-    # Spec-derived static sound (when audio extraction not yet implemented)
-    if spec is not None:
-        sound_from_spec = derive_static_sound_from_spec(spec)
-        if ensure_static_sound_in_registry(
-            sound_from_spec, source_prompt=prompt, config=config, out_novel=out_sound
-        ):
-            added["static_sound"] += 1
+    # Spec-derived sound (mood/tempo/presence) is recorded in DYNAMIC, not static.
+    # See grow_dynamic_from_video: derive_audio_semantic_from_spec with mood/tempo.
 
     return added, novel_for_sync
 
@@ -494,36 +662,50 @@ def grow_dynamic_from_video(
     added: dict[str, Any] = {
         "dynamic_motion": 0,
         "dynamic_time": 0,
+        "dynamic_gradient": 0,
+        "dynamic_camera": 0,
         "dynamic_lighting": 0,
         "dynamic_composition": 0,
         "dynamic_graphics": 0,
         "dynamic_temporal": 0,
         "dynamic_technical": 0,
         "dynamic_audio_semantic": 0,
+        "dynamic_transition": 0,
+        "dynamic_depth": 0,
     }
     novel_for_sync: dict[str, list[dict[str, Any]]] = {
         "motion": [],
         "time": [],
+        "gradient": [],
+        "camera": [],
         "lighting": [],
         "composition": [],
         "graphics": [],
         "temporal": [],
         "technical": [],
         "audio_semantic": [],
+        "transition": [],
+        "depth": [],
     }
     path = Path(video_path)
     if not path.exists():
         return added, novel_for_sync
 
+    ensure_dynamic_primitives_seeded(config)
+
     _, fps, width, height = _read_frames(path, max_frames=max_frames, sample_every=sample_every)
     out_motion = novel_for_sync["motion"] if collect_novel_for_sync else None
     out_time = novel_for_sync["time"] if collect_novel_for_sync else None
+    out_gradient = novel_for_sync["gradient"] if collect_novel_for_sync else None
+    out_camera = novel_for_sync["camera"] if collect_novel_for_sync else None
     out_lighting = novel_for_sync["lighting"] if collect_novel_for_sync else None
     out_composition = novel_for_sync["composition"] if collect_novel_for_sync else None
     out_graphics = novel_for_sync["graphics"] if collect_novel_for_sync else None
     out_temporal = novel_for_sync["temporal"] if collect_novel_for_sync else None
     out_technical = novel_for_sync["technical"] if collect_novel_for_sync else None
     out_audio_semantic = novel_for_sync["audio_semantic"] if collect_novel_for_sync else None
+    out_transition = novel_for_sync["transition"] if collect_novel_for_sync else None
+    out_depth = novel_for_sync["depth"] if collect_novel_for_sync else None
 
     for window in extract_dynamic_per_window(
         path, window_seconds=window_seconds, max_frames=max_frames, sample_every=sample_every
@@ -532,6 +714,10 @@ def grow_dynamic_from_video(
             added["dynamic_motion"] += 1
         if ensure_dynamic_time_in_registry(window, source_prompt=prompt, config=config, out_novel=out_time):
             added["dynamic_time"] += 1
+        if ensure_dynamic_gradient_in_registry(window, source_prompt=prompt, config=config, out_novel=out_gradient):
+            added["dynamic_gradient"] += 1
+        if ensure_dynamic_camera_in_registry(window, source_prompt=prompt, config=config, out_novel=out_camera):
+            added["dynamic_camera"] += 1
         if ensure_dynamic_lighting_in_registry(window, source_prompt=prompt, config=config, out_novel=out_lighting):
             added["dynamic_lighting"] += 1
         if ensure_dynamic_composition_in_registry(window, source_prompt=prompt, config=config, out_novel=out_composition):
@@ -546,6 +732,10 @@ def grow_dynamic_from_video(
             added["dynamic_technical"] += 1
         if ensure_dynamic_audio_semantic_in_registry(window, source_prompt=prompt, config=config, out_novel=out_audio_semantic):
             added["dynamic_audio_semantic"] += 1
+        if ensure_dynamic_transition_in_registry(window, source_prompt=prompt, config=config, out_novel=out_transition):
+            added["dynamic_transition"] += 1
+        if ensure_dynamic_depth_in_registry(window, source_prompt=prompt, config=config, out_novel=out_depth):
+            added["dynamic_depth"] += 1
 
     if spec is not None:
         audio_semantic = derive_audio_semantic_from_spec(spec)

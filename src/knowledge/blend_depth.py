@@ -48,6 +48,24 @@ def compute_color_depth(r: float, g: float, b: float) -> dict[str, float]:
     return {p1: round(w1, 3), p2: round(w2, 3)}
 
 
+# Map frequency-band measurement (low/mid/high) to actual noise primitive names (static_registry).
+_TONE_TO_NOISE = {"silent": "silence", "silence": "silence", "low": "rumble", "mid": "tone", "high": "hiss"}
+
+
+def compute_sound_depth(amplitude: float, tone: str) -> dict[str, Any]:
+    """
+    Depth for pure sound: weights of **actual sound noises** (silence, rumble, tone, hiss).
+    'tone' is a measurement (low/mid/high), not the name of the primitive; we map it to noise names.
+    Returns origin_noises (weights), amplitude (strength_pct 0-1). Used for static sound depth_breakdown.
+    """
+    tone_lower = (tone or "").strip().lower()
+    strength = round(min(1.0, max(0.0, float(amplitude))), 2)
+    if amplitude < 0.01 or tone_lower in ("silent", "silence", ""):
+        return {"origin_noises": {"silence": 1.0}, "amplitude": strength, "strength_pct": strength}
+    noise_name = _TONE_TO_NOISE.get(tone_lower, "tone")
+    return {"origin_noises": {noise_name: 1.0}, "amplitude": strength, "strength_pct": strength}
+
+
 def compute_motion_depth(motion_level: float, motion_trend: str) -> dict[str, float]:
     """
     Map motion level/trend to primitive depths.

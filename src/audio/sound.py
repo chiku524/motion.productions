@@ -137,6 +137,18 @@ def mix_audio_to_video(
     return output_path
 
 
+def _repeat_to_duration(segment, duration_ms: int):
+    """Repeat an AudioSegment until at least duration_ms, then slice to exact length. pydub has no .loop()."""
+    from pydub import AudioSegment
+
+    n = len(segment)
+    if n >= duration_ms:
+        return segment[:duration_ms]
+    repeats = (duration_ms + n - 1) // n
+    repeated = segment * repeats
+    return repeated[:duration_ms]
+
+
 def _generate_procedural_audio(
     duration_ms: int,
     mood: str = "neutral",
@@ -183,5 +195,6 @@ def _generate_procedural_audio(
     # music/sfx: treat like ambient for now (future: add rhythm or SFX)
 
     tone = Sine(freq).to_audio_segment(duration=tone_dur) + db
-    looped = tone.loop(base)
+    # pydub AudioSegment has no .loop(); repeat segment to fill target duration
+    looped = _repeat_to_duration(tone, duration_ms)
     return base.overlay(looped)

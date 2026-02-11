@@ -145,6 +145,26 @@ def gradient_strength(frame: np.ndarray) -> float:
     return float((dx.mean() + dy.mean()) / (2 * 255.0))
 
 
+def gradient_direction(frame: np.ndarray) -> str:
+    """
+    Dominant gradient orientation from luminance: vertical, horizontal, or angled.
+    Used for dynamic registry (non-pure blend over window).
+    """
+    if frame.ndim != 3:
+        return "angled"
+    gray = frame.astype(np.float64)
+    gray = 0.299 * gray[:, :, 0] + 0.587 * gray[:, :, 1] + 0.114 * gray[:, :, 2]
+    dx = np.abs(gray[:, 1:] - gray[:, :-1])
+    dy = np.abs(gray[1:, :] - gray[:-1, :])
+    mean_dx = float(dx.mean())
+    mean_dy = float(dy.mean())
+    if mean_dy > mean_dx * 1.2:
+        return "vertical"
+    if mean_dx > mean_dy * 1.2:
+        return "horizontal"
+    return "angled"
+
+
 def center_of_mass(frame: np.ndarray) -> tuple[float, float]:
     """
     Luminance-weighted center of mass (x, y) normalized to 0–1.

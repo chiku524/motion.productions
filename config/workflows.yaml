@@ -29,3 +29,10 @@ workflows:
       LOOP_EXPLOIT_RATIO_OVERRIDE: "1"
       LOOP_WORKFLOW_TYPE: "exploiter"
       API_BASE: https://motion.productions
+
+  interpretation:
+    description: "Interpretation only — no create/render; fills interpretation registry (D1) for main pipeline"
+    start_command: "python scripts/interpret_loop.py"
+    env:
+      API_BASE: https://motion.productions
+      INTERPRET_DELAY_SECONDS: "10"

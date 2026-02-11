@@ -1,15 +1,16 @@
 # Name generator — algorithm and functions
 
-Names generated for registry discoveries (static, dynamic, narrative) are **sensible**, **short**, and **authentic-looking**: they resemble real words and are pleasant to the eye and ear. No lengthy or unpleasant strings.
+Names generated for registry discoveries (Pure, Blended, Semantic, Interpretation) must be **semantic and have meaning** — no gibberish. The algorithms are **precise** so the generator can assign such names to the many elements that have yet to be discovered. See [REGISTRY_FOUNDATION.md](REGISTRY_FOUNDATION.md).
 
 ---
 
 ## Design goals
 
-- **Sensible:** Names depict words and resemble authentic names (e.g. *amber*, *velvet*, *drift*).
-- **Short:** Not lengthy; typically one prefix + one word of 4–10 characters (e.g. `color_velvet`, `motion_drift`).
+- **Semantic:** Names are meaningful (real words or clearly name-like, e.g. *amber*, *velvet*, *drift*). Not random character strings.
+- **Short:** Typically one prefix + one word of 4–14 characters (e.g. `color_velvet`, `motion_drift`).
 - **Pleasant:** Pronounceable, consistent in style, never nonsensical.
 - **Unique:** Compare against existing names so no duplicate is returned.
+- **Precise:** The same seed and rules always produce the same candidate; the algorithm is deterministic and extensible for undiscovered elements.
 
 ---
 
@@ -17,15 +18,13 @@ Names generated for registry discoveries (static, dynamic, narrative) are **sens
 
 ### 1. Word invention (`_invent_word(seed)`)
 
-- **Input:** A integer seed (from domain, value_hint, and existing count).
-- **Process:**
-  1. Two curated lists are used: **start parts** (e.g. `am`, `vel`, `cor`, `mist`, `dawn`, `drift`, `glow`) and **end parts** (e.g. `ber`, `vet`, `al`, `ver`, `er`, `ow`, `ine`). These are chosen to form English-like words when concatenated.
-  2. The seed is turned into two indices (deterministic LCG-style) to pick one start and one end.
-  3. `word = start + end` (e.g. `am` + `ber` → `amber`, `vel` + `vet` → `velvet`).
-  4. The result is **capped at 14 characters** to allow variety and a large pool of possible names (many elements/non-pure blends may need names). If the word is shorter than 4 characters, it is padded from the end part.
-- **Output:** A single word of 4–14 characters (e.g. `amber`, `velvet`, `coral`, `drift`).
+- **Input:** An integer seed (from domain, value_hint, and existing count).
+- **Process (precise, semantic-only):**
+  1. **Prefer known semantic words:** A curated list `_REAL_WORDS` (amber, velvet, coral, drift, haven, etc.) is used. The seed maps deterministically to an index into this list, so many names are **real words** with clear meaning.
+  2. **Fallback:** If a real word is not used, two curated lists (**start parts** and **end parts**) form one word: `start + end` (e.g. `am` + `ber` → `amber`, `vel` + `vet` → `velvet`). No awkward double letters at the boundary. Result is capped at 14 characters and at least 4.
+- **Output:** A single word of 4–14 characters that is always semantic or name-like (never gibberish).
 
-No pre-made list of full names is stored; words are **generated** from the start/end parts and the seed so the space of names is large and deterministic.
+The combination of real-word list and start/end parts keeps the **name space large and deterministic** while ensuring every output has meaning.
 
 ### 2. Sensible name with prefix (`generate_sensible_name(domain, value_hint, ...)`)
 

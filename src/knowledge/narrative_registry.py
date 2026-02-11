@@ -2,18 +2,19 @@
 Narrative registry: fictional/story blends for time-frames within the video.
 Plots, scripts, settings, genre, mood, themes, scene_type — the creative layer.
 Distinct from static (pure color, sound) and dynamic (blended over duration).
-Accuracy of recorded values is paramount. See docs/REGISTRY_TAXONOMY.md.
+Accuracy of recorded values is paramount. See docs/REGISTRIES.md.
 """
 from pathlib import Path
 from typing import Any
 
-# Aspects recorded in the NARRATIVE registry (themes, plots, settings, etc.)
+# Every narrative/film aspect — full coverage for any prompt.
 NARRATIVE_ASPECTS = [
     {"id": "themes", "description": "What the video is about (subject, idea, motif).", "sub_aspects": ["subject", "idea", "motif"]},
-    {"id": "plots", "description": "Story structure (arc, beat, tension).", "sub_aspects": ["arc", "beat", "tension", "rise", "climax", "resolution"]},
+    {"id": "plots", "description": "Story structure (arc, beat, tension curve).", "sub_aspects": ["arc", "beat", "tension", "rise", "climax", "resolution"]},
     {"id": "settings", "description": "Where/when (place, era, environment).", "sub_aspects": ["place", "era", "environment"]},
     {"id": "genre", "description": "Narrative category (e.g. drama, documentary).", "sub_aspects": ["category"]},
     {"id": "mood", "description": "Emotional tone (e.g. calm, tense).", "sub_aspects": ["tone"]},
+    {"id": "style", "description": "Visual/narrative style (e.g. cinematic, abstract, minimal).", "sub_aspects": ["visual_style", "narrative_style"]},
     {"id": "scene_type", "description": "Kind of scene (indoor, outdoor, abstract).", "sub_aspects": ["indoor", "outdoor", "abstract"]},
 ]
 
@@ -149,6 +150,7 @@ def extract_narrative_from_spec(
         "plots": [],
         "settings": [],
         "themes": [],
+        "style": [],
         "scene_type": [],
     }
     genre = getattr(spec, "genre", None) or "general"
@@ -163,9 +165,10 @@ def extract_narrative_from_spec(
     src = instruction if instruction is not None else spec
     style = getattr(src, "style", None)
     tone = getattr(src, "tone", None)
-    for v in (style, tone):
-        if v and str(v).strip() and str(v).strip().lower() not in {x.strip().lower() for x in out["mood"]}:
-            out["mood"].append(str(v).strip())
+    if style and str(style).strip():
+        out["style"].append(str(style).strip())
+    if tone and str(tone).strip() and str(tone).strip().lower() not in {x.strip().lower() for x in out["mood"]}:
+        out["mood"].append(str(tone).strip())
     lighting = getattr(spec, "lighting_preset", None) or "neutral"
     if lighting:
         out["settings"].append(str(lighting).strip())
@@ -188,6 +191,40 @@ def extract_narrative_from_spec(
     return out
 
 
+def ensure_narrative_primitives_seeded(config: dict[str, Any] | None = None) -> None:
+    """
+    Ensure every primitive (origin) narrative value is in the narrative registry.
+    Idempotent: only adds entries whose key is missing. Maps NARRATIVE_ORIGINS to aspects.
+    """
+    from .origins import get_all_origins
+    origins = get_all_origins()
+    narrative_origins = origins.get("narrative", {})
+    aspect_values: list[tuple[str, str]] = []
+    for origin_key, values in narrative_origins.items():
+        if origin_key == "genre":
+            for v in values:
+                if isinstance(v, str):
+                    aspect_values.append(("genre", v))
+        elif origin_key == "tone":
+            for v in values:
+                if isinstance(v, str):
+                    aspect_values.append(("mood", v))
+        elif origin_key == "style":
+            for v in values:
+                if isinstance(v, str):
+                    aspect_values.append(("style", v))
+        elif origin_key == "tension_curve":
+            for v in values:
+                if isinstance(v, str):
+                    aspect_values.append(("plots", v))
+    for aspect, value in aspect_values:
+        data = load_narrative_registry(aspect, config)
+        existing = _entries_keys(data)
+        key = str(value).strip().lower()
+        if key not in existing:
+            ensure_narrative_in_registry(aspect, value, config=config)
+
+
 def grow_narrative_from_spec(
     spec: Any,
     *,
@@ -201,7 +238,8 @@ def grow_narrative_from_spec(
     Same process as static/dynamic: novel → add; unnamed → name-generator.
     Returns (added counts per aspect, novel_for_sync for API when collect_novel_for_sync=True).
     """
-    added: dict[str, int] = {a: 0 for a in ("genre", "mood", "plots", "settings", "themes", "scene_type")}
+    ensure_narrative_primitives_seeded(config)
+    added: dict[str, int] = {a: 0 for a in ("genre", "mood", "plots", "settings", "themes", "style", "scene_type")}
     novel_for_sync: dict[str, list[dict[str, Any]]] = {a: [] for a in added}
     extracted = extract_narrative_from_spec(spec, prompt=prompt, instruction=instruction)
     out_novel = novel_for_sync if collect_novel_for_sync else None

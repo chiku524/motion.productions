@@ -2,7 +2,7 @@
 Schema for what the user is instructing.
 Precise representation of parsed user input.
 """
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 
@@ -93,3 +93,21 @@ class InterpretedInstruction:
         if self.avoid_palette:
             d["avoid_palette"] = self.avoid_palette
         return d
+
+    def to_api_dict(self) -> dict[str, Any]:
+        """Full serialization for API/D1 storage (interpretation registry). JSON-safe."""
+        d = asdict(self)
+        # Tuples → lists for JSON
+        if "color_primitive_lists" in d and d["color_primitive_lists"]:
+            d["color_primitive_lists"] = [[list(t) for t in row] for row in d["color_primitive_lists"]]
+        return d
+
+    @classmethod
+    def from_api_dict(cls, d: dict[str, Any]) -> "InterpretedInstruction":
+        """Reconstruct from API/D1 JSON (e.g. for-creation interpretation_prompts)."""
+        if "color_primitive_lists" in d and d["color_primitive_lists"]:
+            d = {**d, "color_primitive_lists": [tuple(tuple(c) for c in row) for row in d["color_primitive_lists"]]}
+        # Only pass keys that InterpretedInstruction expects
+        field_names = {f.name for f in cls.__dataclass_fields__}
+        kwargs = {k: v for k, v in d.items() if k in field_names}
+        return cls(**kwargs)

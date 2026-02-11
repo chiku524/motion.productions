@@ -3,22 +3,26 @@ Dynamic registry: combined frames = one instance.
 Holds lenient non-pure blends (time-bound): time, motion, audio_semantic, lighting,
 composition, graphics, temporal, technical. Successful single-value blends go to STATIC.
 Registries are 100% accurate; precise algorithms/functions live in scripts & code.
-See docs/REGISTRY_TAXONOMY.md.
+See docs/REGISTRIES.md.
 """
 from pathlib import Path
 from typing import Any
 
 # All categories in the DYNAMIC registry (per combined-frames window).
-# Blends that become a single value are recorded in STATIC (color or sound), not here.
+# Covers every aspect of an MP4 that is time-bound / non-pure. Single-value blends → STATIC.
 DYNAMIC_ASPECTS = [
-    {"id": "time", "description": "Time as measurement (duration, rate, sync) over the window.", "sub_aspects": ["duration", "rate", "sync"]},
-    {"id": "motion", "description": "Motion over the window (speed, direction, rhythm, dimensional).", "sub_aspects": ["speed", "direction", "rhythm", "dimensional"]},
-    {"id": "audio_semantic", "description": "Semantic audio role (music, ambience, melody, dialogue, SFX).", "sub_aspects": ["music", "melody", "dialogue", "sfx", "ambience"]},
-    {"id": "lighting", "description": "Lighting over the window (brightness, contrast, saturation).", "sub_aspects": ["brightness", "contrast", "saturation"]},
-    {"id": "composition", "description": "Composition over the window (center of mass, balance).", "sub_aspects": ["center_of_mass", "balance", "luminance_balance"]},
-    {"id": "graphics", "description": "Graphics over the window (edge density, spatial variance, busyness).", "sub_aspects": ["edge_density", "spatial_variance", "busyness"]},
-    {"id": "temporal", "description": "Temporal pacing (shot length, cut frequency, trend).", "sub_aspects": ["pacing", "motion_trend"]},
-    {"id": "technical", "description": "Technical (resolution, fps) for the window.", "sub_aspects": ["width", "height", "fps"]},
+    {"id": "time", "description": "Time (duration, rate, sync) over the window.", "sub_aspects": ["duration", "rate", "sync"]},
+    {"id": "motion", "description": "Motion (speed, direction, rhythm) over the window.", "sub_aspects": ["speed", "direction", "rhythm", "trend"]},
+    {"id": "gradient", "description": "Gradient type and strength over the window.", "sub_aspects": ["gradient_type", "strength"]},
+    {"id": "camera", "description": "Camera motion (static, pan, tilt, zoom, dolly) over the window.", "sub_aspects": ["motion_type", "speed", "steadiness"]},
+    {"id": "audio_semantic", "description": "Semantic audio (role, mood, tempo, presence) — non-pure blends from spec/usage.", "sub_aspects": ["role", "mood", "tempo", "presence", "melody", "dialogue", "sfx"]},
+    {"id": "lighting", "description": "Lighting (brightness, contrast, saturation) over the window — not static.", "sub_aspects": ["brightness", "contrast", "saturation", "key_intensity", "color_temperature"]},
+    {"id": "composition", "description": "Composition (center of mass, balance, framing) over the window.", "sub_aspects": ["center_of_mass", "balance", "luminance_balance", "framing"]},
+    {"id": "graphics", "description": "Graphics (edge density, spatial variance, busyness, shape) over the window.", "sub_aspects": ["edge_density", "spatial_variance", "busyness", "shape_overlay"]},
+    {"id": "temporal", "description": "Temporal (pacing, cut frequency, shot length, motion trend) over the window.", "sub_aspects": ["pacing", "motion_trend", "cut_frequency", "shot_length"]},
+    {"id": "technical", "description": "Technical (resolution, fps, aspect) for the window.", "sub_aspects": ["width", "height", "fps", "aspect_ratio"]},
+    {"id": "transition", "description": "Transition type (cut, fade, dissolve, wipe) between segments.", "sub_aspects": ["type", "duration"]},
+    {"id": "depth", "description": "Depth/realism (parallax, layers) over the window.", "sub_aspects": ["parallax_strength", "layer_count"]},
 ]
 
 DYNAMIC_REGISTRY_FILES = {

@@ -73,10 +73,10 @@ Motion Productions is built to be the **go-to AI video generator**. The software
                                     │
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│  GROWTH (static + narrative only)                                        │
-│  Compare extracted STATIC (color, sound) to registry; if novel → add     │
-│  with name. Narrative from spec → add if novel. Dynamic not grown       │
-│  (preserves algorithmic precision).                                     │
+│  GROWTH (static + dynamic + narrative)                                    │
+│  STATIC: per-frame color, sound → compare to registry; if novel → add.   │
+│  DYNAMIC: motion, lighting, blends (incl. audio) → add novel with name.   │
+│  NARRATIVE: from spec → add if novel. All three registries evolve.        │
 └─────────────────────────────────────────────────────────────────────────┘
                                     │
                                     └──────────────────┐
@@ -194,7 +194,7 @@ So: **good** = reuse a prompt that worked well; **procedural** = generate a new 
 | **API retries + failure handling** | Loop survives transient API errors; state and discoveries are not lost. |
 | **Knowledge fetch before each run** | Creation and prompt picking use latest learned static/narrative from D1 so each generation benefits from prior runs. |
 
-See [ENHANCEMENTS_AND_OPTIMIZATIONS.md](ENHANCEMENTS_AND_OPTIMIZATIONS.md) for the enhancement checklist and [REGISTRY_TAXONOMY.md](REGISTRY_TAXONOMY.md) for what lives in static vs dynamic vs narrative.
+See [ENHANCEMENTS_AND_OPTIMIZATIONS.md](ENHANCEMENTS_AND_OPTIMIZATIONS.md) for the enhancement checklist and [REGISTRIES.md](REGISTRIES.md) for what lives in static vs dynamic vs narrative.
 
 ---
 
@@ -252,7 +252,7 @@ Algorithms and functions must be **100% precise** with these rules so the regist
 | **Balanced (main)** | (none; uses webapp config) | e.g. 70% exploit / 30% explore | Mix of both |
 
 - **You do not need to remove the 3 workflows.** They already implement the distinction: Explorer = growth-focused loop, Exploiter = interpretation-focused loop, Balanced = mix. All three incorporate growth; all use the same pipeline.
-- **Optional:** If you prefer only two services, run **Explorer** (Workflow B) + **Exploiter** (Workflow A) and omit Balanced. Config: `config/workflows.yaml`; see also `docs/AUDIO_AND_WORKFLOWS.md` and `docs/AUTOMATION.md`.
+- **Optional:** If you prefer only two services, run **Explorer** (Workflow B) + **Exploiter** (Workflow A) and omit Balanced. Config: `config/workflows.yaml`; see also [WORKFLOWS_AND_REGISTRIES.md](WORKFLOWS_AND_REGISTRIES.md) and [AUTOMATION.md](AUTOMATION.md).
 
 ---
 
@@ -306,7 +306,7 @@ All algorithms and functions below must stay **100% precise** with the two workf
 4. **Interpretation** produces instruction that creation can follow 100% precisely; no hard-coded palette/motion hints required.
 5. **Loop** runs **growth for all three registries** (static, dynamic, narrative); every unknown element/blend gets a sensible generated name in the appropriate registry.
 
-See [REGISTRY_AND_LOOP_AUDIT.md](REGISTRY_AND_LOOP_AUDIT.md) for legacy/extended audit of registry and loop functions.
+See [ALGORITHMS_AND_FUNCTIONS_AUDIT.md](ALGORITHMS_AND_FUNCTIONS_AUDIT.md) for the full audit of registry and loop functions.
 
 ---
 

@@ -71,6 +71,7 @@ def get_knowledge_for_creation(
             knowledge["origin_gradient"] = data.get("origin_gradient", [])
             knowledge["origin_camera"] = data.get("origin_camera", [])
             knowledge["origin_motion"] = data.get("origin_motion", [])
+            knowledge["interpretation_prompts"] = data.get("interpretation_prompts", [])
         except Exception as e:
             from ..api_client import APIError
             if isinstance(e, APIError):
@@ -83,6 +84,9 @@ def get_knowledge_for_creation(
             knowledge["origin_gradient"] = []
             knowledge["origin_camera"] = []
             knowledge["origin_motion"] = []
+            knowledge["interpretation_prompts"] = []
+    if "interpretation_prompts" not in knowledge:
+        knowledge["interpretation_prompts"] = []
     if not knowledge.get("learned_colors"):
         try:
             learned_colors = load_registry("learned_colors", config)

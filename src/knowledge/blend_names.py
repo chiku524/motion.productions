@@ -1,27 +1,42 @@
 """
-Sensible name generator for registry discoveries (static, dynamic, narrative).
+Sensible name generator for registry discoveries (Pure, Temporal, Semantic, Interpretation).
 
-Algorithm: build short, authentic-looking words by combining 2 syllable parts
-(start + end) from curated lists. Words are 4–14 characters for variety and
-a large pool of possible names; total name is prefix_word (e.g. color_velvet,
-motion_drift). Pronounceable and consistent. See docs/NAME_GENERATOR.md.
+Requirement (REGISTRY_FOUNDATION): names must be semantic (meaningful, possibly non-existent
+words) or clearly in the category of names (e.g. place-name style). No gibberish.
+
+Algorithm: combine 2 parts (start + end) from curated lists of real-word or name-like
+syllables. Output: prefix_word (e.g. color_velvet, audio_drift). Pronounceable, consistent.
+See docs/NAME_GENERATOR.md.
 """
 import re
 from typing import Any
 
-# Start parts (often consonant-start; join with end to form word)
+# Start parts — semantic or name-like (real words or plausible name roots)
 _START = [
-    "am", "vel", "cor", "sil", "riv", "mist", "dawn", "dusk", "em", "wave",
-    "drift", "soft", "deep", "cool", "warm", "calm", "star", "sky", "sea",
-    "frost", "dew", "rose", "gold", "pearl", "sage", "mint", "vine", "bloom",
-    "shade", "glow", "flow", "lume", "haze", "win", "au", "rum", "stal", "bre",
-    "mar", "sol", "lune", "vale", "storm", "leaf", "cloud", "wind", "rain",
+    "am", "vel", "cor", "sil", "riv", "mist", "dawn", "dusk", "wave", "drift",
+    "soft", "deep", "cool", "warm", "calm", "star", "sky", "sea", "frost", "dew",
+    "rose", "gold", "pearl", "sage", "mint", "vine", "bloom", "shade", "glow",
+    "flow", "haze", "vale", "storm", "leaf", "cloud", "wind", "rain", "brook",
+    "sun", "lune", "mar", "sol", "aur", "coral", "amber", "azure", "ember",
+    "lark", "fern", "birch", "cliff", "marsh", "glen", "thor", "wyn", "el",
 ]
-# End parts (join after start; avoid awkward double-vowel at boundary)
+# End parts — complete to form semantic or name-like words (e.g. -wood, -well, -ton)
 _END = [
     "ber", "vet", "al", "ver", "er", "en", "ow", "or", "um", "in", "ar",
-    "ace", "ine", "ure", "ish", "ing", "ra", "na", "el", "lyn", "tor", "nel",
-    "ton", "ley", "well", "brook", "field", "wood", "light", "fall", "rise",
+    "ace", "ine", "ure", "ish", "ing", "lyn", "tor", "nel", "ton", "ley",
+    "well", "brook", "field", "wood", "light", "fall", "rise", "ford", "dale",
+    "mont", "view", "crest", "haven", "mere", "wyn", "son", "ley", "worth",
+]
+
+# Known semantic words (real or name-like). Used first so the generator is precise and
+# produces meaningful names for many undiscovered elements. Extended as needed.
+_REAL_WORDS = [
+    "amber", "velvet", "coral", "silver", "river", "mist", "dawn", "dusk", "wave", "drift",
+    "soft", "deep", "cool", "warm", "calm", "star", "sky", "sea", "frost", "dew",
+    "rose", "gold", "pearl", "sage", "mint", "vine", "bloom", "shade", "glow",
+    "flow", "haze", "vale", "storm", "leaf", "cloud", "wind", "rain", "brook",
+    "sun", "ember", "azure", "lark", "fern", "cliff", "marsh", "glen", "haven",
+    "fall", "rise", "ford", "dale", "mont", "view", "crest", "mere", "worth",
 ]
 
 # Max length for the invented word (slightly higher for variety and name count)
@@ -47,6 +62,11 @@ _DOMAIN_PREFIX: dict[str, str] = {
     "genre": "genre",
     "mood": "mood",
     "scene_type": "scene",
+    "style": "style",
+    "gradient": "grad",
+    "camera": "cam",
+    "transition": "trans",
+    "depth": "depth",
 }
 
 
@@ -58,12 +78,18 @@ def _words_from_prompt(prompt: str, max_words: int = 3) -> list[str]:
 
 def _invent_word(seed: int) -> str:
     """
-    Invent a short, English-like word from seed: 2 parts (start + end).
-    Length capped at _MAX_WORD_LEN (14) for variety and enough possible names.
-    Avoids awkward double letter at boundary. Produces e.g. amber, velvet, coral.
+    Invent a short, semantic or name-like word from seed. Precision: prefer known
+    real words from _REAL_WORDS so the generator produces meaningful names for
+    many undiscovered elements. Fallback: start + end parts (no gibberish).
     """
     r = abs(seed) % (2**31)
-    s_idx = r % len(_START)
+    # Prefer known semantic word when possible (deterministic, large space)
+    word_idx = r % len(_REAL_WORDS)
+    candidate = _REAL_WORDS[word_idx]
+    if 4 <= len(candidate) <= _MAX_WORD_LEN:
+        return candidate
+    # Else build from start + end (semantic parts only)
+    s_idx = (r >> 7) % len(_START)
     start = _START[s_idx]
     for k in range(len(_END)):
         r = (r * 7919 + 1237 + k) % (2**31)
@@ -76,9 +102,8 @@ def _invent_word(seed: int) -> str:
             word = word[:_MAX_WORD_LEN]
         if len(word) < 4:
             word = word + end[: min(len(end), 4 - len(word))]
-        return word[: _MAX_WORD_LEN]
-    word = start + _END[0]
-    return word[:_MAX_WORD_LEN]
+        return word[:_MAX_WORD_LEN]
+    return (start + _END[0])[:_MAX_WORD_LEN]
 
 
 def generate_sensible_name(

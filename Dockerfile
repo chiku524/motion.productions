@@ -1,5 +1,7 @@
 # Python worker for self-feeding learning loop
-# Railway / Render: builds from repo root
+# Railway / Render: builds from repo root.
+# Services: Explorer, Exploiter, Balanced use CMD below.
+# Fourth service (Interpretation): same image; in Railway set Start Command to: python scripts/interpret_loop.py
 FROM python:3.11-slim
 
 WORKDIR /app
