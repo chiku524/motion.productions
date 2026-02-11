@@ -98,11 +98,12 @@ def _load_state(api_base: str) -> dict:
 
 
 def _save_state(api_base: str, state: dict) -> None:
-    """Persist state to API (KV) for cross-restart continuity. Retries on 5xx/connection; logs on failure."""
+    """Persist state to API (KV) for cross-restart continuity. Retries on 5xx/429/connection; logs on failure."""
     try:
         api_request_with_retry(api_base, "POST", "/api/loop/state", data={"state": state}, timeout=15)
     except APIError as e:
-        logger.warning("POST /api/loop/state failed (status=%s, path=%s): %s — state not persisted", e.status_code, e.path, e)
+        detail = f" {e.body}" if getattr(e, "body", None) else ""
+        logger.warning("POST /api/loop/state failed (status=%s, path=%s): %s%s — state not persisted", e.status_code, e.path, e, detail)
 
 
 def _load_loop_config(api_base: str) -> dict:

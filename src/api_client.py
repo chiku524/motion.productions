@@ -85,9 +85,17 @@ def api_request(
             last_exc = e
             status = e.response.status_code if e.response is not None else None
             err_body = e.response.text[:500] if e.response and e.response.text else None
-            if status and 500 <= status < 600 and attempt < max_retries:
-                logger.warning("API %s %s → %s (attempt %s), retrying in %.1fs", method, path, status, attempt + 1, backoff_seconds)
-                time.sleep(backoff_seconds)
+            # Retry on 5xx and 429 (rate limit, e.g. KV 1 write/sec)
+            retryable = status and (500 <= status < 600 or status == 429) and attempt < max_retries
+            if retryable:
+                delay = backoff_seconds
+                if status == 429 and e.response and "Retry-After" in e.response.headers:
+                    try:
+                        delay = float(e.response.headers["Retry-After"])
+                    except (ValueError, TypeError):
+                        pass
+                logger.warning("API %s %s → %s (attempt %s), retrying in %.1fs", method, path, status, attempt + 1, delay)
+                time.sleep(delay)
                 continue
             raise APIError(
                 f"API {method} {path} failed: {e}",

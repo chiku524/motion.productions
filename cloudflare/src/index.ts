@@ -273,14 +273,34 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       } catch {
         return err("Invalid JSON");
       }
-      const state = body.state && typeof body.state === "object" ? body.state : {};
+      const raw = body.state && typeof body.state === "object" ? body.state : {};
+      // Sanitize: only allow safe JSON; KV has 1 write/sec limit per key — client should space saves
+      const state: Record<string, unknown> = {};
+      state.run_count = typeof raw.run_count === "number" && Number.isFinite(raw.run_count) ? Math.floor(raw.run_count) : 0;
+      state.good_prompts = Array.isArray(raw.good_prompts)
+        ? raw.good_prompts.slice(-200).map((p) => String(p ?? "").slice(0, 500))
+        : [];
+      state.recent_prompts = Array.isArray(raw.recent_prompts)
+        ? raw.recent_prompts.slice(-200).map((p) => String(p ?? "").slice(0, 500))
+        : [];
+      state.duration_base = typeof raw.duration_base === "number" && Number.isFinite(raw.duration_base) ? raw.duration_base : 6;
+      if (typeof raw.last_run_at === "string") state.last_run_at = raw.last_run_at.slice(0, 50);
+      if (typeof raw.last_prompt === "string") state.last_prompt = raw.last_prompt.slice(0, 100);
+      if (typeof raw.last_job_id === "string") state.last_job_id = raw.last_job_id.slice(0, 80);
       try {
         const payload = JSON.stringify(state);
         if (payload.length > 25 * 1024 * 1024) return json({ error: "State too large for KV (max 25MB)" }, 413);
         await kv.put("loop_state", payload);
         return json({ ok: true });
       } catch (e) {
-        return json({ error: "Failed to save loop state", details: String(e) }, 500);
+        const msg = String(e);
+        const isRateLimit = msg.toLowerCase().includes("rate") || msg.toLowerCase().includes("limit");
+        const status = isRateLimit ? 429 : 500;
+        const headers = isRateLimit ? { "Retry-After": "2" } : {};
+        return new Response(JSON.stringify({ error: "Failed to save loop state", details: msg }), {
+          status,
+          headers: { "Content-Type": "application/json", ...corsHeaders, ...headers },
+        });
       }
     }
 
