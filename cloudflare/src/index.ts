@@ -252,13 +252,21 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
 
     // GET /api/loop/state — load loop state (for worker continuity across restarts)
     if (path === "/api/loop/state" && request.method === "GET") {
-      const raw = await env.MOTION_KV.get("loop_state");
-      const state = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
-      return json({ state });
+      const kv = env.MOTION_KV;
+      if (!kv) return json({ error: "Loop state unavailable: KV not bound", details: "MOTION_KV undefined" }, 503);
+      try {
+        const raw = await kv.get("loop_state");
+        const state = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+        return json({ state });
+      } catch (e) {
+        return json({ error: "Failed to load loop state", details: String(e) }, 500);
+      }
     }
 
     // POST /api/loop/state — save loop state (good_prompts, recent_prompts, run_count)
     if (path === "/api/loop/state" && request.method === "POST") {
+      const kv = env.MOTION_KV;
+      if (!kv) return json({ error: "Loop state unavailable: KV not bound", details: "MOTION_KV undefined" }, 503);
       let body: { state?: Record<string, unknown> };
       try {
         body = (await request.json()) as { state?: Record<string, unknown> };
@@ -266,8 +274,14 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         return err("Invalid JSON");
       }
       const state = body.state && typeof body.state === "object" ? body.state : {};
-      await env.MOTION_KV.put("loop_state", JSON.stringify(state));
-      return json({ ok: true });
+      try {
+        const payload = JSON.stringify(state);
+        if (payload.length > 25 * 1024 * 1024) return json({ error: "State too large for KV (max 25MB)" }, 413);
+        await kv.put("loop_state", payload);
+        return json({ ok: true });
+      } catch (e) {
+        return json({ error: "Failed to save loop state", details: String(e) }, 500);
+      }
     }
 
     // GET /api/loop/config — user-controlled loop config (enabled, delay, exploit_ratio, duration_seconds)
@@ -583,6 +597,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
 
     // GET /api/learning/stats — aggregated stats (KV cache; no deletes to stay within free tier)
     if (path === "/api/learning/stats" && request.method === "GET") {
+      if (!env.DB || !env.MOTION_KV) return json({ error: "Learning stats unavailable: DB or KV not bound" }, 503);
       const safeDefault = { total_runs: 0, by_palette: {}, by_keyword: {}, overall: {} };
       try {
         const cached = await env.MOTION_KV.get("learning:stats");
@@ -611,6 +626,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
     // POST /api/knowledge/discoveries — batch record discoveries (D1)
     // Supports: static_colors, static_sound (per-frame) + colors, blends, motion, etc. (dynamic/whole-video)
     if (path === "/api/knowledge/discoveries" && request.method === "POST") {
+      if (!env.DB) return json({ error: "Discoveries unavailable: DB not bound" }, 503);
       let body: {
         static_colors?: Array<{ key: string; r: number; g: number; b: number; brightness?: number; luminance?: number; contrast?: number; saturation?: number; chroma?: number; hue?: number; color_variance?: number; opacity?: number; depth_breakdown?: Record<string, unknown>; source_prompt?: string; name?: string }>;
         static_sound?: Array<{ key: string; amplitude?: number; weight?: number; strength_pct?: number; tone?: string; timbre?: string; depth_breakdown?: Record<string, unknown>; source_prompt?: string; name?: string }>;
@@ -635,6 +651,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       }
       const results: Record<string, number> = { static_colors: 0, static_sound: 0, narrative: 0, colors: 0, blends: 0, motion: 0, lighting: 0, composition: 0, graphics: 0, temporal: 0, technical: 0, audio_semantic: 0, time: 0, gradient: 0, camera: 0 };
 
+      try {
       // Static registry: per-frame color entries
       for (const c of body.static_colors || []) {
         const existing = await env.DB.prepare("SELECT id, name, count FROM static_colors WHERE color_key = ?").bind(c.key).first();
@@ -835,6 +852,10 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       }
       // Do not use KV delete (free tier limit). Stats cache expires via TTL; GET recomputes when stale.
       return json({ status: "recorded", results }, 201);
+      } catch (e) {
+        console.error("POST /api/knowledge/discoveries failed:", e);
+        return json({ error: "Failed to record discoveries", details: String(e) }, 500);
+      }
     }
 
     // GET /api/knowledge/colors — check if color key exists (for novelty check)
@@ -847,6 +868,8 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
 
     // GET /api/knowledge/for-creation — learned colors and motion for creation (closes the loop)
     if (path === "/api/knowledge/for-creation" && request.method === "GET") {
+      if (!env.DB) return json({ error: "For-creation unavailable: DB not bound" }, 503);
+      try {
       const limit = Math.min(parseInt(new URL(request.url).searchParams.get("limit") || "500", 10), 2000);
       const colorRows = await env.DB.prepare(
         "SELECT color_key, r, g, b, count, sources_json, name FROM learned_colors ORDER BY count DESC LIMIT ?"
@@ -970,6 +993,10 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         origin_motion,
         interpretation_prompts,
       });
+      } catch (e) {
+        console.error("GET /api/knowledge/for-creation failed:", e);
+        return json({ error: "Failed to load for-creation", details: String(e) }, 500);
+      }
     }
 
     // GET /api/registries — pure (STATIC) vs non-pure (DYNAMIC + NARRATIVE); depth % vs primitives always
