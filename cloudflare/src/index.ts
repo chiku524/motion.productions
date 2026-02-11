@@ -976,7 +976,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
     // Pure = single frame/pixel (static). Non-pure = multi-frame blends (gradient, motion, camera → dynamic).
     if (path === "/api/registries" && request.method === "GET") {
       const regLimit = Math.min(parseInt(new URL(request.url).searchParams.get("limit") || "200", 10), 500);
-      // Pure primitives only (single-frame/single-pixel origin values) — for depth comparison in STATIC
+      // Pure primitives — must match static_registry.py and REGISTRY_FOUNDATION (full origin set for UI)
       const staticPrimitives = {
         color_primaries: [
           { name: "black", r: 0, g: 0, b: 0 },
@@ -984,14 +984,25 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           { name: "red", r: 255, g: 0, b: 0 },
           { name: "green", r: 0, g: 255, b: 0 },
           { name: "blue", r: 0, g: 0, b: 255 },
+          { name: "yellow", r: 255, g: 255, b: 0 },
+          { name: "cyan", r: 0, g: 255, b: 255 },
+          { name: "magenta", r: 255, g: 0, b: 255 },
+          { name: "orange", r: 255, g: 165, b: 0 },
+          { name: "purple", r: 128, g: 0, b: 128 },
+          { name: "pink", r: 255, g: 192, b: 203 },
+          { name: "brown", r: 165, g: 42, b: 42 },
+          { name: "navy", r: 0, g: 0, b: 128 },
+          { name: "gray", r: 128, g: 128, b: 128 },
+          { name: "olive", r: 128, g: 128, b: 0 },
+          { name: "teal", r: 0, g: 128, b: 128 },
         ],
-        sound_primaries: ["silence", "ambient", "tone", "music", "sfx", "speech", "full", "neutral", "calm", "tense", "uplifting", "dark"],
+        sound_primaries: ["silence", "rumble", "tone", "hiss"],
       };
-      // Non-pure canonical (multi-frame; gradient, motion, camera, sound need multiple frames to observe) — DYNAMIC
+      // Blended canonical — must match origins.py (gradient_type, camera motion_type, motion speed+rhythm, audio tempo/mood/presence)
       const dynamicCanonical = {
         gradient_type: ["vertical", "horizontal", "radial", "angled"],
         camera_motion: ["static", "pan", "tilt", "dolly", "crane", "zoom", "zoom_out", "handheld"],
-        motion: ["slow", "wave", "flow", "fast", "pulse"],
+        motion: ["static", "slow", "medium", "fast", "steady", "pulsing", "wave", "random"],
         sound: ["tempo: slow", "tempo: medium", "tempo: fast", "mood: neutral", "mood: calm", "mood: tense", "mood: uplifting", "mood: dark", "presence: silence", "presence: ambient", "presence: music", "presence: sfx", "presence: full"],
       };
       // Depth vs black/white for a single RGB (e.g. grey = 50% white + 50% black)
@@ -1033,6 +1044,15 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           count: r.count,
         }));
       }
+      const interpretationRows = await env.DB.prepare(
+        "SELECT id, prompt, instruction_json, updated_at FROM interpretations WHERE status = 'done' AND instruction_json IS NOT NULL ORDER BY updated_at DESC LIMIT ?"
+      ).bind(Math.min(regLimit, 100)).all<{ id: string; prompt: string; instruction_json: string; updated_at: string }>();
+      const interpretation = (interpretationRows.results || []).map((r) => ({
+        id: r.id,
+        prompt: r.prompt,
+        instruction: r.instruction_json ? (JSON.parse(r.instruction_json) as Record<string, unknown>) : null,
+        updated_at: r.updated_at,
+      }));
       const depthFromBlendDepths = (depths: Record<string, unknown> | null): { depth_pct: number; depth_breakdown: Record<string, number> } => {
         const depth_breakdown: Record<string, number> = {};
         if (!depths || typeof depths !== "object") return { depth_pct: 0, depth_breakdown };
@@ -1111,6 +1131,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           blends: otherBlends,
         },
         narrative,
+        interpretation,
       });
     }
 

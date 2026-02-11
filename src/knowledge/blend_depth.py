@@ -1,49 +1,42 @@
 """
 Blend depth: compute how far down each side of a blend is with respect to origins.
 primitive_depths = {primitive_name: weight} — how much each origin contributed.
+Aligned with REGISTRY_FOUNDATION: Pure color depth uses origin primitives (black, white, red, green, blue).
 """
 from typing import Any
 
-
-def _palette_mean_rgb(name: str) -> tuple[float, float, float]:
-    """Mean RGB of a palette. Used as origin primitive for color depth."""
-    from ..procedural.data.palettes import PALETTES
-    colors = PALETTES.get(name, PALETTES["default"])
-    if not colors:
-        return 128.0, 128.0, 128.0
-    n = len(colors)
-    r = sum(c[0] for c in colors) / n
-    g = sum(c[1] for c in colors) / n
-    b = sum(c[2] for c in colors) / n
-    return r, g, b
+# Pure registry origin colors for depth_breakdown (REGISTRY_FOUNDATION: origin color %)
+COLOR_ORIGIN_PRIMITIVES: list[tuple[str, tuple[float, float, float]]] = [
+    ("black", (0.0, 0.0, 0.0)),
+    ("white", (255.0, 255.0, 255.0)),
+    ("red", (255.0, 0.0, 0.0)),
+    ("green", (0.0, 255.0, 0.0)),
+    ("blue", (0.0, 0.0, 255.0)),
+]
 
 
 def compute_color_depth(r: float, g: float, b: float) -> dict[str, float]:
     """
-    Compute primitive depths for an extracted color.
-    Finds the 2 closest palette means and weights that would produce this RGB.
+    Compute primitive depths for an extracted color vs Pure registry origin primitives.
+    Returns weights of origin colors (black, white, red, green, blue) that compose this RGB.
+    Used for static color depth_breakdown (REGISTRY_FOUNDATION).
     """
-    from ..procedural.data.palettes import PALETTES
-    rgb = (r, g, b)
+    rgb = (float(r), float(g), float(b))
     best: list[tuple[str, float]] = []
-    for name in PALETTES:
-        mr, mg, mb = _palette_mean_rgb(name)
-        dist = (r - mr) ** 2 + (g - mg) ** 2 + (b - mb) ** 2
+    for name, prim in COLOR_ORIGIN_PRIMITIVES:
+        dist = (rgb[0] - prim[0]) ** 2 + (rgb[1] - prim[1]) ** 2 + (rgb[2] - prim[2]) ** 2
         best.append((name, dist ** 0.5))
     best.sort(key=lambda x: x[1])
     if len(best) < 2:
         return {best[0][0]: 1.0} if best else {}
-    # Two closest primitives; solve for weights that approximate rgb
     p1, d1 = best[0]
     p2, d2 = best[1]
-    m1 = _palette_mean_rgb(p1)
-    m2 = _palette_mean_rgb(p2)
-    # weight toward p1: w1; toward p2: w2. w1 + w2 = 1.
-    # rgb ≈ w1*m1 + w2*m2. Use inverse distance for weights.
+    m1 = next(prim for n, prim in COLOR_ORIGIN_PRIMITIVES if n == p1)
+    m2 = next(prim for n, prim in COLOR_ORIGIN_PRIMITIVES if n == p2)
     total = d1 + d2
     if total <= 0:
         return {p1: 0.5, p2: 0.5}
-    w2 = d1 / total  # closer to p1 -> more weight on p1
+    w2 = d1 / total
     w1 = 1.0 - w2
     return {p1: round(w1, 3), p2: round(w2, 3)}
 

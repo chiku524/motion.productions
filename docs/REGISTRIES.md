@@ -83,7 +83,7 @@ Each file is **human-readable JSON**: `_meta` describes the registry and aspect;
 | **Transition** | type, duration | Cut, fade, dissolve, wipe between segments; novel values added. |
 | **Depth** | parallax_strength, layer_count | Depth/realism over the window; novel values added. |
 
-**Primitives:** Gradient, camera, and transition origins are seeded at start of `grow_dynamic_from_video()` via `ensure_dynamic_primitives_seeded()`.
+**Primitives:** Gradient, camera, transition, and audio_semantic (one per presence: silence, ambient, music, sfx, full) origins are seeded at start of `grow_dynamic_from_video()` via `ensure_dynamic_primitives_seeded()`. Motion/lighting/composition/etc. are discovery-only (no discrete origin list seeded).
 
 **Code:** `extract_dynamic_per_window()` (gradient_direction + camera inference + lighting, etc.), `grow_dynamic_from_video()`. Whole-video composites in `learned_blends`.
 
@@ -98,6 +98,8 @@ Each file is **human-readable JSON**: `_meta` describes the registry and aspect;
 | **Themes** | Value from spec/instruction; novel → add. |
 | **Style** | Visual/narrative style (cinematic, abstract, minimal, etc.); novel → add. |
 | **Scene type** | Value from spec; novel → add. |
+
+**Primitives:** Genre, mood (tone), style, plots (tension_curve), settings, themes, scene_type from `NARRATIVE_ORIGINS` in `origins.py`; seeded via `ensure_narrative_primitives_seeded()` at start of `grow_narrative_from_spec()`.
 
 **Code:** `src/knowledge/narrative_registry.py` — `grow_narrative_from_spec()`, `ensure_narrative_in_registry()`.
 

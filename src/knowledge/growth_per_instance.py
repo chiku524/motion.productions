@@ -241,8 +241,8 @@ def ensure_static_primitives_seeded(config: dict[str, Any] | None = None) -> Non
 
 def ensure_dynamic_primitives_seeded(config: dict[str, Any] | None = None) -> None:
     """
-    Seed dynamic registry with origin primitives (gradient, camera, transition) so
-    every known non-pure origin exists for depth and workflow. Idempotent.
+    Seed dynamic registry with origin primitives (gradient, camera, transition, audio_semantic)
+    so every known non-pure origin exists for depth and workflow. Idempotent.
     """
     origins = get_all_origins()
     for gtype in (origins.get("graphics") or {}).get("gradient_type", ["vertical", "horizontal", "radial", "angled"]):
@@ -254,6 +254,12 @@ def ensure_dynamic_primitives_seeded(config: dict[str, Any] | None = None) -> No
     for ttype in (origins.get("transition") or {}).get("type", ["cut", "fade", "dissolve", "wipe"]):
         window = {"transition": {"type": ttype, "duration_seconds": 0.0}}
         ensure_dynamic_transition_in_registry(window, config=config)
+    # Audio semantic: one canonical entry per presence (role) so origins are seeded
+    audio_origins = origins.get("audio") or {}
+    for presence in audio_origins.get("presence", ["silence", "ambient", "music", "sfx", "full"]):
+        role = "ambient" if presence in ("silence", "ambient") else ("music" if presence == "music" else "sfx" if presence == "sfx" else "music")
+        window = {"audio_semantic": {"role": role, "mood": "neutral", "tempo": "medium", "presence": presence}}
+        ensure_dynamic_audio_semantic_in_registry(window, config=config)
 
 
 def ensure_static_sound_in_registry(

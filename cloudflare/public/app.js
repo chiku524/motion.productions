@@ -447,9 +447,7 @@ if (loopEnabled) {
   scheduleLoopPoll();
 }
 
-// ——— Registries (live view, no refresh) ———
-const REGISTRIES_POLL_MS = 15000;
-let registriesPollTimer = null;
+// ——— Registries (manual refresh only) ———
 const registriesLoading = document.getElementById('registries-loading');
 const registriesTables = document.getElementById('registries-tables');
 const registriesPrecision = document.getElementById('registries-precision');
@@ -477,15 +475,25 @@ function renderRegistries(data) {
   const static_ = data.static || {};
   const dynamic = data.dynamic || {};
   const narrative = data.narrative || {};
+  const interpretation = data.interpretation || [];
 
   const colorPrimaries = (staticPrimitives.color_primaries || []).map((p) => `${p.name} (${p.r},${p.g},${p.b})`).join(' · ') || '—';
   const soundPrimaries = (staticPrimitives.sound_primaries || []).join(' · ') || '—';
+  const staticSoundHeaders = ['Key', 'Name', 'Count'].concat(static_.sound && static_.sound.some((s) => s.strength_pct != null) ? ['Strength %'] : []);
+  const staticSoundRows = static_.sound && static_.sound.length
+    ? static_.sound.map((s) => {
+        const row = [s.key, s.name, s.count];
+        if (static_.sound.some((x) => x.strength_pct != null))
+          row.push(s.strength_pct != null ? (s.strength_pct * 100).toFixed(0) + '%' : '—');
+        return row;
+      })
+    : [];
   const staticHtml = `
     <div class="registries-pane" data-pane="static">
-      <p class="registries-primitives-desc">Pure primitives (single frame/pixel). Color depth % = luminance vs black/white. Discoveries fill as loop runs complete and sync; static sound is from spec (mood/tempo/presence) until per-frame audio extraction.</p>
-      <h3 class="registries-pane-title">Static — Color primitives (pure)</h3>
+      <p class="registries-primitives-desc">Pure primitives (single frame/pixel or single sample). Color depth % = luminance vs black/white. Sound primitives = actual noises (silence, rumble, tone, hiss); strength % recorded per discovery.</p>
+      <h3 class="registries-pane-title">Pure — Color primitives (origin)</h3>
       <p class="registries-primitives">${escapeHtml(colorPrimaries)}</p>
-      <h3 class="registries-pane-title">Static — Colors (per-frame discoveries)</h3>
+      <h3 class="registries-pane-title">Pure — Colors (per-frame discoveries)</h3>
       ${static_.colors && static_.colors.length
         ? registriesTable(['Key', 'Name', 'Count', 'RGB', 'Depth %', 'Depth (B/W)'], static_.colors.map((c) => [
             c.key, c.name, c.count, `(${c.r},${c.g},${c.b})`,
@@ -493,33 +501,33 @@ function renderRegistries(data) {
             depthBreakdownStr(c.depth_breakdown),
           ]))
         : '<p class="registries-empty">No static colors yet.</p>'}
-      <h3 class="registries-pane-title">Static — Sound primitives (origin)</h3>
+      <h3 class="registries-pane-title">Pure — Sound primitives (origin noises)</h3>
       <p class="registries-primitives">${escapeHtml(soundPrimaries)}</p>
-      <h3 class="registries-pane-title">Static — Sound (per-frame discoveries)</h3>
+      <h3 class="registries-pane-title">Pure — Sound (per-frame discoveries)</h3>
       ${static_.sound && static_.sound.length
-        ? registriesTable(['Key', 'Name', 'Count'], static_.sound.map((s) => [s.key, s.name, s.count]))
+        ? registriesTable(staticSoundHeaders, staticSoundRows)
         : '<p class="registries-empty">No static sound yet.</p>'}
     </div>`;
 
   const dynamicHtml = `
     <div class="registries-pane" data-pane="dynamic">
-      <p class="registries-primitives-desc">Non-pure canonical (multi-frame; gradient, motion, camera, sound). Discoveries fill as loop runs complete and sync.</p>
-      <h3 class="registries-pane-title">Dynamic — Gradient (canonical → discoveries)</h3>
+      <p class="registries-primitives-desc">Blended: categories (gradient, motion, camera, sound, etc.) and elements (named discoveries). Time and/or distance; kick, snare, bass, etc. live here.</p>
+      <h3 class="registries-pane-title">Blended — Gradient (canonical → discoveries)</h3>
       <p class="registries-primitives">Canonical: ${escapeHtml((dynamicCanonical.gradient_type || []).join(', ') || '—')}</p>
       ${dynamic.gradient && dynamic.gradient.length
         ? registriesTable(['Name', 'Key', 'Depth %', 'Depth vs primitives'], dynamic.gradient.map((g) => [g.name, g.key, (g.depth_pct != null ? g.depth_pct.toFixed(1) : '') + '%', depthBreakdownStr(g.depth_breakdown)]))
         : '<p class="registries-empty">No gradient discoveries yet.</p>'}
-      <h3 class="registries-pane-title">Dynamic — Camera</h3>
+      <h3 class="registries-pane-title">Blended — Camera</h3>
       <p class="registries-primitives">Canonical: ${escapeHtml((dynamicCanonical.camera_motion || []).join(', ') || '—')}</p>
       ${dynamic.camera && dynamic.camera.length
         ? registriesTable(['Name', 'Key', 'Depth %', 'Depth vs primitives'], dynamic.camera.map((c) => [c.name, c.key, (c.depth_pct != null ? c.depth_pct.toFixed(1) : '') + '%', depthBreakdownStr(c.depth_breakdown)]))
         : '<p class="registries-empty">No camera discoveries yet.</p>'}
-      <h3 class="registries-pane-title">Dynamic — Motion</h3>
+      <h3 class="registries-pane-title">Blended — Motion</h3>
       <p class="registries-primitives">Canonical: ${escapeHtml((dynamicCanonical.motion || []).join(', ') || '—')}</p>
       ${dynamic.motion && dynamic.motion.length
         ? registriesTable(['Key', 'Name', 'Trend', 'Count'], dynamic.motion.map((m) => [m.key, m.name, m.trend || '—', m.count]))
         : '<p class="registries-empty">No motion discoveries yet.</p>'}
-      <h3 class="registries-pane-title">Dynamic — Sound</h3>
+      <h3 class="registries-pane-title">Blended — Sound</h3>
       <p class="registries-primitives">Canonical: ${escapeHtml((dynamicCanonical.sound || []).join(', ') || '—')}</p>
       ${dynamic.sound && dynamic.sound.length
         ? registriesTable(['Name', 'Key', 'Depth %', 'Depth vs primitives'], dynamic.sound.map((s) => [
@@ -529,11 +537,11 @@ function renderRegistries(data) {
             depthBreakdownStr(s.depth_breakdown),
           ]))
         : '<p class="registries-empty">No sound discoveries yet.</p>'}
-      <h3 class="registries-pane-title">Dynamic — Colors (learned)</h3>
+      <h3 class="registries-pane-title">Blended — Colors (learned)</h3>
       ${dynamic.colors && dynamic.colors.length
         ? registriesTable(['Key', 'Name', 'Count', 'Depth %', 'Depth vs primitives'], dynamic.colors.map((c) => [c.key, c.name, c.count, (c.depth_pct != null ? c.depth_pct.toFixed(1) : '') + '%', depthBreakdownStr(c.depth_breakdown)]))
         : '<p class="registries-empty">No learned colors yet.</p>'}
-      <h3 class="registries-pane-title">Dynamic — Blends (other)</h3>
+      <h3 class="registries-pane-title">Blended — Blends (other)</h3>
       ${dynamic.blends && dynamic.blends.length
         ? registriesTable(['Name', 'Domain', 'Key', 'Depth %', 'Depth vs primitives'], dynamic.blends.map((b) => [b.name, b.domain || '—', (b.key || '').slice(0, 40), (b.depth_pct != null ? b.depth_pct.toFixed(1) : '') + '%', depthBreakdownStr(b.depth_breakdown)]))
         : '<p class="registries-empty">No other blends yet.</p>'}
@@ -541,10 +549,11 @@ function renderRegistries(data) {
 
   const narrativeHtml = `
     <div class="registries-pane" data-pane="narrative">
+      <p class="registries-primitives-desc">Semantic: blends in categories (plot, setting, dialogue, genre, mood, style). Elements are named entries with depth where applicable.</p>
       ${Object.keys(narrative).map((aspect) => {
         const entries = narrative[aspect] || [];
         return `
-        <h3 class="registries-pane-title">Narrative — ${escapeHtml(aspect)}</h3>
+        <h3 class="registries-pane-title">Semantic — ${escapeHtml(aspect)}</h3>
         ${entries.length
           ? registriesTable(['Entry key', 'Value', 'Name', 'Count'], entries.map((e) => [e.entry_key, e.value, e.name, e.count]))
           : '<p class="registries-empty">No entries yet.</p>'}
@@ -552,7 +561,32 @@ function renderRegistries(data) {
       }).join('')}
     </div>`;
 
-  registriesTables.innerHTML = staticHtml + dynamicHtml + narrativeHtml;
+  const instructionSummary = (inst) => {
+    if (!inst || typeof inst !== 'object') return '—';
+    const parts = [];
+    if (inst.palette) parts.push('palette');
+    if (inst.motion) parts.push('motion');
+    if (inst.gradient) parts.push('gradient');
+    if (inst.camera) parts.push('camera');
+    if (inst.mood) parts.push('mood');
+    if (inst.audio_tempo) parts.push('tempo');
+    const keys = Object.keys(inst).filter((k) => !parts.includes(k) && typeof inst[k] !== 'object');
+    return [...parts, ...keys].slice(0, 6).join(', ') || '—';
+  };
+  const interpretationHtml = `
+    <div class="registries-pane" data-pane="interpretation">
+      <p class="registries-primitives-desc">Interpretation: resolved user prompts (prompt → instruction). The system prepares for everything until the user sends input; this registry stores what was interpreted.</p>
+      <h3 class="registries-pane-title">Interpretation — Resolved prompts</h3>
+      ${interpretation && interpretation.length
+        ? registriesTable(['Prompt', 'Instruction summary', 'Updated'], interpretation.map((i) => [
+            (i.prompt || '').slice(0, 60) + (i.prompt && i.prompt.length > 60 ? '…' : ''),
+            instructionSummary(i.instruction),
+            i.updated_at ? new Date(i.updated_at).toLocaleString() : '—',
+          ]))
+        : '<p class="registries-empty">No resolved interpretations yet.</p>'}
+    </div>`;
+
+  registriesTables.innerHTML = staticHtml + dynamicHtml + narrativeHtml + interpretationHtml;
   registriesTables.hidden = false;
   if (registriesLoading) registriesLoading.hidden = true;
   registriesTables.querySelectorAll('.registries-pane').forEach((p, i) => {
@@ -624,22 +658,4 @@ if (registriesRefresh) {
     loadRegistries();
   });
 }
-
-function scheduleRegistriesPoll() {
-  if (document.visibilityState !== 'visible') return;
-  registriesPollTimer = setTimeout(() => {
-    loadRegistries();
-    scheduleRegistriesPoll();
-  }, REGISTRIES_POLL_MS);
-}
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') {
-    loadRegistries();
-    scheduleRegistriesPoll();
-  } else if (registriesPollTimer) {
-    clearTimeout(registriesPollTimer);
-    registriesPollTimer = null;
-  }
-});
 loadRegistries();
-scheduleRegistriesPoll();

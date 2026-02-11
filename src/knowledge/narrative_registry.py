@@ -217,6 +217,18 @@ def ensure_narrative_primitives_seeded(config: dict[str, Any] | None = None) -> 
             for v in values:
                 if isinstance(v, str):
                     aspect_values.append(("plots", v))
+        elif origin_key == "settings":
+            for v in values:
+                if isinstance(v, str):
+                    aspect_values.append(("settings", v))
+        elif origin_key == "themes":
+            for v in values:
+                if isinstance(v, str):
+                    aspect_values.append(("themes", v))
+        elif origin_key == "scene_type":
+            for v in values:
+                if isinstance(v, str):
+                    aspect_values.append(("scene_type", v))
     for aspect, value in aspect_values:
         data = load_narrative_registry(aspect, config)
         existing = _entries_keys(data)

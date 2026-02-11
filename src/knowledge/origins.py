@@ -109,13 +109,16 @@ AUDIO_ORIGINS = {
 
 
 # -----------------------------------------------------------------------------
-# NARRATIVE — primitives: genre, tone, style
+# NARRATIVE — primitives: genre, tone, style, settings, themes, scene_type, plots
 # -----------------------------------------------------------------------------
 NARRATIVE_ORIGINS = {
     "genre": ["general", "documentary", "thriller", "ad", "tutorial", "educational", "explainer"],
     "tone": ["neutral", "dreamy", "dark", "bright", "calm", "energetic", "moody"],
     "style": ["cinematic", "abstract", "minimal", "realistic", "anime"],
     "tension_curve": ["flat", "slow_build", "standard", "immediate"],
+    "settings": ["general", "urban", "nature", "interior", "exterior", "studio", "outdoor", "abstract"],
+    "themes": ["general", "transformation", "conflict", "journey", "identity", "connection", "loss", "hope"],
+    "scene_type": ["establishing", "closeup", "wide", "medium", "dialogue", "action", "montage", "b-roll"],
 }
 
 
