@@ -543,6 +543,70 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       return json({ inserted }, inserted > 0 ? 201 : 200);
     }
 
+    // GET /api/linguistic-registry — fetch all mappings for interpretation (span -> canonical by domain)
+    if (path === "/api/linguistic-registry" && request.method === "GET") {
+      try {
+        const domain = new URL(request.url).searchParams.get("domain");
+        const q = domain
+          ? "SELECT span, canonical, domain, variant_type, count FROM linguistic_registry WHERE domain = ?"
+          : "SELECT span, canonical, domain, variant_type, count FROM linguistic_registry";
+        const stmt = domain ? env.DB.prepare(q).bind(domain) : env.DB.prepare(q);
+        const rows = await stmt.all<{ span: string; canonical: string; domain: string; variant_type: string; count: number }>();
+        const mappings = (rows.results || []).map((r) => ({
+          span: r.span,
+          canonical: r.canonical,
+          domain: r.domain,
+          variant_type: r.variant_type,
+          count: r.count,
+        }));
+        return json({ mappings });
+      } catch {
+        return json({ mappings: [] });
+      }
+    }
+
+    // POST /api/linguistic-registry/batch — add mappings from extraction (upsert: increment count if exists)
+    if (path === "/api/linguistic-registry/batch" && request.method === "POST") {
+      let body: { items: Array<{ span: string; canonical: string; domain: string; variant_type?: string }> };
+      try {
+        body = (await request.json()) as typeof body;
+      } catch {
+        return err("Invalid JSON");
+      }
+      const items = Array.isArray(body.items) ? body.items : [];
+      if (items.length === 0) return json({ inserted: 0, updated: 0 });
+      let inserted = 0;
+      let updated = 0;
+      for (const it of items.slice(0, 100)) {
+        const span = typeof it.span === "string" ? it.span.trim().toLowerCase() : "";
+        const canonical = typeof it.canonical === "string" ? it.canonical.trim() : "";
+        const domain = typeof it.domain === "string" ? it.domain.trim() : "";
+        const variantType = typeof it.variant_type === "string" ? it.variant_type : "synonym";
+        if (!span || !canonical || !domain) continue;
+        try {
+          const existing = await env.DB.prepare("SELECT id, count FROM linguistic_registry WHERE span = ? AND domain = ?")
+            .bind(span, domain)
+            .first<{ id: string; count: number }>();
+          if (existing) {
+            await env.DB.prepare("UPDATE linguistic_registry SET count = count + 1, updated_at = datetime('now') WHERE span = ? AND domain = ?")
+              .bind(span, domain)
+              .run();
+            updated++;
+          } else {
+            await env.DB.prepare(
+              "INSERT INTO linguistic_registry (id, span, canonical, domain, variant_type, count) VALUES (?, ?, ?, ?, ?, 1)"
+            )
+              .bind(uuid(), span, canonical, domain, variantType)
+              .run();
+            inserted++;
+          }
+        } catch {
+          // Skip on duplicate or missing table
+        }
+      }
+      return json({ inserted, updated }, inserted > 0 || updated > 0 ? 201 : 200);
+    }
+
     // POST /api/interpretations — store completed interpretation directly (e.g. backfill from jobs)
     if (path === "/api/interpretations" && request.method === "POST") {
       let body: { prompt: string; instruction: Record<string, unknown>; source?: string };

@@ -20,6 +20,7 @@ Potential enhancements for better loop performance, reliability, and output qual
 | 10 | Exploit variety | When exploiting, exclude prompts in `recent_prompts` so loop prefers different good prompts. |
 | 11 | Repetition cap | `repetition_score` (top 20 entries / total count) in GET /api/loop/progress; when > 0.35, cap exploit at 0.7 (Exploiter) or 0.5 (Balanced). |
 | 12 | Exploiter discovery cap | When discovery_rate < 10%, Exploiter caps exploit at 0.80; when < 20%, caps at 0.90. Injects exploration when stuck. |
+| 13 | Interpretation learning loop | Generate diverse prompts (slang, dialect), interpret, extract linguistic mappings, grow D1 linguistic_registry. Prepares for "anything and everything." |
 
 ---
 

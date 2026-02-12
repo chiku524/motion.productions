@@ -2,6 +2,8 @@
 
 The interpretation worker fills the **interpretation registry** (D1 `interpretations` table) by polling the queue and interpreting user prompts. It does **not** create or render videos — it only processes prompts and stores resolved instructions for the main loop to use.
 
+**Learning loop:** The worker also **generates** diverse prompts (slang, dialect, informal), interprets them, **extracts** linguistic mappings (span → canonical by domain), and **grows** the linguistic registry (D1 `linguistic_registry` table). This enables the system to learn English variations and prepare for "anything and everything" from users.
+
 ## Prerequisites
 
 - A Railway project with at least one existing service (Explorer, Exploiter, or Balanced)
@@ -73,6 +75,16 @@ py scripts/backfill_interpretations.py --api-base https://motion.productions --l
 ```
 
 This fetches prompts from jobs, interprets them, and stores results. The interpret worker will then have data to serve via `interpretation_prompts`.
+
+## Linguistic registry migration
+
+Run the D1 migration to create the `linguistic_registry` table:
+
+```bash
+cd cloudflare && wrangler d1 migrations apply <DATABASE_NAME>
+```
+
+(Replace `<DATABASE_NAME>` with your D1 database binding name from `wrangler.toml`.)
 
 ## Troubleshooting
 

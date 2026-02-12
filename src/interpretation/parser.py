@@ -61,6 +61,13 @@ _STYLE_KEYWORDS: set[str] = {"cinematic", "anime", "abstract", "minimal", "reali
 # Tone keywords (optional)
 _TONE_KEYWORDS: set[str] = {"dreamy", "dark", "bright", "calm", "energetic", "moody"}
 
+# Built-in slang/dialect mappings (seed for linguistic registry)
+BUILTIN_LINGUISTIC: dict[str, dict[str, str]] = {
+    "palette": {"lit": "warm_sunset", "chill": "ocean", "vibing": "neon", "mellow": "dreamy", "lowkey": "night"},
+    "motion": {"chill": "slow", "lit": "pulse", "mellow": "flow", "vibing": "pulse"},
+    "lighting": {"lit": "documentary", "lowkey": "noir", "chill": "golden_hour"},
+}
+
 # Negation: "not X", "no X", "avoid X"
 _NEGATION_PATTERN = re.compile(
     r"\b(?:not|no|avoid|without)\s+([a-z]+)",
@@ -105,17 +112,28 @@ def _extract_negations(prompt: str) -> tuple[list[str], list[str]]:
     return avoid_motion, avoid_palette
 
 
+def _merge_linguistic(domain: str, base_dict: dict[str, str], linguistic: dict[str, dict[str, str]] | None) -> dict[str, str]:
+    """Merge base keyword dict with built-in + fetched linguistic registry for domain."""
+    out = dict(base_dict)
+    if domain in BUILTIN_LINGUISTIC:
+        out.update(BUILTIN_LINGUISTIC[domain])
+    if linguistic and domain in linguistic:
+        out.update(linguistic[domain])
+    return out
+
+
 def _resolve_palette(
     words: list[str],
     avoid_palette: list[str],
     *,
     tone: str | None = None,
+    linguistic_registry: dict[str, dict[str, str]] | None = None,
 ) -> str:
     """
     Resolve palette from keywords. First match wins; excludes avoided palettes.
     For arbitrary prompts: when no keyword matches, infer from tone.
     """
-    hints = _resolve_palette_hints(words, avoid_palette, tone=tone)
+    hints = _resolve_palette_hints(words, avoid_palette, tone=tone, linguistic_registry=linguistic_registry)
     return hints[0] if hints else DEFAULT_PALETTE
 
 
@@ -124,17 +142,19 @@ def _resolve_palette_hints(
     avoid_palette: list[str],
     *,
     tone: str | None = None,
+    linguistic_registry: dict[str, dict[str, str]] | None = None,
 ) -> list[str]:
     """
     Resolve ALL palette hints from keywords (for blending primitives).
     INTENDED_LOOP: creation blends these, not a single template.
     """
+    lookup = _merge_linguistic("palette", KEYWORD_TO_PALETTE, linguistic_registry)
     avoid_set = set(avoid_palette)
     hints: list[str] = []
     seen: set[str] = set()
     for w in words:
-        if w in KEYWORD_TO_PALETTE:
-            p = KEYWORD_TO_PALETTE[w]
+        if w in lookup:
+            p = lookup[w]
             if p not in avoid_set and p not in seen:
                 hints.append(p)
                 seen.add(p)
@@ -150,11 +170,12 @@ def _resolve_motion(
     avoid_motion: list[str],
     *,
     tone: str | None = None,
+    linguistic_registry: dict[str, dict[str, str]] | None = None,
 ) -> str:
     """
     Resolve motion type from keywords. First match wins; excludes avoided motions.
     """
-    hints = _resolve_motion_hints(words, avoid_motion, tone=tone)
+    hints = _resolve_motion_hints(words, avoid_motion, tone=tone, linguistic_registry=linguistic_registry)
     return hints[0] if hints else DEFAULT_MOTION
 
 
@@ -163,17 +184,19 @@ def _resolve_motion_hints(
     avoid_motion: list[str],
     *,
     tone: str | None = None,
+    linguistic_registry: dict[str, dict[str, str]] | None = None,
 ) -> list[str]:
     """
     Resolve ALL motion hints from keywords (for blending primitives).
     INTENDED_LOOP: creation blends these with learned motion.
     """
+    lookup = _merge_linguistic("motion", KEYWORD_TO_MOTION, linguistic_registry)
     avoid_set = set(avoid_motion)
     hints: list[str] = []
     seen: set[str] = set()
     for w in words:
-        if w in KEYWORD_TO_MOTION:
-            m = KEYWORD_TO_MOTION[w]
+        if w in lookup:
+            m = lookup[w]
             if m not in avoid_set and m not in seen:
                 hints.append(m)
                 seen.add(m)
@@ -205,19 +228,21 @@ def _resolve_intensity(
     return DEFAULT_INTENSITY
 
 
-def _resolve_gradient(words: list[str]) -> str:
+def _resolve_gradient(words: list[str], linguistic_registry: dict[str, dict[str, str]] | None = None) -> str:
     """Resolve gradient type from keywords."""
+    lookup = _merge_linguistic("gradient", KEYWORD_TO_GRADIENT, linguistic_registry)
     for w in words:
-        if w in KEYWORD_TO_GRADIENT:
-            return KEYWORD_TO_GRADIENT[w]
+        if w in lookup:
+            return lookup[w]
     return DEFAULT_GRADIENT
 
 
-def _resolve_camera(words: list[str]) -> str:
+def _resolve_camera(words: list[str], linguistic_registry: dict[str, dict[str, str]] | None = None) -> str:
     """Resolve camera motion from keywords."""
+    lookup = _merge_linguistic("camera", KEYWORD_TO_CAMERA, linguistic_registry)
     for w in words:
-        if w in KEYWORD_TO_CAMERA:
-            return KEYWORD_TO_CAMERA[w]
+        if w in lookup:
+            return lookup[w]
     return DEFAULT_CAMERA
 
 
@@ -245,21 +270,23 @@ def _resolve_transition(words: list[str]) -> str:
     return DEFAULT_TRANSITION
 
 
-def _resolve_lighting(words: list[str]) -> str:
+def _resolve_lighting(words: list[str], linguistic_registry: dict[str, dict[str, str]] | None = None) -> str:
     """Resolve lighting preset from keywords."""
+    lookup = _merge_linguistic("lighting", KEYWORD_TO_LIGHTING, linguistic_registry)
     for w in words:
-        if w in KEYWORD_TO_LIGHTING:
-            return KEYWORD_TO_LIGHTING[w]
+        if w in lookup:
+            return lookup[w]
     return DEFAULT_LIGHTING
 
 
-def _resolve_lighting_hints(words: list[str]) -> list[str]:
+def _resolve_lighting_hints(words: list[str], linguistic_registry: dict[str, dict[str, str]] | None = None) -> list[str]:
     """Resolve all lighting preset hints from keywords (for primitive blending)."""
+    lookup = _merge_linguistic("lighting", KEYWORD_TO_LIGHTING, linguistic_registry)
     hints: list[str] = []
     seen: set[str] = set()
     for w in words:
-        if w in KEYWORD_TO_LIGHTING:
-            p = KEYWORD_TO_LIGHTING[w]
+        if w in lookup:
+            p = lookup[w]
             if p not in seen:
                 hints.append(p)
                 seen.add(p)
@@ -292,11 +319,12 @@ def _resolve_composition_symmetry_hints(words: list[str]) -> list[str]:
     return hints if hints else [DEFAULT_COMPOSITION_SYMMETRY]
 
 
-def _resolve_genre(words: list[str]) -> str:
+def _resolve_genre(words: list[str], linguistic_registry: dict[str, dict[str, str]] | None = None) -> str:
     """Resolve genre from keywords."""
+    lookup = _merge_linguistic("genre", KEYWORD_TO_GENRE, linguistic_registry)
     for w in words:
-        if w in KEYWORD_TO_GENRE:
-            return KEYWORD_TO_GENRE[w]
+        if w in lookup:
+            return lookup[w]
     return DEFAULT_GENRE
 
 
@@ -423,6 +451,7 @@ def interpret_user_prompt(
     *,
     default_duration: float | None = None,
     seed: int | None = None,
+    linguistic_registry: dict[str, dict[str, str]] | None = None,
 ) -> InterpretedInstruction:
     """
     Precisely interpret what the user is instructing.
@@ -439,21 +468,21 @@ def interpret_user_prompt(
     style = _resolve_style(words, prompt)
     tone = _resolve_tone(words, prompt)
     # Resolve with tone fallback for arbitrary prompts (unknown words)
-    palette = _resolve_palette(words, avoid_palette, tone=tone)
-    motion = _resolve_motion(words, avoid_motion, tone=tone)
-    palette_hints = _resolve_palette_hints(words, avoid_palette, tone=tone)
-    motion_hints = _resolve_motion_hints(words, avoid_motion, tone=tone)
-    lighting_hints = _resolve_lighting_hints(words)
+    palette = _resolve_palette(words, avoid_palette, tone=tone, linguistic_registry=linguistic_registry)
+    motion = _resolve_motion(words, avoid_motion, tone=tone, linguistic_registry=linguistic_registry)
+    palette_hints = _resolve_palette_hints(words, avoid_palette, tone=tone, linguistic_registry=linguistic_registry)
+    motion_hints = _resolve_motion_hints(words, avoid_motion, tone=tone, linguistic_registry=linguistic_registry)
+    lighting_hints = _resolve_lighting_hints(words, linguistic_registry)
     composition_balance_hints = _resolve_composition_balance_hints(words)
     composition_symmetry_hints = _resolve_composition_symmetry_hints(words)
     intensity = _resolve_intensity(words, tone=tone)
-    gradient = _resolve_gradient(words)
-    camera = _resolve_camera(words)
+    gradient = _resolve_gradient(words, linguistic_registry)
+    camera = _resolve_camera(words, linguistic_registry)
     shape = _resolve_shape(words)
     shot = _resolve_shot(words)
     transition = _resolve_transition(words)
-    lighting = _resolve_lighting(words)
-    genre_resolved = _resolve_genre(words)
+    lighting = _resolve_lighting(words, linguistic_registry)
+    genre_resolved = _resolve_genre(words, linguistic_registry)
     composition_balance = _resolve_composition_balance(words)
     composition_symmetry = _resolve_composition_symmetry(words)
     pacing_factor = _resolve_pacing_factor(words)
