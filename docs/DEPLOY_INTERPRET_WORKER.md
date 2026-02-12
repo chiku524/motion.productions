@@ -64,8 +64,18 @@ interpret: python scripts/interpret_loop.py
 
 Then run: `py -m procfile start` or `foreman start` (if using Foreman).
 
+## Populate interpretation registry (one-time)
+
+If the registry is empty, run the backfill script locally:
+
+```bash
+py scripts/backfill_interpretations.py --api-base https://motion.productions --limit 100
+```
+
+This fetches prompts from jobs, interprets them, and stores results. The interpret worker will then have data to serve via `interpretation_prompts`.
+
 ## Troubleshooting
 
-- **No interpretation_prompts:** The queue may be empty. Submit prompts via the site or wait for backfill from existing jobs.
+- **No interpretation_prompts:** Run the backfill script above, or ensure the interpret worker is running and polling. Check Railway logs for `backfill:` or `interpreted:` messages.
 - **API errors:** Ensure `API_BASE` is correct and the motion.productions API is reachable from Railway.
 - **Delay:** Increase `INTERPRET_DELAY_SECONDS` if you hit rate limits.

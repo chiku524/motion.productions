@@ -28,4 +28,21 @@ Potential enhancements for better loop performance, reliability, and output qual
 
 ---
 
-*Last updated: 2026-02-10*
+---
+
+## Registry scan findings (2026-02-12)
+
+From `motion-registries-2026-02-12.json`:
+
+| Finding | Fix |
+|---------|-----|
+| **Interpretation registry empty** | Run `py scripts/backfill_interpretations.py --api-base https://motion.productions`. Ensures interpret worker is deployed and polling. |
+| **9/20 jobs missing discovery** | Worker now records `discovery_runs` when `job_id` present (even if 0 novel discoveries). Ensures D1 migration 0013 applied. |
+| **"gradual in symmetric silence" repeated 5x** | Exploit path can pick same good_prompt repeatedly. Consider: when exploiting, also avoid prompts in last N recent for variety. |
+| **Blend names like "lixakafereka", "liworazagura"** | Already use English-like names. Some long/gibberish may be from name_reserve fallback; `generate_blend_name` in blend_names.py produces title-case. |
+| **Precision 80%, target 95%** | 1 job missing learning. Check POST /api/learning success; ensure job_id is in payload. |
+| **Discovery rate 55%** | Will improve with discovery_runs fix; backfill interpretations so `interpretation_prompts` feeds creation. |
+
+---
+
+*Last updated: 2026-02-12*

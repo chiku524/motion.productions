@@ -70,7 +70,9 @@ def pick_prompt(
     interpretation_prompts = (knowledge or {}).get("interpretation_prompts", [])
 
     if secure_random() < exploit_ratio and good:
-        return secure_choice(good)
+        # Exclude recently used for variety even when exploiting
+        candidates = [p for p in good if p not in recent]
+        return secure_choice(candidates) if candidates else secure_choice(good)
     # When exploring: sometimes use a pre-interpreted user prompt from the interpretation registry
     if interpretation_prompts and secure_random() < 0.35:
         candidates = [p for p in interpretation_prompts if isinstance(p, dict) and p.get("prompt") and p["prompt"] not in recent]

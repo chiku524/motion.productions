@@ -933,7 +933,8 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       }
       const totalResults = Object.values(results).reduce((a, b) => a + b, 0);
       const jobId = typeof (body as { job_id?: string }).job_id === "string" ? (body as { job_id: string }).job_id.trim() : null;
-      if (jobId && totalResults > 0) {
+      // Record discovery run when job_id present (even if totalResults=0) so diagnostics show "attempted"
+      if (jobId) {
         try {
           await env.DB.prepare("INSERT INTO discovery_runs (id, job_id) VALUES (?, ?)")
             .bind(uuid(), jobId).run();
