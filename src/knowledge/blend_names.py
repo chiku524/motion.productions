@@ -49,6 +49,29 @@ _REAL_WORDS = [
 
 # Max length for the invented word (18 for variety; names stay readable)
 _MAX_WORD_LEN = 18
+
+
+def is_semantic_name(name: str) -> bool:
+    """
+    True if name looks semantic/authentic (real word or our generator output).
+    Gibberish like 'liworazagura', 'botucaveraka' returns False.
+    """
+    if not name or not isinstance(name, str):
+        return False
+    n = name.strip().lower()
+    if len(n) < 4:
+        return True
+    if n in {w.lower() for w in _REAL_WORDS}:
+        return True
+    for s in _START:
+        if n.startswith(s.lower()):
+            return True
+    for e in _END:
+        if n.endswith(e.lower()):
+            return True
+    if len(n) <= 8:
+        return True
+    return False
 # Domain to prefix (short; keeps full name readable)
 _DOMAIN_PREFIX: dict[str, str] = {
     "color": "color",

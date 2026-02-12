@@ -96,23 +96,25 @@ def _expand_from_knowledge(knowledge: dict[str, Any] | None) -> tuple[list[str],
     extra_subjects: list[str] = []
     extra_modifiers: list[str] = []
 
-    # Learned color names (e.g. "blavexo", "kinevo") — use as palette modifiers
+    from ..knowledge.blend_names import is_semantic_name
+
+    # Learned color names — use only semantic names (skip gibberish like "liworazagura")
     learned_colors = knowledge.get("learned_colors") or {}
     for color_key, data in learned_colors.items():
         if isinstance(data, dict):
             name = data.get("name") or color_key
-            if name and isinstance(name, str) and len(name) >= 3:
+            if name and isinstance(name, str) and len(name) >= 3 and is_semantic_name(name):
                 extra_modifiers.append(f"{name} tones")
                 extra_modifiers.append(f"{name} palette")
 
-    # Learned motion profiles — use as motion modifiers
+    # Learned motion profiles — use only semantic names (skip gibberish)
     learned_motion = knowledge.get("learned_motion") or []
     for m in learned_motion:
         if isinstance(m, dict):
             name = m.get("name")
             trend = m.get("motion_trend", "")
             level = m.get("motion_level", 0)
-            if name and isinstance(name, str) and len(name) >= 3:
+            if name and isinstance(name, str) and len(name) >= 3 and is_semantic_name(name):
                 extra_modifiers.append(f"{name} motion")
             # Phrase from motion characteristics
             if trend and trend != "steady":
@@ -120,18 +122,18 @@ def _expand_from_knowledge(knowledge: dict[str, Any] | None) -> tuple[list[str],
             if level and float(level) > 5:
                 extra_modifiers.append("dynamic movement")
 
-    # Proven keywords from learning stats (high-count = works well)
+    # Proven keywords from learning stats — only semantic (skip gibberish)
     by_keyword = knowledge.get("by_keyword") or {}
     for kw, stats in list(by_keyword.items())[:50]:
         if isinstance(stats, dict) and stats.get("count", 0) >= 2:
-            if kw and isinstance(kw, str) and kw not in SUBJECTS_BASE:
+            if kw and isinstance(kw, str) and kw not in SUBJECTS_BASE and is_semantic_name(kw):
                 extra_subjects.append(kw)
 
-    # Proven palettes
+    # Proven palettes — only semantic names
     by_palette = knowledge.get("by_palette") or {}
     for pal, stats in list(by_palette.items())[:30]:
         if isinstance(stats, dict) and stats.get("count", 0) >= 1:
-            if pal and isinstance(pal, str):
+            if pal and isinstance(pal, str) and is_semantic_name(pal):
                 extra_modifiers.append(f"{pal} style")
 
     # Dedupe

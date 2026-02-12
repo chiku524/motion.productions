@@ -1154,6 +1154,62 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       }
     }
 
+    // POST /api/registries/backfill-names — replace gibberish names with semantic ones
+    if (path === "/api/registries/backfill-names" && request.method === "POST") {
+      const dryRun = new URL(request.url).searchParams.get("dry_run") === "1";
+      let updated = 0;
+      const usedNames = new Set<string>();
+      const pickUniqueName = async (): Promise<string> => {
+        for (let i = 0; i < 100; i++) {
+          const seed = Math.floor(Math.random() * 1000000) + i * 7919;
+          const word = inventSemanticWord(seed);
+          const name = toTitleCase(word);
+          if (usedNames.has(name)) continue;
+          const inDb = await env.DB.prepare("SELECT 1 FROM learned_colors WHERE name = ?").bind(name).first();
+          if (inDb) continue;
+          usedNames.add(name);
+          return name;
+        }
+        return "Novel" + (Math.floor(Math.random() * 100000) + 1).toString().padStart(5, "0");
+      };
+      try {
+        const tables = [
+          { table: "learned_colors", idCol: "id", nameCol: "name" },
+          { table: "learned_motion", idCol: "id", nameCol: "name" },
+          { table: "learned_blends", idCol: "id", nameCol: "name" },
+          { table: "learned_gradient", idCol: "id", nameCol: "name" },
+          { table: "learned_camera", idCol: "id", nameCol: "name" },
+          { table: "static_colors", idCol: "id", nameCol: "name" },
+          { table: "static_sound", idCol: "id", nameCol: "name" },
+          { table: "narrative_entries", idCol: "id", nameCol: "name" },
+        ];
+        for (const { table, idCol, nameCol } of tables) {
+          try {
+            const rows = await env.DB.prepare(`SELECT ${idCol}, ${nameCol} FROM ${table}`)
+              .all<{ id: string; name: string }>();
+            for (const r of rows.results || []) {
+              const row = r as { id: string; name: string | null };
+              if (isGibberishName(row.name)) {
+                const newName = await pickUniqueName();
+                if (!dryRun) {
+                  await env.DB.prepare(`UPDATE ${table} SET ${nameCol} = ? WHERE ${idCol} = ?`)
+                    .bind(newName, row.id)
+                    .run();
+                }
+                updated++;
+              }
+            }
+          } catch {
+            // Table may not exist; skip
+          }
+        }
+        return json({ updated, dry_run: dryRun });
+      } catch (e) {
+        console.error("Backfill names failed:", e);
+        return json({ error: "Backfill failed", details: String(e) }, 500);
+      }
+    }
+
     // GET /api/registries — pure (STATIC) vs non-pure (DYNAMIC + NARRATIVE); depth % vs primitives always
     // Pure = single frame/pixel (static). Non-pure = multi-frame blends (gradient, motion, camera → dynamic).
     if (path === "/api/registries" && request.method === "GET") {
@@ -1508,6 +1564,18 @@ function inventSemanticWord(seed: number): string {
 
 function toTitleCase(s: string): string {
   return s.length > 1 ? s[0].toUpperCase() + s.slice(1).toLowerCase() : s.toUpperCase();
+}
+
+function isGibberishName(name: string | null): boolean {
+  if (!name || typeof name !== "string") return false;
+  const n = name.trim().toLowerCase();
+  if (n.length < 4) return false;
+  if (n.startsWith("novel") && /^\d+$/.test(n.slice(5))) return false;
+  if (SEMANTIC_WORDS.some((w) => w === n)) return false;
+  if (SEMANTIC_START.some((s) => n.startsWith(s))) return false;
+  if (SEMANTIC_END.some((e) => n.endsWith(e))) return false;
+  if (n.length <= 8) return false;
+  return true;
 }
 
 async function generateUniqueName(env: Env): Promise<string> {

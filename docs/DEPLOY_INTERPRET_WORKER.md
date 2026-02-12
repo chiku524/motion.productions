@@ -86,6 +86,18 @@ cd cloudflare && wrangler d1 migrations apply <DATABASE_NAME>
 
 (Replace `<DATABASE_NAME>` with your D1 database binding name from `wrangler.toml`.)
 
+## Backfill registry names (replace gibberish)
+
+If prompts or registries show gibberish names (e.g. "liworazagura", "botucaveraka"):
+
+```bash
+# Preview what would be updated
+py scripts/backfill_registry_names.py --dry-run
+
+# Apply updates
+py scripts/backfill_registry_names.py --api-base https://motion.productions
+```
+
 ## Troubleshooting
 
 - **No interpretation_prompts:** Run the backfill script above, or ensure the interpret worker is running and polling. Check Railway logs for `backfill:` or `interpreted:` messages.
