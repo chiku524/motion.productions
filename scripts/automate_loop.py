@@ -66,7 +66,7 @@ def pick_prompt(
     from src.automation import generate_procedural_prompt
 
     good = state.get("good_prompts", [])
-    recent = set(state.get("recent_prompts", [])[-100:])
+    recent = set(state.get("recent_prompts", [])[-150:])  # Wider window for variety when exploiting
     interpretation_prompts = (knowledge or {}).get("interpretation_prompts", [])
 
     if secure_random() < exploit_ratio and good:
@@ -135,12 +135,31 @@ def _get_discovery_adjusted_exploit_ratio(
     progress: dict,
     override_active: bool,
 ) -> float:
-    """When discovery_rate_pct < 10%, temporarily reduce exploit to boost exploration."""
-    if override_active:
-        return base_ratio
+    """When discovery_rate_pct is low or repetition_score high, reduce exploit to boost exploration.
+    Exploiter (override=1): soft cap when discovery < 20% so we inject exploration.
+    Balanced: cap at 0.4 when discovery < 10%."""
     rate = progress.get("discovery_rate_pct")
-    if rate is not None and rate < 10 and progress.get("total_runs", 0) >= 5:
-        # Cap exploit at 0.4 when discovery is low
+    total_runs = progress.get("total_runs", 0)
+    repetition = progress.get("repetition_score")  # 0–1; high = few entries dominate count
+
+    # High repetition (e.g. top 20 entries hold >35% of total count) → reduce exploit
+    if repetition is not None and repetition > 0.35 and total_runs >= 5:
+        cap = 0.7 if override_active else 0.5
+        return min(base_ratio, cap)
+
+    if total_runs < 5:
+        return base_ratio
+
+    if override_active:
+        # Exploiter: soft cap when discovery rate is low (inject 10–20% exploration)
+        if rate is not None and rate < 10:
+            return min(base_ratio, 0.80)
+        if rate is not None and rate < 20:
+            return min(base_ratio, 0.90)
+        return base_ratio
+
+    # Balanced: stronger cap when discovery is very low
+    if rate is not None and rate < 10:
         return min(base_ratio, 0.4)
     return base_ratio
 

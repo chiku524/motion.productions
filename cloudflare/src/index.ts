@@ -1291,6 +1291,23 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         }
       }
       const discoveryRate = totalRuns > 0 ? Math.round((withDiscovery / totalRuns) * 100) : 0;
+
+      // Repetition score: fraction of total count in top 20 entries (0–1). High = few entries dominate.
+      let repetitionScore: number | null = null;
+      try {
+        const totalMotion = await env.DB.prepare("SELECT COALESCE(SUM(count), 0) as s FROM learned_motion").first<{ s: number }>();
+        const topMotion = await env.DB.prepare(
+          "SELECT SUM(c) as s FROM (SELECT count as c FROM learned_motion ORDER BY count DESC LIMIT 20)"
+        ).first<{ s: number }>();
+        const total = totalMotion?.s ?? 0;
+        const top = topMotion?.s ?? 0;
+        if (total > 0 && top > 0) {
+          repetitionScore = Math.round((top / total) * 100) / 100;
+        }
+      } catch {
+        /* learned_motion may not exist */
+      }
+
       return json({
         last_n: last,
         total_runs: totalRuns,
@@ -1299,6 +1316,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         target_pct: 95,
         runs_with_discovery: withDiscovery,
         discovery_rate_pct: discoveryRate,
+        repetition_score: repetitionScore,
       });
     }
 
