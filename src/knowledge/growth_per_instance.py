@@ -188,12 +188,12 @@ def ensure_static_color_in_registry(
                 break
         save_static_registry("color", data, config)
         return None
-    names = {e.get("name", "") for e in data.get("entries", []) if e.get("name")}
-    name = generate_sensible_name("color", key, existing_names=names, rgb_hint=(r_val, g_val, b_val))
     r_val = float(color.get("r", 0))
     g_val = float(color.get("g", 0))
     b_val = float(color.get("b", 0))
     opacity_val = float(color.get("opacity", 1.0))
+    names = {e.get("name", "") for e in data.get("entries", []) if e.get("name")}
+    name = generate_sensible_name("color", key, existing_names=names, rgb_hint=(r_val, g_val, b_val))
     # Depth breakdown required: origin color % and opacity level (per REGISTRY_FOUNDATION)
     from .blend_depth import compute_color_depth
     origin_colors = compute_color_depth(r_val, g_val, b_val)

@@ -326,12 +326,15 @@ def grow_and_sync_to_api(
             "primitive_depths": {camera: 1.0},
             "source_prompt": prompt[:120] if prompt else "",
         })
+        transition_in = getattr(spec, "transition_in", "cut") or "cut"
+        transition_out = getattr(spec, "transition_out", "cut") or "cut"
+        transition_key = f"{transition_in}_{transition_out}"
         discoveries["blends"].append({
             "name": "",
             "domain": "transitions",
-            "inputs": {"transition_in": getattr(spec, "transition_in", "cut"), "transition_out": getattr(spec, "transition_out", "cut")},
-            "output": {"key": transitions},
-            "primitive_depths": {transitions: 1.0},
+            "inputs": {"transition_in": transition_in, "transition_out": transition_out},
+            "output": {"key": transition_key},
+            "primitive_depths": {transition_key: 1.0},
             "source_prompt": prompt[:120] if prompt else "",
         })
         audio_tempo = getattr(spec, "audio_tempo", "medium") or "medium"
