@@ -101,10 +101,12 @@ def grow_and_sync_to_api(
         compute_full_blend_depths,
     )
     from .registry import _color_key
+    from .blend_names import generate_sensible_name, generate_blend_name
 
     if not api_base:
         return {"error": "api_base required"}
 
+    used_names: set[str] = set()
     discoveries: dict[str, list[dict[str, Any]]] = {
         "colors": [],
         "blends": [],
@@ -121,15 +123,18 @@ def grow_and_sync_to_api(
     if dom and len(dom) >= 3:
         r, g, b = float(dom[0]), float(dom[1]), float(dom[2])
         key = _color_key(r, g, b, tolerance=25)
+        color_name = generate_sensible_name("color", key, existing_names=used_names, rgb_hint=(r, g, b))
+        used_names.add(color_name)
         discoveries["colors"].append({
             "key": key,
             "r": r,
             "g": g,
             "b": b,
+            "name": color_name,
             "source_prompt": prompt[:80] if prompt else "",
         })
         discoveries["blends"].append({
-            "name": "",  # API will generate
+            "name": color_name,
             "domain": "color",
             "inputs": {"key": key},
             "output": {"r": r, "g": g, "b": b},
@@ -143,15 +148,18 @@ def grow_and_sync_to_api(
     motion_trend = str(analysis.get("motion_trend", "steady"))
     level_bucket = round(motion_level, 1)
     mkey = f"{level_bucket}_{motion_trend}"
+    motion_name = generate_sensible_name("motion", mkey, existing_names=used_names)
+    used_names.add(motion_name)
     discoveries["motion"].append({
         "key": mkey,
         "motion_level": motion_level,
         "motion_std": motion_std,
         "motion_trend": motion_trend,
+        "name": motion_name,
         "source_prompt": prompt[:80] if prompt else "",
     })
     discoveries["blends"].append({
-        "name": "",
+        "name": motion_name,
         "domain": "motion",
         "inputs": {"motion_level": motion_level, "motion_std": motion_std, "motion_trend": motion_trend},
         "output": {"key": mkey},
@@ -164,15 +172,18 @@ def grow_and_sync_to_api(
     contrast = float(analysis.get("mean_contrast", 50))
     saturation = float(analysis.get("mean_saturation", 1.0))
     lkey = f"{round(brightness/25)*25}_{round(contrast,1)}_{round(saturation,1)}"
+    light_name = generate_sensible_name("lighting", lkey, existing_names=used_names)
+    used_names.add(light_name)
     discoveries["lighting"].append({
         "key": lkey,
         "brightness": brightness,
         "contrast": contrast,
         "saturation": saturation,
+        "name": light_name,
         "source_prompt": prompt[:80] if prompt else "",
     })
     discoveries["blends"].append({
-        "name": "",
+        "name": light_name,
         "domain": "lighting",
         "inputs": {"key": lkey},
         "output": {"brightness": brightness, "contrast": contrast, "saturation": saturation},
@@ -183,8 +194,11 @@ def grow_and_sync_to_api(
     # Full blend from domains
     domains = analysis_dict_to_domains(analysis)
     primitive_depths = compute_full_blend_depths(domains)
+    blend_hint = ",".join(domains.keys())[:60] if domains else ""
+    full_name = generate_blend_name("full_blend", blend_hint, existing_names=used_names)
+    used_names.add(full_name)
     discoveries["blends"].append({
-        "name": "",
+        "name": full_name,
         "domain": "full_blend",
         "inputs": {"domains": list(domains.keys())},
         "output": domains,
@@ -198,15 +212,18 @@ def grow_and_sync_to_api(
         cy = float(analysis.get("center_of_mass_y", 0.5))
         lb = float(analysis.get("luminance_balance", 0.5))
         ckey = f"{round(cx,2)}_{round(cy,2)}_{round(lb,2)}"
+        comp_name = generate_sensible_name("composition", ckey, existing_names=used_names)
+        used_names.add(comp_name)
         discoveries["composition"].append({
             "key": ckey,
             "center_x": cx,
             "center_y": cy,
             "luminance_balance": lb,
+            "name": comp_name,
             "source_prompt": prompt[:80] if prompt else "",
         })
         discoveries["blends"].append({
-            "name": "",
+            "name": comp_name,
             "domain": "composition",
             "inputs": {"key": ckey},
             "output": {"center_x": cx, "center_y": cy, "luminance_balance": lb},
@@ -220,15 +237,18 @@ def grow_and_sync_to_api(
         sv = float(analysis.get("spatial_variance", 0))
         busy = float(analysis.get("busyness", 0))
         gkey = f"{round(ed,2)}_{round(sv,2)}_{round(busy,2)}"
+        graph_name = generate_sensible_name("graphics", gkey, existing_names=used_names)
+        used_names.add(graph_name)
         discoveries["graphics"].append({
             "key": gkey,
             "edge_density": ed,
             "spatial_variance": sv,
             "busyness": busy,
+            "name": graph_name,
             "source_prompt": prompt[:80] if prompt else "",
         })
         discoveries["blends"].append({
-            "name": "",
+            "name": graph_name,
             "domain": "graphics",
             "inputs": {"key": gkey},
             "output": {"edge_density": ed, "spatial_variance": sv, "busyness": busy},
@@ -239,14 +259,17 @@ def grow_and_sync_to_api(
     # Temporal
     duration = float(analysis.get("duration_seconds", 5))
     tkey = f"{round(duration,1)}_{motion_trend}"
+    temp_name = generate_sensible_name("temporal", tkey, existing_names=used_names)
+    used_names.add(temp_name)
     discoveries["temporal"].append({
         "key": tkey,
         "duration": duration,
         "motion_trend": motion_trend,
+        "name": temp_name,
         "source_prompt": prompt[:80] if prompt else "",
     })
     discoveries["blends"].append({
-        "name": "",
+        "name": temp_name,
         "domain": "temporal",
         "inputs": {"key": tkey},
         "output": {"duration": duration, "motion_trend": motion_trend},
@@ -260,15 +283,18 @@ def grow_and_sync_to_api(
         h = int(analysis.get("height", 512))
         fps = float(analysis.get("fps", 24))
         tekkey = f"{w}x{h}_{fps}"
+        tech_name = generate_sensible_name("technical", tekkey, existing_names=used_names)
+        used_names.add(tech_name)
         discoveries["technical"].append({
             "key": tekkey,
             "width": w,
             "height": h,
             "fps": fps,
+            "name": tech_name,
             "source_prompt": prompt[:80] if prompt else "",
         })
         discoveries["blends"].append({
-            "name": "",
+            "name": tech_name,
             "domain": "technical",
             "inputs": {"key": tekkey},
             "output": {"width": w, "height": h, "fps": fps},
@@ -279,8 +305,10 @@ def grow_and_sync_to_api(
     # Gradient, Camera, Transitions, Audio, Narrative — from spec (intended values; growth prioritised)
     if spec is not None:
         gradient_type = getattr(spec, "gradient_type", "vertical") or "vertical"
+        grad_name = generate_blend_name("gradient", gradient_type, existing_names=used_names)
+        used_names.add(grad_name)
         discoveries["blends"].append({
-            "name": "",
+            "name": grad_name,
             "domain": "gradient",
             "inputs": {"gradient_type": gradient_type},
             "output": {"gradient_type": gradient_type},
@@ -288,9 +316,10 @@ def grow_and_sync_to_api(
             "source_prompt": prompt[:120] if prompt else "",
         })
         camera = getattr(spec, "camera_motion", "static") or "static"
-        transitions = f"{getattr(spec, 'transition_in', 'cut') or 'cut'}_{getattr(spec, 'transition_out', 'cut') or 'cut'}"
+        cam_name = generate_blend_name("camera", camera, existing_names=used_names)
+        used_names.add(cam_name)
         discoveries["blends"].append({
-            "name": "",
+            "name": cam_name,
             "domain": "camera",
             "inputs": {"camera_motion": camera},
             "output": {"camera_motion": camera},
@@ -308,8 +337,10 @@ def grow_and_sync_to_api(
         audio_tempo = getattr(spec, "audio_tempo", "medium") or "medium"
         audio_mood = getattr(spec, "audio_mood", "neutral") or "neutral"
         audio_presence = getattr(spec, "audio_presence", "ambient") or "ambient"
+        audio_name = generate_blend_name("audio", f"{audio_tempo}_{audio_mood}", existing_names=used_names)
+        used_names.add(audio_name)
         discoveries["blends"].append({
-            "name": "",
+            "name": audio_name,
             "domain": "audio",
             "inputs": {"tempo": audio_tempo, "mood": audio_mood, "presence": audio_presence},
             "output": {"tempo": audio_tempo, "mood": audio_mood, "presence": audio_presence},
@@ -318,8 +349,10 @@ def grow_and_sync_to_api(
         })
         genre_val = getattr(spec, "genre", "general") or "general"
         tension = getattr(spec, "tension_curve", "standard") or "standard"
+        narr_name = generate_blend_name("narrative", f"{genre_val}_{tension}", existing_names=used_names)
+        used_names.add(narr_name)
         discoveries["blends"].append({
-            "name": "",
+            "name": narr_name,
             "domain": "narrative",
             "inputs": {"genre": genre_val, "tension_curve": tension},
             "output": {"genre": genre_val, "tension_curve": tension},
@@ -327,9 +360,7 @@ def grow_and_sync_to_api(
             "source_prompt": prompt[:120] if prompt else "",
         })
 
-    # Assign semantic names (no underscores, resemble actual names) before sync
-    from .blend_names import generate_blend_name
-    used_names: set[str] = set()
+    # Ensure any remaining blends without names get semantic names
     for b in discoveries.get("blends", []):
         if not (b.get("name") or str(b.get("name", "")).strip()):
             hint = prompt[:60] if prompt else str(b.get("output", ""))[:40]

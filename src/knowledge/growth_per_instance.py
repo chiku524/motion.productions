@@ -189,7 +189,7 @@ def ensure_static_color_in_registry(
         save_static_registry("color", data, config)
         return None
     names = {e.get("name", "") for e in data.get("entries", []) if e.get("name")}
-    name = generate_sensible_name("color", key, existing_names=names)
+    name = generate_sensible_name("color", key, existing_names=names, rgb_hint=(r_val, g_val, b_val))
     r_val = float(color.get("r", 0))
     g_val = float(color.get("g", 0))
     b_val = float(color.get("b", 0))

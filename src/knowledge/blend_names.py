@@ -20,17 +20,20 @@ _START = [
     "flow", "haze", "vale", "storm", "leaf", "cloud", "wind", "rain", "brook",
     "sun", "lune", "mar", "sol", "aur", "coral", "amber", "azure", "ember",
     "lark", "fern", "birch", "cliff", "marsh", "glen", "thor", "wyn", "el",
+    "slate", "mist", "sage", "flax", "iron", "stone", "oak", "pine", "cedar",
+    "willow", "maple", "ivory", "copper", "bronze", "chalk", "linen", "wool",
 ]
+
 # End parts — complete to form semantic or name-like words (e.g. -wood, -well, -ton)
 _END = [
     "ber", "vet", "al", "ver", "er", "en", "ow", "or", "um", "in", "ar",
     "ace", "ine", "ure", "ish", "ing", "lyn", "tor", "nel", "ton", "ley",
     "well", "brook", "field", "wood", "light", "fall", "rise", "ford", "dale",
     "mont", "view", "crest", "haven", "mere", "wyn", "son", "ley", "worth",
+    "stone", "vale", "mist", "glow", "bloom", "stream", "ridge", "shore",
 ]
 
-# Known semantic words (real or name-like). Used first so the generator is precise and
-# produces meaningful names for many undiscovered elements. Extended as needed.
+# Known semantic words (real or name-like). Extended for large name space.
 _REAL_WORDS = [
     "amber", "velvet", "coral", "silver", "river", "mist", "dawn", "dusk", "wave", "drift",
     "soft", "deep", "cool", "warm", "calm", "star", "sky", "sea", "frost", "dew",
@@ -38,10 +41,14 @@ _REAL_WORDS = [
     "flow", "haze", "vale", "storm", "leaf", "cloud", "wind", "rain", "brook",
     "sun", "ember", "azure", "lark", "fern", "cliff", "marsh", "glen", "haven",
     "fall", "rise", "ford", "dale", "mont", "view", "crest", "mere", "worth",
+    "slate", "stone", "iron", "flax", "oak", "pine", "cedar", "willow", "maple",
+    "ivory", "copper", "bronze", "chalk", "linen", "wool", "silk", "jade",
+    "aurora", "twilight", "midnight", "sundown", "starlight", "moonlight",
+    "forest", "meadow", "prairie", "grove", "canopy", "thicket", "bramble",
 ]
 
-# Max length for the invented word (slightly higher for variety and name count)
-_MAX_WORD_LEN = 14
+# Max length for the invented word (18 for variety; names stay readable)
+_MAX_WORD_LEN = 18
 # Domain to prefix (short; keeps full name readable)
 _DOMAIN_PREFIX: dict[str, str] = {
     "color": "color",
@@ -69,6 +76,38 @@ _DOMAIN_PREFIX: dict[str, str] = {
     "transition": "trans",
     "depth": "depth",
 }
+
+
+def _rgb_to_semantic_hint(r: float, g: float, b: float) -> str:
+    """Map RGB to a semantic hint for color naming (e.g. grayish blue → slate)."""
+    r, g, b = float(r), float(g), float(b)
+    mx = max(r, g, b)
+    mn = min(r, g, b)
+    if mx < 50:
+        return "shadow"
+    if mx - mn < 40:  # Low saturation = grayish
+        lum = (r + g + b) / 3
+        if lum < 80:
+            return "graphite"
+        if lum < 140:
+            return "slate"
+        return "mist"
+    # Dominant hue
+    if r >= g and r >= b and r > 0:
+        if b > g:
+            return "ember"
+        return "sunset" if r > 180 else "rust"
+    if g >= r and g >= b and g > 0:
+        if r > b:
+            return "moss"
+        return "forest" if g > 120 else "olive"
+    if b >= r and b >= g and b > 0:
+        if g > r:
+            return "teal"
+        if r > g:
+            return "violet"
+        return "ocean" if b > 140 else "midnight"
+    return "neutral"
 
 
 def _words_from_prompt(prompt: str, max_words: int = 3) -> list[str]:
@@ -113,16 +152,36 @@ def generate_sensible_name(
     *,
     existing_names: set[str] | None = None,
     use_prefix: bool = False,
+    rgb_hint: tuple[float, float, float] | None = None,
 ) -> str:
     """
     Generate a sensible, short name for a registry entry.
     Format: single word, title case (e.g. Suntor, Velvet) — no underscores.
-    Resembles actual names. Word is 4–14 chars; pronounceable.
+    Resembles actual names. Word is 4–18 chars; pronounceable.
+    When rgb_hint is provided (for color domain), uses semantic hint (slate, ember, etc.).
     """
     existing = existing_names or set()
-    seed = hash((domain, value_hint, len(existing))) % (2**31)
+    hint = value_hint
+    if domain == "color" and rgb_hint and len(rgb_hint) >= 3:
+        hint = _rgb_to_semantic_hint(rgb_hint[0], rgb_hint[1], rgb_hint[2])
+    elif hint and domain == "color" and "," in hint:
+        # key like "100,100,150_1.0" → extract RGB
+        try:
+            parts = hint.split("_")[0].split(",")
+            if len(parts) >= 3:
+                r, g, b = float(parts[0]), float(parts[1]), float(parts[2])
+                hint = _rgb_to_semantic_hint(r, g, b)
+        except (ValueError, IndexError):
+            pass
+    seed = hash((domain, hint, len(existing))) % (2**31)
 
-    for i in range(200):
+    # Prefer real word matching hint when available
+    if hint and hint in _REAL_WORDS:
+        cap = hint[0].upper() + hint[1:].lower()
+        if cap not in existing:
+            return cap
+
+    for i in range(300):
         word = _invent_word(seed + i * 7919)
         if len(word) < 4:
             continue
@@ -130,7 +189,7 @@ def generate_sensible_name(
         if candidate not in existing:
             return candidate
 
-    suffix = abs(hash((domain, value_hint, seed))) % 100000
+    suffix = abs(hash((domain, hint, seed))) % 100000
     return f"Novel{suffix:05d}"
 
 

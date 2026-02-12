@@ -1399,30 +1399,46 @@ async function resolveUniqueBlendName(env: Env, base: string): Promise<string> {
   return base + (Math.floor(Math.random() * 9000) + 1000);
 }
 
+// Semantic name parts (mirrors Python blend_names.py) — no gibberish
+const SEMANTIC_START = ["am", "vel", "cor", "sil", "riv", "mist", "dawn", "dusk", "wave", "drift", "soft", "deep", "cool", "warm", "star", "sky", "sea", "frost", "dew", "rose", "gold", "pearl", "sage", "mint", "vine", "bloom", "shade", "glow", "flow", "haze", "vale", "storm", "leaf", "cloud", "wind", "rain", "brook", "sun", "lune", "slate", "flax", "iron", "stone", "oak", "pine", "cedar", "willow", "maple", "ivory", "copper", "bronze", "chalk", "linen", "wool"];
+const SEMANTIC_END = ["ber", "vet", "al", "ver", "er", "en", "ow", "or", "um", "in", "ar", "ace", "ine", "ure", "ish", "ing", "lyn", "tor", "nel", "ton", "ley", "well", "brook", "field", "wood", "light", "fall", "rise", "ford", "dale", "mont", "view", "crest", "haven", "mere", "stone", "vale", "mist", "glow", "bloom", "stream", "ridge", "shore"];
+const SEMANTIC_WORDS = ["amber", "velvet", "coral", "silver", "river", "mist", "dawn", "dusk", "wave", "drift", "soft", "deep", "cool", "warm", "calm", "star", "sky", "sea", "frost", "dew", "rose", "gold", "pearl", "sage", "mint", "vine", "bloom", "shade", "glow", "flow", "haze", "vale", "storm", "leaf", "cloud", "wind", "rain", "brook", "sun", "ember", "azure", "lark", "fern", "cliff", "marsh", "glen", "haven", "fall", "rise", "ford", "dale", "mont", "view", "crest", "mere", "worth", "slate", "stone", "iron", "flax", "oak", "pine", "cedar", "willow", "maple", "ivory", "copper", "bronze", "chalk", "linen", "wool", "silk", "jade"];
+
+function inventSemanticWord(seed: number): string {
+  const r = Math.abs(seed) % 0x7fffffff;
+  const wordIdx = r % SEMANTIC_WORDS.length;
+  const candidate = SEMANTIC_WORDS[wordIdx];
+  if (candidate.length >= 4 && candidate.length <= 18) return candidate;
+  const sIdx = (r >> 7) % SEMANTIC_START.length;
+  const start = SEMANTIC_START[sIdx];
+  for (let k = 0; k < SEMANTIC_END.length; k++) {
+    const rr = (r * 7919 + 1237 + k) % 0x7fffffff;
+    const eIdx = rr % SEMANTIC_END.length;
+    const end = SEMANTIC_END[eIdx];
+    if (start && end && start[start.length - 1] === end[0]) continue;
+    let word = start + end;
+    if (word.length > 18) word = word.slice(0, 18);
+    if (word.length < 4) word = word + end.slice(0, Math.min(end.length, 4 - word.length));
+    return word.slice(0, 18);
+  }
+  return (start + SEMANTIC_END[0]).slice(0, 18);
+}
+
+function toTitleCase(s: string): string {
+  return s.length > 1 ? s[0].toUpperCase() + s.slice(1).toLowerCase() : s.toUpperCase();
+}
+
 async function generateUniqueName(env: Env): Promise<string> {
-  const CONSONANTS = "blckdrflgrklmnprstvzwxq";
-  const VOWELS = "aeiou";
-  const invent = (seed: number): string => {
-    let r = seed % 100000;
-    const parts: string[] = [];
-    for (let i = 0; i < 3; i++) {
-      parts.push(CONSONANTS[r % CONSONANTS.length]);
-      r = Math.floor(r / CONSONANTS.length);
-      parts.push(VOWELS[r % VOWELS.length]);
-      r = Math.floor(r / VOWELS.length);
-    }
-    return parts.join("");
-  };
-  for (let attempt = 0; attempt < 20; attempt++) {
+  for (let attempt = 0; attempt < 50; attempt++) {
     const seed = Math.floor(Math.random() * 1000000) + attempt * 7919;
-    const c1 = invent(seed);
-    const c2 = invent(seed + 1237);
-    const raw = c1 + c2;
-    if (raw.length >= 5) {
-      const name = raw[0].toUpperCase() + raw.slice(1).toLowerCase();
+    const word = inventSemanticWord(seed);
+    if (word.length >= 4) {
+      const name = toTitleCase(word);
       const inReserve = await env.DB.prepare("SELECT name FROM name_reserve WHERE name = ?").bind(name).first();
       const inBlends = await env.DB.prepare("SELECT name FROM learned_blends WHERE name = ?").bind(name).first();
-      if (!inReserve && !inBlends) return name;
+      const inStatic = await env.DB.prepare("SELECT name FROM static_colors WHERE name = ?").bind(name).first();
+      const inLearned = await env.DB.prepare("SELECT name FROM learned_colors WHERE name = ?").bind(name).first();
+      if (!inReserve && !inBlends && !inStatic && !inLearned) return name;
     }
   }
   const n = (Math.floor(Math.random() * 100000) + 1) % 100000;

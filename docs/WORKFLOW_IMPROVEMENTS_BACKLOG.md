@@ -17,6 +17,7 @@ Potential enhancements for better loop performance, reliability, and output qual
 | 7 | Structured logging | `log_structured()` in workflow_utils; automate_loop logs phase, run, job_id, prompt_preview |
 | 8 | Graceful shutdown | `setup_graceful_shutdown()`; SIGTERM/SIGINT set flag; loop checks `request_shutdown()` |
 | 9 | Metrics export | `GET /api/metrics` returns Prometheus text format (total_runs, precision_pct, discovery_rate_pct) |
+| 10 | Exploit variety | When exploiting, exclude prompts in `recent_prompts` so loop prefers different good prompts. |
 
 ---
 
@@ -39,7 +40,7 @@ From `motion-registries-2026-02-12.json`:
 | **Interpretation registry empty** | Run `py scripts/backfill_interpretations.py --api-base https://motion.productions`. Ensures interpret worker is deployed and polling. |
 | **9/20 jobs missing discovery** | Worker now records `discovery_runs` when `job_id` present (even if 0 novel discoveries). Ensures D1 migration 0013 applied. |
 | **"gradual in symmetric silence" repeated 5x** | Exploit path can pick same good_prompt repeatedly. Consider: when exploiting, also avoid prompts in last N recent for variety. |
-| **Blend names like "lixakafereka", "liworazagura"** | Already use English-like names. Some long/gibberish may be from name_reserve fallback; `generate_blend_name` in blend_names.py produces title-case. |
+| **Blend names like "lixakafereka", "ralocadutoca"** | ✅ Fixed: Python assigns semantic names for all discoveries before sync; Worker uses semantic word invention (mirrors blend_names); RGB→semantic hints (slate, ember, etc.). |
 | **Precision 80%, target 95%** | 1 job missing learning. Check POST /api/learning success; ensure job_id is in payload. |
 | **Discovery rate 55%** | Will improve with discovery_runs fix; backfill interpretations so `interpretation_prompts` feeds creation. |
 
