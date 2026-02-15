@@ -101,6 +101,26 @@ _DOMAIN_PREFIX: dict[str, str] = {
 }
 
 
+# RGB → semantic color vocabulary (authentic, evocative names)
+_RGB_COLOR_VOCAB: dict[str, list[str]] = {
+    "shadow": ["shadow", "charcoal", "obsidian", "onyx", "raven", "coal", "ink"],
+    "graphite": ["graphite", "iron", "lead", "pewter", "gunmetal"],
+    "slate": ["slate", "stone", "flint", "ash", "steel", "silver"],
+    "mist": ["mist", "fog", "haze", "pearl", "cloud", "frost"],
+    "ember": ["ember", "rust", "copper", "terracotta", "brick"],
+    "sunset": ["sunset", "coral", "salmon", "blush", "apricot", "tangerine"],
+    "rust": ["rust", "sienna", "ochre", "bronze", "umber"],
+    "moss": ["moss", "sage", "fern", "olive", "jade"],
+    "forest": ["forest", "pine", "cedar", "evergreen", "laurel"],
+    "olive": ["olive", "khaki", "sand", "tan", "taupe"],
+    "teal": ["teal", "turquoise", "aqua", "cyan", "mint"],
+    "violet": ["violet", "lavender", "lilac", "plum", "amethyst"],
+    "ocean": ["ocean", "navy", "indigo", "sapphire", "azure"],
+    "midnight": ["midnight", "twilight", "dusk", "deep", "abyss"],
+    "neutral": ["stone", "sand", "linen", "ivory", "cream"],
+}
+
+
 def _rgb_to_semantic_hint(r: float, g: float, b: float) -> str:
     """Map RGB to a semantic hint for color naming (e.g. grayish blue → slate)."""
     r, g, b = float(r), float(g), float(b)
@@ -131,6 +151,34 @@ def _rgb_to_semantic_hint(r: float, g: float, b: float) -> str:
             return "violet"
         return "ocean" if b > 140 else "midnight"
     return "neutral"
+
+
+def _color_name_from_rgb(
+    r: float, g: float, b: float,
+    existing: set[str],
+    seed_offset: int = 0,
+) -> str | None:
+    """
+    Return a semantic color name from RGB using _RGB_COLOR_VOCAB.
+    None if no unique candidate found (caller falls back to _invent_word).
+    """
+    hint = _rgb_to_semantic_hint(r, g, b)
+    vocab = _RGB_COLOR_VOCAB.get(hint, [hint])
+    for i, word in enumerate(vocab):
+        candidate = word[0].upper() + word[1:].lower() if len(word) > 1 else word.upper()
+        if candidate not in existing:
+            return candidate
+    # Try compound: hint + modifier from _REAL_WORDS
+    modifiers = ["light", "deep", "pale", "soft", "dark", "warm", "cool"]
+    r2 = abs(hash((r, g, b, seed_offset))) % (2**31)
+    for _ in range(20):
+        mod = modifiers[r2 % len(modifiers)]
+        base = vocab[r2 % len(vocab)]
+        candidate = (mod[0].upper() + mod[1:] + base[0].upper() + base[1:])[:18]
+        if len(candidate) >= 6 and candidate not in existing:
+            return candidate
+        r2 = (r2 * 7919 + 1237) % (2**31)
+    return None
 
 
 def _words_from_prompt(prompt: str, max_words: int = 3) -> list[str]:
@@ -179,16 +227,17 @@ def generate_sensible_name(
 ) -> str:
     """
     Generate a sensible, short name for a registry entry.
-    Format: single word, title case (e.g. Suntor, Velvet) — no underscores.
+    Format: single word, title case (e.g. Velvet, Slate) — no underscores.
     Resembles actual names. Word is 4–18 chars; pronounceable.
-    When rgb_hint is provided (for color domain), uses semantic hint (slate, ember, etc.).
+    For color domain with rgb_hint: prefers RGB-driven semantic vocabulary.
     """
     existing = existing_names or set()
     hint = value_hint
+    r, g, b = None, None, None
     if domain == "color" and rgb_hint and len(rgb_hint) >= 3:
-        hint = _rgb_to_semantic_hint(rgb_hint[0], rgb_hint[1], rgb_hint[2])
+        r, g, b = float(rgb_hint[0]), float(rgb_hint[1]), float(rgb_hint[2])
+        hint = _rgb_to_semantic_hint(r, g, b)
     elif hint and domain == "color" and "," in hint:
-        # key like "100,100,150_1.0" → extract RGB
         try:
             parts = hint.split("_")[0].split(",")
             if len(parts) >= 3:
@@ -196,6 +245,13 @@ def generate_sensible_name(
                 hint = _rgb_to_semantic_hint(r, g, b)
         except (ValueError, IndexError):
             pass
+
+    # Color domain: prefer RGB-driven semantic vocabulary (authentic names)
+    if domain == "color" and r is not None and g is not None and b is not None:
+        rgb_name = _color_name_from_rgb(r, g, b, existing, seed_offset=len(existing))
+        if rgb_name:
+            return rgb_name
+
     seed = hash((domain, hint, len(existing))) % (2**31)
 
     # Prefer real word matching hint when available

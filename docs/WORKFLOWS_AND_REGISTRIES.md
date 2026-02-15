@@ -10,7 +10,7 @@ This doc clarifies: (1) **colors and audio in both STATIC and DYNAMIC**; (2) tha
 
 | Registry | Color | Audio / sound |
 |----------|--------|----------------|
-| **STATIC** (pure, per-frame) | **static_colors** — one dominant color (and related metrics) per frame. Grown by `grow_from_video()` → per-frame extraction → compare → add novel with name. Synced to D1 `static_colors`. | **static_sound** — per-frame or per-sample sound (amplitude, tone, timbre). Grown by `grow_from_video()`; when per-frame audio extraction is not yet available, spec-derived static sound (audio_tempo, audio_mood, audio_presence) is still recorded. Synced to D1 `static_sound`. |
+| **STATIC** (pure, per-frame) | **static_colors** — one dominant color (and related metrics) per frame. Grown by `grow_all_from_video()` → per-frame extraction → compare → add novel with name. Synced to D1 `static_colors`. | **static_sound** — per-frame or per-sample sound (amplitude, tone, timbre). Grown by `grow_all_from_video()`; when per-frame audio extraction is not yet available, spec-derived static sound (audio_tempo, audio_mood, audio_presence) is still recorded. Synced to D1 `static_sound`. |
 | **DYNAMIC** (non-pure, multi-frame / whole-video) | **learned_colors** — whole-video dominant color (and aggregates). Grown by `grow_and_sync_to_api()` from analysis → D1 `learned_colors`. Used in creation (palette blending). | **Audio as non-pure** — tempo, mood, presence per run stored as blends (domain `audio`) in `learned_blends`. Shown in registries UI under Dynamic → Sound. Creation uses `learned_audio` from API. |
 
 So every run can add both **static** (per-frame color + sound) and **dynamic** (whole-video color + audio blends, plus motion, lighting, etc.). There is no workflow that only feeds static or only dynamic; all three workflows use the same growth path and thus feed both.
@@ -44,10 +44,9 @@ Each workflow is one **continuous loop** that repeats the same steps. Only **pro
 7. **Upload** — `POST /api/jobs/{id}/upload` with the MP4.
 8. **Extract** — From video: per-frame static (color, sound), per-window dynamic (motion, lighting, composition, etc.); whole-video analysis for learning.
 9. **Grow**  
-   - **Static:** `grow_from_video()` → static_colors, static_sound (per-frame novel entries).  
-   - **Dynamic:** `grow_dynamic_from_video()` → motion, time, lighting, composition, graphics, temporal, technical, audio_semantic.  
+   - **Static + Dynamic:** `grow_all_from_video()` → static_colors, static_sound (per-frame) and motion, time, gradient, camera, lighting, composition, graphics, temporal, technical, audio_semantic, transition, depth (per-window).  
    - **Narrative:** `grow_narrative_from_spec()` → genre, mood, themes, plots, settings, scene_type.  
-   - **Sync:** `grow_and_sync_to_api()` → learned_colors, learned_motion, learned_blends (including gradient, camera, audio), etc. to D1.
+   - **Sync:** `post_all_discoveries()` (or `post_static_discoveries()` + `post_dynamic_discoveries()` + `post_narrative_discoveries()`); `grow_and_sync_to_api()` → learned_colors, learned_motion, learned_blends (whole-video aggregates) to D1.
 10. **Post discoveries** — Static → `post_static_discoveries()`; dynamic → `post_dynamic_discoveries()`; narrative → `post_narrative_discoveries()`.
 11. **Log learning** — `POST /api/learning` with job_id, prompt, spec slice, analysis.
 12. **Update state** — If outcome is “good”, add prompt to good_prompts; always append to recent_prompts; increment run_count; save state to API (KV).

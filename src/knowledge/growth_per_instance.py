@@ -10,7 +10,13 @@ to API (D1) when api_base is set.
 from pathlib import Path
 from typing import Any
 
-from .extractor_per_instance import extract_static_per_frame, extract_dynamic_per_window
+from .extractor_per_instance import (
+    extract_static_per_frame,
+    extract_dynamic_per_window,
+    read_video_once,
+    _extract_static_from_preloaded,
+    _extract_dynamic_from_preloaded,
+)
 from .static_registry import (
     load_static_registry,
     save_static_registry,
@@ -328,6 +334,12 @@ def ensure_static_sound_in_registry(
     return name
 
 
+DYNAMIC_ASPECTS = (
+    "motion", "time", "gradient", "camera", "lighting", "composition",
+    "graphics", "temporal", "technical", "audio_semantic", "transition", "depth",
+)
+
+
 def _ensure_dynamic_in_registry(
     aspect: str,
     key: str,
@@ -337,9 +349,16 @@ def _ensure_dynamic_in_registry(
     config: dict[str, Any] | None = None,
     out_novel: list[dict[str, Any]] | None = None,
     api_payload: dict[str, Any] | None = None,
+    registry_cache: dict[str, dict[str, Any]] | None = None,
 ) -> str | None:
-    """Generic: add one dynamic entry if key not in registry. Returns name if added. If out_novel and api_payload given, appends API payload when added."""
-    data = load_dynamic_registry(aspect, config)
+    """Generic: add one dynamic entry if key not in registry. Returns name if added.
+    When registry_cache is provided, uses cached registry data to avoid repeated disk reads."""
+    if registry_cache is not None and aspect in registry_cache:
+        data = registry_cache[aspect]
+    else:
+        data = load_dynamic_registry(aspect, config)
+        if registry_cache is not None:
+            registry_cache[aspect] = data
     existing = _entries_keys(data)
     if key in existing:
         for e in data.get("entries", []):
@@ -367,13 +386,17 @@ def ensure_dynamic_motion_in_registry(
     source_prompt: str = "",
     config: dict[str, Any] | None = None,
     out_novel: list[dict[str, Any]] | None = None,
+    registry_cache: dict[str, dict[str, Any]] | None = None,
 ) -> str | None:
+    from .blend_depth import compute_motion_depth
     motion = window.get("motion", {})
     key = _motion_key(motion)
+    motion_level = float(motion.get("level", 0))
+    motion_trend = str(motion.get("trend", "steady"))
     payload = {
         "motion_level": motion.get("level"),
         "motion_std": motion.get("std"),
-        "motion_trend": motion.get("trend", "steady"),
+        "motion_trend": motion_trend,
         "motion_direction": motion.get("direction", "neutral"),
         "motion_rhythm": motion.get("rhythm", "steady"),
     }
@@ -384,8 +407,9 @@ def ensure_dynamic_motion_in_registry(
         "motion_trend": payload["motion_trend"],
         "motion_direction": payload["motion_direction"],
         "motion_rhythm": payload["motion_rhythm"],
+        "depth_breakdown": compute_motion_depth(motion_level, motion_trend),
     }
-    return _ensure_dynamic_in_registry("motion", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api)
+    return _ensure_dynamic_in_registry("motion", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache)
 
 
 def ensure_dynamic_time_in_registry(
@@ -394,12 +418,13 @@ def ensure_dynamic_time_in_registry(
     source_prompt: str = "",
     config: dict[str, Any] | None = None,
     out_novel: list[dict[str, Any]] | None = None,
+    registry_cache: dict[str, dict[str, Any]] | None = None,
 ) -> str | None:
     time_dict = window.get("time", {})
     key = _time_key(time_dict)
     payload = {"duration": time_dict.get("duration"), "fps": time_dict.get("fps"), "rate": time_dict.get("rate", time_dict.get("fps"))}
     api = {"key": key, "duration": payload["duration"], "fps": payload["fps"], "rate": payload.get("rate", payload["fps"])}
-    return _ensure_dynamic_in_registry("time", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api)
+    return _ensure_dynamic_in_registry("time", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache)
 
 
 def ensure_dynamic_lighting_in_registry(
@@ -408,11 +433,22 @@ def ensure_dynamic_lighting_in_registry(
     source_prompt: str = "",
     config: dict[str, Any] | None = None,
     out_novel: list[dict[str, Any]] | None = None,
+    registry_cache: dict[str, dict[str, Any]] | None = None,
 ) -> str | None:
+    from .blend_depth import compute_lighting_depth
     lighting = window.get("lighting", {})
     key = _lighting_key(lighting)
-    api = {"key": key, "brightness": lighting.get("brightness", 128), "contrast": lighting.get("contrast", 50), "saturation": lighting.get("saturation", 1.0)}
-    return _ensure_dynamic_in_registry("lighting", key, dict(lighting), source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api)
+    brightness = float(lighting.get("brightness", 128))
+    contrast = float(lighting.get("contrast", 50))
+    saturation = float(lighting.get("saturation", 1.0))
+    api = {
+        "key": key,
+        "brightness": brightness,
+        "contrast": contrast,
+        "saturation": saturation,
+        "depth_breakdown": compute_lighting_depth(brightness, contrast, saturation),
+    }
+    return _ensure_dynamic_in_registry("lighting", key, dict(lighting), source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache)
 
 
 def ensure_dynamic_composition_in_registry(
@@ -421,11 +457,12 @@ def ensure_dynamic_composition_in_registry(
     source_prompt: str = "",
     config: dict[str, Any] | None = None,
     out_novel: list[dict[str, Any]] | None = None,
+    registry_cache: dict[str, dict[str, Any]] | None = None,
 ) -> str | None:
     comp = window.get("composition", {})
     key = _composition_key(comp)
     api = {"key": key, "center_x": comp.get("center_x", 0.5), "center_y": comp.get("center_y", 0.5), "luminance_balance": comp.get("luminance_balance", 0.5)}
-    return _ensure_dynamic_in_registry("composition", key, dict(comp), source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api)
+    return _ensure_dynamic_in_registry("composition", key, dict(comp), source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache)
 
 
 def ensure_dynamic_graphics_in_registry(
@@ -434,11 +471,12 @@ def ensure_dynamic_graphics_in_registry(
     source_prompt: str = "",
     config: dict[str, Any] | None = None,
     out_novel: list[dict[str, Any]] | None = None,
+    registry_cache: dict[str, dict[str, Any]] | None = None,
 ) -> str | None:
     graphics = window.get("graphics", {})
     key = _graphics_key(graphics)
     api = {"key": key, "edge_density": graphics.get("edge_density", 0), "spatial_variance": graphics.get("spatial_variance", 0), "busyness": graphics.get("busyness", 0)}
-    return _ensure_dynamic_in_registry("graphics", key, dict(graphics), source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api)
+    return _ensure_dynamic_in_registry("graphics", key, dict(graphics), source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache)
 
 
 def ensure_dynamic_temporal_in_registry(
@@ -447,13 +485,14 @@ def ensure_dynamic_temporal_in_registry(
     source_prompt: str = "",
     config: dict[str, Any] | None = None,
     out_novel: list[dict[str, Any]] | None = None,
+    registry_cache: dict[str, dict[str, Any]] | None = None,
 ) -> str | None:
     key = _temporal_key(window)
     time_dict = window.get("time", {})
     motion = window.get("motion", {})
     payload = {"duration": time_dict.get("duration"), "motion_trend": motion.get("trend", "steady")}
     api = {"key": key, "duration": payload["duration"], "motion_trend": payload["motion_trend"]}
-    return _ensure_dynamic_in_registry("temporal", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api)
+    return _ensure_dynamic_in_registry("temporal", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache)
 
 
 def ensure_dynamic_technical_in_registry(
@@ -465,13 +504,14 @@ def ensure_dynamic_technical_in_registry(
     source_prompt: str = "",
     config: dict[str, Any] | None = None,
     out_novel: list[dict[str, Any]] | None = None,
+    registry_cache: dict[str, dict[str, Any]] | None = None,
 ) -> str | None:
     time_dict = window.get("time", {})
     f = time_dict.get("fps", fps)
     key = _technical_key(window, width=width, height=height, fps=f)
     payload = {"width": width, "height": height, "fps": f}
     api = {"key": key, "width": width, "height": height, "fps": f}
-    return _ensure_dynamic_in_registry("technical", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api)
+    return _ensure_dynamic_in_registry("technical", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache)
 
 
 def ensure_dynamic_gradient_in_registry(
@@ -480,15 +520,23 @@ def ensure_dynamic_gradient_in_registry(
     source_prompt: str = "",
     config: dict[str, Any] | None = None,
     out_novel: list[dict[str, Any]] | None = None,
+    registry_cache: dict[str, dict[str, Any]] | None = None,
 ) -> str | None:
     """Add gradient (type + strength) to dynamic registry if novel."""
     grad = window.get("gradient", {})
     if not grad:
         return None
     key = _gradient_key(grad)
-    payload = {"gradient_type": grad.get("gradient_type", "angled"), "strength": grad.get("strength", 0)}
-    api = {"key": key, "gradient_type": payload["gradient_type"], "strength": payload["strength"]}
-    return _ensure_dynamic_in_registry("gradient", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api)
+    gradient_type = grad.get("gradient_type", "angled")
+    payload = {"gradient_type": gradient_type, "strength": grad.get("strength", 0)}
+    # depth_breakdown: single primitive = gradient type (REGISTRY_FOUNDATION)
+    api = {
+        "key": key,
+        "gradient_type": payload["gradient_type"],
+        "strength": payload["strength"],
+        "depth_breakdown": {gradient_type: 1.0},
+    }
+    return _ensure_dynamic_in_registry("gradient", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache)
 
 
 def ensure_dynamic_camera_in_registry(
@@ -497,15 +545,23 @@ def ensure_dynamic_camera_in_registry(
     source_prompt: str = "",
     config: dict[str, Any] | None = None,
     out_novel: list[dict[str, Any]] | None = None,
+    registry_cache: dict[str, dict[str, Any]] | None = None,
 ) -> str | None:
     """Add camera motion (type + speed) to dynamic registry if novel."""
     cam = window.get("camera", {})
     if not cam:
         return None
     key = _camera_key(cam)
-    payload = {"motion_type": cam.get("motion_type", "static"), "speed": cam.get("speed", "medium")}
-    api = {"key": key, "motion_type": payload["motion_type"], "speed": payload["speed"]}
-    return _ensure_dynamic_in_registry("camera", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api)
+    motion_type = cam.get("motion_type", "static")
+    payload = {"motion_type": motion_type, "speed": cam.get("speed", "medium")}
+    # depth_breakdown: single primitive = motion_type (CAMERA_ORIGINS)
+    api = {
+        "key": key,
+        "motion_type": payload["motion_type"],
+        "speed": payload["speed"],
+        "depth_breakdown": {motion_type: 1.0},
+    }
+    return _ensure_dynamic_in_registry("camera", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache)
 
 
 def ensure_dynamic_transition_in_registry(
@@ -514,6 +570,7 @@ def ensure_dynamic_transition_in_registry(
     source_prompt: str = "",
     config: dict[str, Any] | None = None,
     out_novel: list[dict[str, Any]] | None = None,
+    registry_cache: dict[str, dict[str, Any]] | None = None,
 ) -> str | None:
     """Add transition (type, duration) to dynamic registry if novel."""
     trans = window.get("transition", {})
@@ -522,7 +579,7 @@ def ensure_dynamic_transition_in_registry(
     key = _transition_key(trans)
     payload = {"type": trans.get("type", "cut"), "duration_seconds": trans.get("duration_seconds", trans.get("duration", 0))}
     api = {"key": key, "type": payload["type"], "duration_seconds": payload["duration_seconds"]}
-    return _ensure_dynamic_in_registry("transition", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api)
+    return _ensure_dynamic_in_registry("transition", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache)
 
 
 def ensure_dynamic_depth_in_registry(
@@ -531,6 +588,7 @@ def ensure_dynamic_depth_in_registry(
     source_prompt: str = "",
     config: dict[str, Any] | None = None,
     out_novel: list[dict[str, Any]] | None = None,
+    registry_cache: dict[str, dict[str, Any]] | None = None,
 ) -> str | None:
     """Add depth (parallax, layer_count) to dynamic registry if novel."""
     dep = window.get("depth", {})
@@ -539,7 +597,7 @@ def ensure_dynamic_depth_in_registry(
     key = _depth_key(dep)
     payload = {"parallax_strength": dep.get("parallax_strength", 0), "layer_count": dep.get("layer_count", 1)}
     api = {"key": key, "parallax_strength": payload["parallax_strength"], "layer_count": payload["layer_count"]}
-    return _ensure_dynamic_in_registry("depth", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api)
+    return _ensure_dynamic_in_registry("depth", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache)
 
 
 def ensure_dynamic_audio_semantic_in_registry(
@@ -548,6 +606,7 @@ def ensure_dynamic_audio_semantic_in_registry(
     source_prompt: str = "",
     config: dict[str, Any] | None = None,
     out_novel: list[dict[str, Any]] | None = None,
+    registry_cache: dict[str, dict[str, Any]] | None = None,
 ) -> str | None:
     """Add audio_semantic (role, mood, tempo) to dynamic registry if novel."""
     audio = window.get("audio_semantic", {})
@@ -571,7 +630,7 @@ def ensure_dynamic_audio_semantic_in_registry(
     depth_breakdown: dict[str, Any] = {"role": role, "mood": mood or "neutral", "tempo": tempo or "medium", "presence": presence or "ambient"}
     payload["depth_breakdown"] = depth_breakdown
     api = {"key": key, "role": role, "mood": mood, "tempo": tempo, "depth_breakdown": depth_breakdown}
-    return _ensure_dynamic_in_registry("audio_semantic", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api)
+    return _ensure_dynamic_in_registry("audio_semantic", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache)
 
 
 def grow_from_video(
@@ -713,40 +772,179 @@ def grow_dynamic_from_video(
     out_transition = novel_for_sync["transition"] if collect_novel_for_sync else None
     out_depth = novel_for_sync["depth"] if collect_novel_for_sync else None
 
+    registry_cache: dict[str, dict[str, Any]] = {}
+
     for window in extract_dynamic_per_window(
         path, window_seconds=window_seconds, max_frames=max_frames, sample_every=sample_every
     ):
         if ensure_dynamic_motion_in_registry(window, source_prompt=prompt, config=config, out_novel=out_motion):
             added["dynamic_motion"] += 1
-        if ensure_dynamic_time_in_registry(window, source_prompt=prompt, config=config, out_novel=out_time):
+        if ensure_dynamic_time_in_registry(window, source_prompt=prompt, config=config, out_novel=out_time, registry_cache=registry_cache):
             added["dynamic_time"] += 1
-        if ensure_dynamic_gradient_in_registry(window, source_prompt=prompt, config=config, out_novel=out_gradient):
+        if ensure_dynamic_gradient_in_registry(window, source_prompt=prompt, config=config, out_novel=out_gradient, registry_cache=registry_cache):
             added["dynamic_gradient"] += 1
-        if ensure_dynamic_camera_in_registry(window, source_prompt=prompt, config=config, out_novel=out_camera):
+        if ensure_dynamic_camera_in_registry(window, source_prompt=prompt, config=config, out_novel=out_camera, registry_cache=registry_cache):
             added["dynamic_camera"] += 1
-        if ensure_dynamic_lighting_in_registry(window, source_prompt=prompt, config=config, out_novel=out_lighting):
+        if ensure_dynamic_lighting_in_registry(window, source_prompt=prompt, config=config, out_novel=out_lighting, registry_cache=registry_cache):
             added["dynamic_lighting"] += 1
-        if ensure_dynamic_composition_in_registry(window, source_prompt=prompt, config=config, out_novel=out_composition):
+        if ensure_dynamic_composition_in_registry(window, source_prompt=prompt, config=config, out_novel=out_composition, registry_cache=registry_cache):
             added["dynamic_composition"] += 1
-        if ensure_dynamic_graphics_in_registry(window, source_prompt=prompt, config=config, out_novel=out_graphics):
+        if ensure_dynamic_graphics_in_registry(window, source_prompt=prompt, config=config, out_novel=out_graphics, registry_cache=registry_cache):
             added["dynamic_graphics"] += 1
-        if ensure_dynamic_temporal_in_registry(window, source_prompt=prompt, config=config, out_novel=out_temporal):
+        if ensure_dynamic_temporal_in_registry(window, source_prompt=prompt, config=config, out_novel=out_temporal, registry_cache=registry_cache):
             added["dynamic_temporal"] += 1
         if ensure_dynamic_technical_in_registry(
-            window, width=width, height=height, fps=fps, source_prompt=prompt, config=config, out_novel=out_technical
+            window, width=width, height=height, fps=fps, source_prompt=prompt, config=config, out_novel=out_technical, registry_cache=registry_cache
         ):
             added["dynamic_technical"] += 1
-        if ensure_dynamic_audio_semantic_in_registry(window, source_prompt=prompt, config=config, out_novel=out_audio_semantic):
+        if ensure_dynamic_audio_semantic_in_registry(window, source_prompt=prompt, config=config, out_novel=out_audio_semantic, registry_cache=registry_cache):
             added["dynamic_audio_semantic"] += 1
-        if ensure_dynamic_transition_in_registry(window, source_prompt=prompt, config=config, out_novel=out_transition):
+        if ensure_dynamic_transition_in_registry(window, source_prompt=prompt, config=config, out_novel=out_transition, registry_cache=registry_cache):
             added["dynamic_transition"] += 1
-        if ensure_dynamic_depth_in_registry(window, source_prompt=prompt, config=config, out_novel=out_depth):
+        if ensure_dynamic_depth_in_registry(window, source_prompt=prompt, config=config, out_novel=out_depth, registry_cache=registry_cache):
             added["dynamic_depth"] += 1
 
     if spec is not None:
         audio_semantic = derive_audio_semantic_from_spec(spec)
         fake_window = {"audio_semantic": audio_semantic}
-        if ensure_dynamic_audio_semantic_in_registry(fake_window, source_prompt=prompt, config=config, out_novel=out_audio_semantic):
+        if ensure_dynamic_audio_semantic_in_registry(fake_window, source_prompt=prompt, config=config, out_novel=out_audio_semantic, registry_cache=registry_cache):
+            added["dynamic_audio_semantic"] += 1
+
+    return added, novel_for_sync
+
+
+def grow_all_from_video(
+    video_path: str | Path,
+    *,
+    prompt: str = "",
+    config: dict[str, Any] | None = None,
+    max_frames: int | None = None,
+    sample_every: int = 1,
+    window_seconds: float = 1.0,
+    collect_novel_for_sync: bool = False,
+    spec: Any = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """
+    Unified growth: single video read for both static and dynamic extraction.
+    Runs per-frame static growth (color, sound) and per-window dynamic growth
+    (motion, lighting, gradient, camera, etc.) in one pass.
+    Returns: (added, novel_for_sync) with combined counts and payloads.
+    """
+    added: dict[str, Any] = {
+        "static_colors": 0,
+        "static_sound": 0,
+        "dynamic_motion": 0,
+        "dynamic_time": 0,
+        "dynamic_gradient": 0,
+        "dynamic_camera": 0,
+        "dynamic_lighting": 0,
+        "dynamic_composition": 0,
+        "dynamic_graphics": 0,
+        "dynamic_temporal": 0,
+        "dynamic_technical": 0,
+        "dynamic_audio_semantic": 0,
+        "dynamic_transition": 0,
+        "dynamic_depth": 0,
+    }
+    novel_for_sync: dict[str, Any] = {
+        "static_colors": [],
+        "static_sound": [],
+        "motion": [],
+        "time": [],
+        "gradient": [],
+        "camera": [],
+        "lighting": [],
+        "composition": [],
+        "graphics": [],
+        "temporal": [],
+        "technical": [],
+        "audio_semantic": [],
+        "transition": [],
+        "depth": [],
+    }
+    path = Path(video_path)
+    if not path.exists():
+        return added, novel_for_sync
+
+    ensure_static_primitives_seeded(config)
+    ensure_dynamic_primitives_seeded(config)
+
+    try:
+        frames, fps, width, height, audio_segments = read_video_once(
+            path, max_frames=max_frames, sample_every=sample_every
+        )
+    except (FileNotFoundError, ValueError) as e:
+        import logging
+        logging.getLogger(__name__).warning("grow_all_from_video: could not read video: %s", e)
+        return added, novel_for_sync
+
+    out_static_colors = novel_for_sync["static_colors"] if collect_novel_for_sync else None
+    out_sound = novel_for_sync["static_sound"] if collect_novel_for_sync else None
+
+    for frame in _extract_static_from_preloaded(frames, fps, audio_segments):
+        if ensure_static_color_in_registry(
+            frame.get("color", {}),
+            source_prompt=prompt,
+            config=config,
+            out_novel=out_static_colors,
+        ):
+            added["static_colors"] += 1
+        if ensure_static_sound_in_registry(
+            frame.get("sound", {}), source_prompt=prompt, config=config, out_novel=out_sound
+        ):
+            added["static_sound"] += 1
+
+    out_motion = novel_for_sync["motion"] if collect_novel_for_sync else None
+    out_time = novel_for_sync["time"] if collect_novel_for_sync else None
+    out_gradient = novel_for_sync["gradient"] if collect_novel_for_sync else None
+    out_camera = novel_for_sync["camera"] if collect_novel_for_sync else None
+    out_lighting = novel_for_sync["lighting"] if collect_novel_for_sync else None
+    out_composition = novel_for_sync["composition"] if collect_novel_for_sync else None
+    out_graphics = novel_for_sync["graphics"] if collect_novel_for_sync else None
+    out_temporal = novel_for_sync["temporal"] if collect_novel_for_sync else None
+    out_technical = novel_for_sync["technical"] if collect_novel_for_sync else None
+    out_audio_semantic = novel_for_sync["audio_semantic"] if collect_novel_for_sync else None
+    out_transition = novel_for_sync["transition"] if collect_novel_for_sync else None
+    out_depth = novel_for_sync["depth"] if collect_novel_for_sync else None
+
+    registry_cache: dict[str, dict[str, Any]] = {}
+
+    for window in _extract_dynamic_from_preloaded(
+        frames, fps, width, height,
+        window_seconds=window_seconds,
+        audio_segments=audio_segments,
+    ):
+        if ensure_dynamic_motion_in_registry(window, source_prompt=prompt, config=config, out_novel=out_motion, registry_cache=registry_cache):
+            added["dynamic_motion"] += 1
+        if ensure_dynamic_time_in_registry(window, source_prompt=prompt, config=config, out_novel=out_time, registry_cache=registry_cache):
+            added["dynamic_time"] += 1
+        if ensure_dynamic_gradient_in_registry(window, source_prompt=prompt, config=config, out_novel=out_gradient, registry_cache=registry_cache):
+            added["dynamic_gradient"] += 1
+        if ensure_dynamic_camera_in_registry(window, source_prompt=prompt, config=config, out_novel=out_camera, registry_cache=registry_cache):
+            added["dynamic_camera"] += 1
+        if ensure_dynamic_lighting_in_registry(window, source_prompt=prompt, config=config, out_novel=out_lighting, registry_cache=registry_cache):
+            added["dynamic_lighting"] += 1
+        if ensure_dynamic_composition_in_registry(window, source_prompt=prompt, config=config, out_novel=out_composition, registry_cache=registry_cache):
+            added["dynamic_composition"] += 1
+        if ensure_dynamic_graphics_in_registry(window, source_prompt=prompt, config=config, out_novel=out_graphics, registry_cache=registry_cache):
+            added["dynamic_graphics"] += 1
+        if ensure_dynamic_temporal_in_registry(window, source_prompt=prompt, config=config, out_novel=out_temporal, registry_cache=registry_cache):
+            added["dynamic_temporal"] += 1
+        if ensure_dynamic_technical_in_registry(
+            window, width=width, height=height, fps=fps, source_prompt=prompt, config=config, out_novel=out_technical, registry_cache=registry_cache
+        ):
+            added["dynamic_technical"] += 1
+        if ensure_dynamic_audio_semantic_in_registry(window, source_prompt=prompt, config=config, out_novel=out_audio_semantic, registry_cache=registry_cache):
+            added["dynamic_audio_semantic"] += 1
+        if ensure_dynamic_transition_in_registry(window, source_prompt=prompt, config=config, out_novel=out_transition, registry_cache=registry_cache):
+            added["dynamic_transition"] += 1
+        if ensure_dynamic_depth_in_registry(window, source_prompt=prompt, config=config, out_novel=out_depth, registry_cache=registry_cache):
+            added["dynamic_depth"] += 1
+
+    if spec is not None:
+        audio_semantic = derive_audio_semantic_from_spec(spec)
+        fake_window = {"audio_semantic": audio_semantic}
+        if ensure_dynamic_audio_semantic_in_registry(fake_window, source_prompt=prompt, config=config, out_novel=out_audio_semantic, registry_cache=registry_cache):
             added["dynamic_audio_semantic"] += 1
 
     return added, novel_for_sync

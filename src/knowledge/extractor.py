@@ -193,7 +193,15 @@ def extract_from_video(
 
     # Exact transformed value: dominant RGB as it appears in the video (no mapping to palette name for storage)
     dom = dominant_colors(frames[mid_idx], n=1)
-    dominant_rgb = dom[0] if dom else (0.0, 0.0, 0.0)
+    raw_rgb = dom[0] if dom else (0.0, 0.0, 0.0)
+    r_val = float(raw_rgb[0]) if len(raw_rgb) > 0 else 0.0
+    g_val = float(raw_rgb[1]) if len(raw_rgb) > 1 else 0.0
+    b_val = float(raw_rgb[2]) if len(raw_rgb) > 2 else 0.0
+    dominant_rgb = (
+        max(0.0, min(255.0, r_val)),
+        max(0.0, min(255.0, g_val)),
+        max(0.0, min(255.0, b_val)),
+    )
     closest_palette, palette_distance = _closest_palette(*dominant_rgb)  # display only
 
     # Normalize center of mass to 0-1 (frame coords are 0..frame_w-1, 0..frame_h-1)
@@ -201,9 +209,9 @@ def extract_from_video(
     cx_norm = cx / frame_w if frame_w else 0.5
     cy_norm = cy / frame_h if frame_h else 0.5
 
-    busyness = 0.5 * edge_den + 0.5 * spat_var
+    busyness = max(0.0, min(1.0, 0.5 * edge_den + 0.5 * spat_var))
 
-    total = max(hist_sum_r.sum() + hist_sum_g.sum() + hist_sum_b.sum(), 1e-9)
+    total = max(float(hist_sum_r.sum() + hist_sum_g.sum() + hist_sum_b.sum()), 1e-9)
     hist_r_norm = (hist_sum_r / total).tolist()
     hist_g_norm = (hist_sum_g / total).tolist()
     hist_b_norm = (hist_sum_b / total).tolist()

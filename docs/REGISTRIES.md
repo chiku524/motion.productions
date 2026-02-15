@@ -49,7 +49,7 @@ Each file is **human-readable JSON**: `_meta` describes the registry and aspect;
 
 **Depth %:** Pure blends store **depth_breakdown** = weights/densities of other pure elements. Dynamic entries use `primitive_depths` where available.
 
-**Discovery every run:** Every loop run calls `grow_from_video()` (static: primitives seeded, then per-frame color + sound from video), `grow_dynamic_from_video()` (dynamic: motion, time, **gradient**, **camera**, lighting, composition, graphics, temporal, technical, **audio_semantic** including spec-derived mood/tempo), and `grow_narrative_from_spec()` (narrative: primitives seeded, then spec/prompt values). New non-pure blends (e.g. new gradient type or camera motion from a window) are recorded whenever the window extraction produces a novel key.
+**Discovery every run:** Every loop run calls `grow_all_from_video()` (static + dynamic in one pass: primitives seeded, then per-frame color + sound, per-window motion, time, **gradient**, **camera**, lighting, composition, graphics, temporal, technical, **audio_semantic**, transition, depth) and `grow_narrative_from_spec()` (narrative: primitives seeded, then spec/prompt values). New non-pure blends (e.g. new gradient type or camera motion from a window) are recorded whenever the window extraction produces a novel key.
 
 ---
 
@@ -62,7 +62,7 @@ Each file is **human-readable JSON**: `_meta` describes the registry and aspect;
 | **Color** | R, G, B, opacity, depth_breakdown | Pure color per frame (dominant RGB). Pure blends record depth % = weights of other pure colors. **Every color primitive** is seeded: black, white, red, green, blue, yellow, cyan, magenta, orange, purple, pink, aqua, brown, navy, teal, lime, olive, maroon, coral, gold, violet, indigo, salmon, crimson, beige, tan, ivory, silver, gray, etc. |
 | **Sound** | noise, strength_pct, amplitude, tone, timbre, depth_breakdown | **Actual sound noises** (named). **low/mid/high** are **measurements** (frequency band); **strength_pct** is recorded per entry. Primitives = silence + rumble, tone, hiss. Kick, snare, bass, melody, etc. → **dynamic** audio_semantic. |
 
-**Primitives:** `STATIC_COLOR_PRIMITIVES` (60+ named colors) and `STATIC_SOUND_PRIMITIVES` (silence + rumble/tone/hiss at strength bands) in `static_registry.py`; seeded at start of `grow_from_video()` via `ensure_static_primitives_seeded()`.
+**Primitives:** `STATIC_COLOR_PRIMITIVES` (60+ named colors) and `STATIC_SOUND_PRIMITIVES` (silence + rumble/tone/hiss at strength bands) in `static_registry.py`; seeded at start of `grow_all_from_video()` via `ensure_static_primitives_seeded()`.
 
 **Code:** `src/knowledge/static_registry.py`, `extract_static_per_frame()`, `ensure_static_color_in_registry()`, `ensure_static_sound_in_registry()`.
 
@@ -83,9 +83,9 @@ Each file is **human-readable JSON**: `_meta` describes the registry and aspect;
 | **Transition** | type, duration | Cut, fade, dissolve, wipe between segments; novel values added. |
 | **Depth** | parallax_strength, layer_count | Depth/realism over the window; novel values added. |
 
-**Primitives:** Gradient, camera, transition, and audio_semantic (one per presence: silence, ambient, music, sfx, full) origins are seeded at start of `grow_dynamic_from_video()` via `ensure_dynamic_primitives_seeded()`. Motion/lighting/composition/etc. are discovery-only (no discrete origin list seeded).
+**Primitives:** Gradient, camera, transition, and audio_semantic (one per presence: silence, ambient, music, sfx, full) origins are seeded at start of `grow_all_from_video()` via `ensure_dynamic_primitives_seeded()`. Motion/lighting/composition/etc. are discovery-only (no discrete origin list seeded).
 
-**Code:** `extract_dynamic_per_window()` (gradient_direction + camera inference + lighting, etc.), `grow_dynamic_from_video()`. Whole-video composites in `learned_blends`.
+**Code:** `extract_dynamic_per_window()` (gradient_direction + camera inference + lighting, etc.), `grow_all_from_video()`. Whole-video composites in `learned_blends`.
 
 ### NARRATIVE — every film aspect (full prompt coverage)
 
@@ -141,7 +141,7 @@ Each file is **human-readable JSON**: `_meta` describes the registry and aspect;
 **Extraction process:**
 
 1. **Static:** Primitives are seeded first (`ensure_static_primitives_seeded`). For each **frame**, extract color and sound (from decoded audio: amplitude, tone). For each value not in the static registry → add it and assign a name. Spec-derived sound is **not** added to static; it goes to dynamic audio_semantic.
-2. **Dynamic:** Primitives (gradient, camera, transition) seeded first. For each **window**, extract motion, time, gradient, camera, **lighting** (brightness, contrast, saturation), composition, graphics, temporal, technical, transition, depth. When spec is present, add audio_semantic (role + mood + tempo). Every novel non-pure value → add with generated name when unrecognized.
+2. **Dynamic:** Primitives (gradient, camera, transition) seeded first via `ensure_dynamic_primitives_seeded()`. For each **window**, extract motion, time, gradient, camera, **lighting** (brightness, contrast, saturation), composition, graphics, temporal, technical, transition, depth. When spec is present, add audio_semantic (role + mood + tempo). Every novel non-pure value → add with generated name when unrecognized. All via `grow_all_from_video()`.
 3. **Narrative:** Primitives from NARRATIVE_ORIGINS seeded first. From spec (and prompt); `grow_narrative_from_spec()` adds genre, mood, themes, plots, settings, **style**, scene_type.
 
 Code: `src/knowledge/extractor_per_instance.py`, `growth_per_instance.py`, `narrative_registry.py`, `static_registry.py` (STATIC_*_PRIMITIVES).
@@ -151,6 +151,7 @@ Code: `src/knowledge/extractor_per_instance.py`, `growth_per_instance.py`, `narr
 ## See also
 
 - **[REGISTRY_FOUNDATION.md](REGISTRY_FOUNDATION.md)** — Authoritative foundation: four registries, depth_breakdown, name-generator (semantic/name-like), 100% precise & accurate.
+- **[LOOP_STANDARDS.md](LOOP_STANDARDS.md)** — Set algorithms and functions for interpretation loop (language standard) and video loop (MP4 aspects); both grow from origin/primitive + extracted values.
 - [NAME_GENERATOR.md](NAME_GENERATOR.md) — Algorithm for sensible, semantic or name-like short names.
 - [MP4_ASPECTS.md](MP4_ASPECTS.md) — Every aspect of a complete MP4; frame/window model.
 - [WORKFLOWS_AND_REGISTRIES.md](WORKFLOWS_AND_REGISTRIES.md) — Colors and audio; workflow details.

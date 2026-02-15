@@ -519,12 +519,12 @@ function renderRegistries(data) {
       <h3 class="registries-pane-title">Blended — Gradient (canonical → discoveries)</h3>
       <p class="registries-primitives">Canonical: ${escapeHtml((dynamicCanonical.gradient_type || []).join(', ') || '—')}</p>
       ${dynamic.gradient && dynamic.gradient.length
-        ? registriesTable(['Name', 'Key', 'Depth %', 'Depth vs primitives'], dynamic.gradient.map((g) => [g.name, g.key, (g.depth_pct != null ? g.depth_pct.toFixed(1) : '') + '%', depthBreakdownStr(g.depth_breakdown)]))
+        ? registriesTable(['Name', 'Key', 'Depth %', 'Depths towards primitives'], dynamic.gradient.map((g) => [g.name, g.key, (g.depth_pct != null ? g.depth_pct.toFixed(1) : '') + '%', depthBreakdownStr(g.depth_breakdown)]))
         : '<p class="registries-empty">No gradient discoveries yet.</p>'}
       <h3 class="registries-pane-title">Blended — Camera</h3>
       <p class="registries-primitives">Canonical: ${escapeHtml((dynamicCanonical.camera_motion || []).join(', ') || '—')}</p>
       ${dynamic.camera && dynamic.camera.length
-        ? registriesTable(['Name', 'Key', 'Depth %', 'Depth vs primitives'], dynamic.camera.map((c) => [c.name, c.key, (c.depth_pct != null ? c.depth_pct.toFixed(1) : '') + '%', depthBreakdownStr(c.depth_breakdown)]))
+        ? registriesTable(['Name', 'Key', 'Depth %', 'Depths towards primitives'], dynamic.camera.map((c) => [c.name, c.key, (c.depth_pct != null ? c.depth_pct.toFixed(1) : '') + '%', depthBreakdownStr(c.depth_breakdown)]))
         : '<p class="registries-empty">No camera discoveries yet.</p>'}
       <h3 class="registries-pane-title">Blended — Motion</h3>
       <p class="registries-primitives">Canonical: ${escapeHtml((dynamicCanonical.motion || []).join(', ') || '—')}</p>
@@ -534,7 +534,7 @@ function renderRegistries(data) {
       <h3 class="registries-pane-title">Blended — Sound</h3>
       <p class="registries-primitives">Canonical: ${escapeHtml((dynamicCanonical.sound || []).join(', ') || '—')}</p>
       ${dynamic.sound && dynamic.sound.length
-        ? registriesTable(['Name', 'Key', 'Depth %', 'Depth vs primitives'], dynamic.sound.map((s) => [
+        ? registriesTable(['Name', 'Key', 'Depth %', 'Depths towards primitives'], dynamic.sound.map((s) => [
             s.name || '—',
             typeof s.key === 'string' ? s.key : (s.tempo || s.mood || s.presence || '—'),
             (s.depth_pct != null ? s.depth_pct.toFixed(1) : '') + '%',
@@ -543,11 +543,11 @@ function renderRegistries(data) {
         : '<p class="registries-empty">No sound discoveries yet.</p>'}
       <h3 class="registries-pane-title">Blended — Colors (learned)</h3>
       ${dynamic.colors && dynamic.colors.length
-        ? registriesTable(['Key', 'Name', 'Count', 'Depth %', 'Depth vs primitives'], dynamic.colors.map((c) => [c.key, c.name, c.count, (c.depth_pct != null ? c.depth_pct.toFixed(1) : '') + '%', depthBreakdownStr(c.depth_breakdown)]))
+        ? registriesTable(['Key', 'Name', 'Count', 'Depth %', 'Depths towards primitives'], dynamic.colors.map((c) => [c.key, c.name, c.count, (c.depth_pct != null ? c.depth_pct.toFixed(1) : '') + '%', depthBreakdownStr(c.depth_breakdown)]))
         : '<p class="registries-empty">No learned colors yet.</p>'}
       <h3 class="registries-pane-title">Blended — Blends (other)</h3>
       ${dynamic.blends && dynamic.blends.length
-        ? registriesTable(['Name', 'Domain', 'Key', 'Depth %', 'Depth vs primitives'], dynamic.blends.map((b) => [b.name, b.domain || '—', (b.key || '').slice(0, 40), (b.depth_pct != null ? b.depth_pct.toFixed(1) : '') + '%', depthBreakdownStr(b.depth_breakdown)]))
+        ? registriesTable(['Name', 'Domain', 'Key', 'Depth %', 'Depths towards primitives'], dynamic.blends.map((b) => [b.name, b.domain || '—', (b.key || '').slice(0, 40), (b.depth_pct != null ? b.depth_pct.toFixed(1) : '') + '%', depthBreakdownStr(b.depth_breakdown)]))
         : '<p class="registries-empty">No other blends yet.</p>'}
     </div>`;
 

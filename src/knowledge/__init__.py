@@ -26,7 +26,7 @@ from .blend_names import generate_blend_name, generate_sensible_name
 from .domain_extraction import extract_to_domains, analysis_dict_to_domains
 from .name_reserve import refill, take, reserve_status, ensure_reserve
 from .remote_sync import grow_and_sync_to_api, post_discoveries, post_static_discoveries, post_dynamic_discoveries, post_narrative_discoveries
-from .growth_per_instance import grow_from_video, grow_dynamic_from_video
+from .growth_per_instance import grow_from_video, grow_dynamic_from_video, grow_all_from_video
 
 __all__ = [
     "BaseKnowledgeExtract",

@@ -946,7 +946,7 @@ body {
   color: var(--color-text-heading);
   background: rgba(0,0,0,0.03);
 }
-/* Prevent "Depth vs primitives" (last col) from dominating; constrain width so other cols don't wrap awkwardly */
+/* Prevent "Depths towards primitives" (last col) from dominating; constrain width so other cols don't wrap awkwardly */
 .registries-table th:last-child,
 .registries-table td:last-child {
   width: 22%;

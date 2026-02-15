@@ -95,7 +95,11 @@ class InterpretedInstruction:
         return d
 
     def to_api_dict(self) -> dict[str, Any]:
-        """Full serialization for API/D1 storage (interpretation registry). JSON-safe."""
+        """
+        Full serialization for API/D1 storage (interpretation registry). JSON-safe.
+        Includes all creation-critical fields: palette_hints, motion_hints, color_primitive_lists,
+        avoid_motion, avoid_palette, gradient_type, camera_motion, lighting, etc.
+        """
         d = asdict(self)
         # Tuples → lists for JSON
         if "color_primitive_lists" in d and d["color_primitive_lists"]:
@@ -104,10 +108,21 @@ class InterpretedInstruction:
 
     @classmethod
     def from_api_dict(cls, d: dict[str, Any]) -> "InterpretedInstruction":
-        """Reconstruct from API/D1 JSON (e.g. for-creation interpretation_prompts)."""
+        """
+        Reconstruct from API/D1 JSON (e.g. for-creation interpretation_prompts).
+        Handles partial data: missing fields use dataclass defaults.
+        Required for creation: palette_name, motion_type, intensity.
+        """
+        if not isinstance(d, dict):
+            d = {}
+        d = dict(d)
         if "color_primitive_lists" in d and d["color_primitive_lists"]:
-            d = {**d, "color_primitive_lists": [tuple(tuple(c) for c in row) for row in d["color_primitive_lists"]]}
-        # Only pass keys that InterpretedInstruction expects
-        field_names = {f.name for f in cls.__dataclass_fields__}
+            d["color_primitive_lists"] = [tuple(tuple(c) for c in row) for row in d["color_primitive_lists"]]
+        # Ensure required fields have fallbacks for partial stored data
+        from ..procedural.data.keywords import DEFAULT_PALETTE, DEFAULT_MOTION, DEFAULT_INTENSITY
+        d.setdefault("palette_name", DEFAULT_PALETTE)
+        d.setdefault("motion_type", DEFAULT_MOTION)
+        d.setdefault("intensity", DEFAULT_INTENSITY)
+        field_names = set(cls.__dataclass_fields__)
         kwargs = {k: v for k, v in d.items() if k in field_names}
         return cls(**kwargs)

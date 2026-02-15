@@ -8,6 +8,7 @@ from typing import Any
 
 from .schema import InterpretedInstruction
 from .parser import _merge_linguistic
+from .language_standard import infer_variant_type as _infer_variant_type
 from ..procedural.data.keywords import (
     KEYWORD_TO_PALETTE,
     KEYWORD_TO_MOTION,
@@ -80,7 +81,7 @@ def extract_linguistic_mappings(
                         "span": w,
                         "canonical": val,
                         "domain": domain,
-                        "variant_type": infer_variant_type(w, val),
+                        "variant_type": _infer_variant_type(w, val),
                     })
 
     # Tone/style fallback: if instruction has tone and prompt has mood word
@@ -113,17 +114,5 @@ def extract_linguistic_mappings(
 
 
 def infer_variant_type(span: str, canonical: str) -> str:
-    """Infer variant_type from span vs canonical (slang, dialect, synonym)."""
-    s, c = span.lower(), canonical.lower()
-    if s == c:
-        return "synonym"
-    # Dialect: color/colour, gray/grey
-    dialect_pairs = [("color", "colour"), ("gray", "grey")]
-    for a, b in dialect_pairs:
-        if (s == a and c == b) or (s == b and c == a):
-            return "dialect"
-    # Slang: lit->bright, chill->calm
-    slang = {"lit", "chill", "vibing", "poppin", "lowkey", "glowy", "mellow"}
-    if s in slang:
-        return "slang"
-    return "synonym"
+    """Infer variant_type from span vs canonical (language standard)."""
+    return _infer_variant_type(span, canonical)

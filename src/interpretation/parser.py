@@ -45,6 +45,11 @@ from ..procedural.data.keywords import (
     DEFAULT_AUDIO_PRESENCE,
 )
 from ..procedural.data.palettes import PALETTES
+from .language_standard import (
+    BUILTIN_LINGUISTIC,
+    merge_linguistic_lookup,
+    normalize_prompt_for_interpretation,
+)
 
 # Duration extraction: "5 seconds", "10s", "15 sec", "2 minutes", "1 min"
 _DURATION_PATTERN = re.compile(
@@ -60,13 +65,6 @@ _STYLE_KEYWORDS: set[str] = {"cinematic", "anime", "abstract", "minimal", "reali
 
 # Tone keywords (optional)
 _TONE_KEYWORDS: set[str] = {"dreamy", "dark", "bright", "calm", "energetic", "moody"}
-
-# Built-in slang/dialect mappings (seed for linguistic registry)
-BUILTIN_LINGUISTIC: dict[str, dict[str, str]] = {
-    "palette": {"lit": "warm_sunset", "chill": "ocean", "vibing": "neon", "mellow": "dreamy", "lowkey": "night"},
-    "motion": {"chill": "slow", "lit": "pulse", "mellow": "flow", "vibing": "pulse"},
-    "lighting": {"lit": "documentary", "lowkey": "noir", "chill": "golden_hour"},
-}
 
 # Negation: "not X", "no X", "avoid X"
 _NEGATION_PATTERN = re.compile(
@@ -113,13 +111,8 @@ def _extract_negations(prompt: str) -> tuple[list[str], list[str]]:
 
 
 def _merge_linguistic(domain: str, base_dict: dict[str, str], linguistic: dict[str, dict[str, str]] | None) -> dict[str, str]:
-    """Merge base keyword dict with built-in + fetched linguistic registry for domain."""
-    out = dict(base_dict)
-    if domain in BUILTIN_LINGUISTIC:
-        out.update(BUILTIN_LINGUISTIC[domain])
-    if linguistic and domain in linguistic:
-        out.update(linguistic[domain])
-    return out
+    """Merge base keyword dict with built-in + fetched linguistic registry (language standard)."""
+    return merge_linguistic_lookup(domain, base_dict, BUILTIN_LINGUISTIC, linguistic)
 
 
 def _resolve_palette(
@@ -446,6 +439,16 @@ def _resolve_tone(words: list[str], prompt: str) -> str | None:
     return None
 
 
+def _validate_prompt(prompt: str) -> str:
+    """Normalize and validate prompt for accuracy and precision."""
+    if not isinstance(prompt, str):
+        return ""
+    s = prompt.strip()
+    if len(s) > 2000:
+        s = s[:2000].rstrip()
+    return s
+
+
 def interpret_user_prompt(
     prompt: str,
     *,
@@ -458,8 +461,9 @@ def interpret_user_prompt(
 
     Parses: palette, motion, intensity, duration, style, tone, negations.
     Returns an InterpretedInstruction with resolved values.
+    Validates prompt input for accuracy and precision.
     """
-    prompt = (prompt or "").strip()
+    prompt = normalize_prompt_for_interpretation(_validate_prompt(prompt or ""))
     raw_lower = prompt.lower()
 
     words = _extract_words(prompt)

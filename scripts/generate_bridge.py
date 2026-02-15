@@ -108,9 +108,10 @@ def process_job(job: dict, api_base: str, config: dict, learn: bool) -> bool:
                             api_base,
                             novel_for_sync.get("static_colors", []),
                             novel_for_sync.get("static_sound"),
+                            job_id=job_id,
                         )
                         print(f"  Static discoveries synced to D1")
-                    post_dynamic_discoveries(api_base, novel_for_sync)
+                    post_dynamic_discoveries(api_base, novel_for_sync, job_id=job_id)
             except Exception as e:
                 print(f"  Per-instance growth failed: {e}")
             # Narrative registry: themes, plots, settings from spec + instruction (novel → add; unnamed → name-generator)
@@ -125,18 +126,26 @@ def process_job(job: dict, api_base: str, config: dict, learn: bool) -> bool:
                 if any(narrative_added.values()):
                     print(f"  Narrative registry: {sum(narrative_added.values())} new — {narrative_added}")
                 if api_base and any(narrative_novel.get(a) for a in ("genre", "mood", "plots", "settings", "themes", "scene_type")):
-                    post_narrative_discoveries(api_base, narrative_novel)
+                    post_narrative_discoveries(api_base, narrative_novel, job_id=job_id)
                     print(f"  Narrative discoveries synced to D1")
             except Exception as e:
                 print(f"  Narrative growth failed: {e}")
             # Whole-video discoveries (blends, colors, motion, etc.) to D1/KV — pass spec for camera/audio/narrative
             try:
-                sync_resp = grow_and_sync_to_api(analysis_dict, prompt=prompt, api_base=api_base, spec=spec)
+                sync_resp = grow_and_sync_to_api(
+                    analysis_dict, prompt=prompt, api_base=api_base, spec=spec, job_id=job_id
+                )
                 print(f"  Logged for learning (D1 + KV)")
                 if sync_resp.get("results"):
                     print(f"  Discoveries recorded: {sync_resp.get('results')}")
             except Exception as e:
                 print(f"  Learning run logged; discoveries sync failed: {e}")
+            # Guaranteed discovery run recording for diagnostics (even when sync paths failed)
+            try:
+                from src.knowledge.remote_sync import post_discoveries
+                post_discoveries(api_base, {"job_id": job_id})
+            except Exception:
+                pass
         return True
     except Exception as e:
         print(f"  Error: {e}")

@@ -5,6 +5,26 @@ When api_base is set, growth persists to D1 instead of local JSON.
 from typing import Any
 
 
+def growth_metrics(added: dict[str, Any]) -> dict[str, Any]:
+    """
+    Summary metrics from a growth run. Use for logging/diagnostics.
+    Returns: total_added, static_added, dynamic_added, by_aspect.
+    """
+    static_keys = ("static_colors", "static_sound")
+    dynamic_prefix = "dynamic_"
+    static_total = sum(added.get(k, 0) for k in static_keys)
+    dynamic_total = sum(
+        v for k, v in added.items()
+        if k.startswith(dynamic_prefix) and isinstance(v, (int, float))
+    )
+    return {
+        "total_added": static_total + dynamic_total,
+        "static_added": static_total,
+        "dynamic_added": dynamic_total,
+        "by_aspect": {k: v for k, v in added.items() if v},
+    }
+
+
 def post_discoveries(
     api_base: str,
     discoveries: dict[str, Any],
@@ -76,6 +96,43 @@ def post_dynamic_discoveries(
     return post_discoveries(api_base, discoveries, job_id=job_id)
 
 
+def post_all_discoveries(
+    api_base: str,
+    static_colors: list[dict[str, Any]],
+    static_sound: list[dict[str, Any]],
+    dynamic_novel: dict[str, list[dict[str, Any]]],
+    narrative_novel: dict[str, list[dict[str, Any]]] | None = None,
+    *,
+    job_id: str | None = None,
+) -> dict[str, Any]:
+    """
+    Batch POST static + dynamic + narrative discoveries in a single API call.
+    Reduces round-trips when all three registries have new entries.
+    """
+    discoveries: dict[str, Any] = {
+        "static_colors": static_colors or [],
+        "static_sound": static_sound or [],
+    }
+    dynamic_keys = ("motion", "time", "gradient", "camera", "lighting", "composition", "graphics", "temporal", "technical", "audio_semantic", "transition", "depth")
+    for k in dynamic_keys:
+        if dynamic_novel.get(k):
+            discoveries[k] = dynamic_novel[k]
+    if narrative_novel:
+        discoveries["narrative"] = narrative_novel
+    if job_id:
+        discoveries["job_id"] = job_id
+
+    has_any = bool(static_colors or static_sound)
+    has_any = has_any or any(dynamic_novel.get(k) for k in dynamic_keys)
+    has_any = has_any or bool(narrative_novel and any(narrative_novel.values()))
+    if not has_any:
+        # Still POST with job_id to record discovery run for diagnostics (API inserts discovery_runs row)
+        if job_id:
+            return post_discoveries(api_base, {"job_id": job_id})
+        return {}
+    return post_discoveries(api_base, discoveries, job_id=job_id)
+
+
 def grow_and_sync_to_api(
     analysis: dict[str, Any],
     *,
@@ -85,9 +142,14 @@ def grow_and_sync_to_api(
     job_id: str | None = None,
 ) -> dict[str, Any]:
     """
-    Extract discoveries from analysis and POST them to the API.
-    Uses D1/KV for persistence. When spec is provided, adds camera, transitions,
-    audio, and narrative (spec-intended values) to growth — all domains covered.
+    Whole-video composite growth: extract discoveries from analysis and POST to API.
+    Produces learned_colors, learned_motion, learned_blends (whole-video aggregates).
+
+    Distinct from per-instance growth (grow_all_from_video / post_all_discoveries):
+    - Per-instance: per-frame static (static_colors, static_sound) + per-window dynamic
+      (motion, lighting, gradient, etc.) + narrative. Single video read; batch POST.
+    - grow_and_sync_to_api: whole-video summary (dominant color, motion profile, blends).
+      Complements per-instance; both run in the loop. No overlap in static_colors/static_sound.
     """
     from .domain_extraction import analysis_dict_to_domains
     from .blend_depth import (
@@ -329,8 +391,10 @@ def grow_and_sync_to_api(
         transition_in = getattr(spec, "transition_in", "cut") or "cut"
         transition_out = getattr(spec, "transition_out", "cut") or "cut"
         transition_key = f"{transition_in}_{transition_out}"
+        trans_name = generate_blend_name("transitions", transition_key, existing_names=used_names)
+        used_names.add(trans_name)
         discoveries["blends"].append({
-            "name": "",
+            "name": trans_name,
             "domain": "transitions",
             "inputs": {"transition_in": transition_in, "transition_out": transition_out},
             "output": {"key": transition_key},

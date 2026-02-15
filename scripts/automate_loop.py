@@ -334,17 +334,16 @@ def run() -> None:
             ext = extract_from_video(path)
             analysis_dict = ext.to_dict()
 
-            # Per-frame static (growth) + per-window dynamic (recording) + narrative
+            # Unified growth: single video read for static + dynamic; batch sync
             try:
-                from src.knowledge.growth_per_instance import grow_from_video, grow_dynamic_from_video
+                from src.knowledge.growth_per_instance import grow_all_from_video
                 from src.knowledge.narrative_registry import grow_narrative_from_spec
                 from src.knowledge.remote_sync import (
                     grow_and_sync_to_api,
-                    post_static_discoveries,
-                    post_dynamic_discoveries,
-                    post_narrative_discoveries,
+                    post_all_discoveries,
+                    growth_metrics,
                 )
-                added, novel_for_sync = grow_from_video(
+                added, novel_for_sync = grow_all_from_video(
                     path,
                     prompt=prompt,
                     config=config,
@@ -355,35 +354,20 @@ def run() -> None:
                     spec=spec,
                 )
                 if any(added.values()):
-                    logger.info("Per-instance growth (static): %s", added)
-                # Growth in DYNAMIC registry (non-pure, multi-frame values; add novel with name)
-                dynamic_added, dynamic_novel = grow_dynamic_from_video(
-                    path,
-                    prompt=prompt,
-                    config=config,
-                    max_frames=None,
-                    sample_every=2,
-                    window_seconds=1.0,
-                    collect_novel_for_sync=bool(args.api_base),
-                    spec=spec,
+                    metrics = growth_metrics(added)
+                    logger.info("Growth: total=%s static=%s dynamic=%s aspects=%s", metrics["total_added"], metrics["static_added"], metrics["dynamic_added"], metrics["by_aspect"])
+                narrative_added, narrative_novel = grow_narrative_from_spec(
+                    spec, prompt=prompt, config=config, instruction=instruction, collect_novel_for_sync=True
                 )
-                if any(dynamic_added.values()):
-                    logger.info("Dynamic growth: %s", dynamic_added)
-                novel_for_sync = {**novel_for_sync, **dynamic_novel}
                 if args.api_base:
-                    if novel_for_sync.get("static_colors") or novel_for_sync.get("static_sound"):
-                        post_static_discoveries(
-                            args.api_base,
-                            novel_for_sync.get("static_colors", []),
-                            novel_for_sync.get("static_sound"),
-                            job_id=job_id,
-                        )
-                    post_dynamic_discoveries(args.api_base, novel_for_sync, job_id=job_id)
-                    narrative_added, narrative_novel = grow_narrative_from_spec(
-                        spec, prompt=prompt, config=config, instruction=instruction, collect_novel_for_sync=True
+                    post_all_discoveries(
+                        args.api_base,
+                        novel_for_sync.get("static_colors", []),
+                        novel_for_sync.get("static_sound") or [],
+                        novel_for_sync,
+                        narrative_novel,
+                        job_id=job_id,
                     )
-                    if any(narrative_novel.get(a) for a in ("genre", "mood", "plots", "settings", "themes", "style", "scene_type")):
-                        post_narrative_discoveries(args.api_base, narrative_novel, job_id=job_id)
             except APIError as e:
                 logger.warning("Per-instance or narrative sync failed (status=%s): %s", e.status_code, e)
             except Exception as e:
@@ -398,6 +382,14 @@ def run() -> None:
             except Exception as e:
                 print(f"  (discoveries sync: {e})")
 
+            # Guaranteed discovery run recording — ensures diagnostics show ✓ disc even when
+            # post_all_discoveries or grow_and_sync failed or threw before recording
+            try:
+                from src.knowledge.remote_sync import post_discoveries
+                post_discoveries(args.api_base, {"job_id": job_id})
+            except Exception:
+                pass
+
             try:
                 api_request_with_retry(args.api_base, "POST", "/api/learning", data={
                     "job_id": job_id,
@@ -408,7 +400,7 @@ def run() -> None:
                         "intensity": spec.intensity,
                     },
                     "analysis": analysis_dict,
-                }, timeout=30)
+                }, timeout=45)
             except APIError as e:
                 logger.warning("POST /api/learning failed (status=%s, path=%s): %s — run still counts as success", e.status_code, e.path, e)
                 print(f"  (learning log: {e})")

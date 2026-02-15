@@ -24,6 +24,18 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_DELAY_SECONDS = 10
 DEFAULT_QUEUE_LIMIT = 20
+CACHE_TTL_SECONDS = 90  # Cache knowledge and linguistic registry for 90s
+
+
+def _cached_fetch(cache_key: str, cache: dict, ttl: float, fetch_fn, *args, **kwargs):
+    """Return cached value if fresh; else fetch and cache."""
+    entry = cache.get(cache_key)
+    now = time.time()
+    if entry and (now - entry["ts"]) < ttl:
+        return entry["data"]
+    data = fetch_fn(*args, **kwargs)
+    cache[cache_key] = {"data": data, "ts": now}
+    return data
 
 
 def run() -> None:
@@ -60,10 +72,11 @@ def run() -> None:
     delay = args.delay if args.delay is not None else float(os.environ.get("INTERPRET_DELAY_SECONDS", DEFAULT_DELAY_SECONDS))
 
     from src.api_client import APIError, api_request_with_retry
-    from src.interpretation import interpret_user_prompt
+    from src.interpretation import interpret_user_prompt, filter_gibberish_prompts
     from src.interpretation.prompt_gen import generate_interpretation_prompt_batch
     from src.interpretation.linguistic import extract_linguistic_mappings
     from src.interpretation.linguistic_client import fetch_linguistic_registry, post_linguistic_growth
+    from src.knowledge.lookup import get_knowledge_for_creation
     from src.workflow_utils import setup_graceful_shutdown, start_health_server, request_shutdown
 
     setup_graceful_shutdown()
@@ -72,6 +85,7 @@ def run() -> None:
         start_health_server(health_port)
 
     api_base = args.api_base.rstrip("/")
+    cache: dict = {}  # TTL cache for knowledge and linguistic registry
     print("Interpretation worker started (no create/render)")
     print(f"API: {api_base}")
     print(f"Delay: {delay}s between cycles. Backfill: {'off' if args.no_backfill else 'on'}. Generate: {'off' if args.no_generate else 'on'}\n")
@@ -96,7 +110,10 @@ def run() -> None:
                 continue
 
             items = data.get("items", [])
-            linguistic_registry = fetch_linguistic_registry(api_base) if api_base else {}
+            linguistic_registry = (
+                _cached_fetch("linguistic", cache, CACHE_TTL_SECONDS, fetch_linguistic_registry, api_base)
+                if api_base else {}
+            )
             for item in items:
                 uid = item.get("id")
                 prompt = item.get("prompt", "").strip()
@@ -127,9 +144,13 @@ def run() -> None:
                         api_base, "GET", "/api/interpret/backfill-prompts?limit=50",
                         timeout=15,
                     )
-                    prompts = [p.strip() for p in backfill.get("prompts", []) if p and isinstance(p, str)]
+                    raw = [p.strip() for p in backfill.get("prompts", []) if p and isinstance(p, str)]
+                    prompts = filter_gibberish_prompts(raw, strict=True)
                     if prompts:
-                        linguistic_registry = fetch_linguistic_registry(api_base)
+                        linguistic_registry = _cached_fetch(
+                            "linguistic", cache, CACHE_TTL_SECONDS,
+                            fetch_linguistic_registry, api_base,
+                        )
                         batch: list[dict] = []
                         for prompt in prompts:
                             try:
@@ -166,11 +187,27 @@ def run() -> None:
                 except APIError as e:
                     logger.warning("GET /api/interpret/backfill-prompts failed: %s", e)
 
-            # 3) Generate & learn: generate prompts, interpret, extract, grow linguistic registry
+            # 3) Generate & learn: generate prompts (primitives + learned values), interpret, extract, grow
             if not args.no_generate and api_base:
                 try:
-                    linguistic_registry = fetch_linguistic_registry(api_base)
-                    generated = generate_interpretation_prompt_batch(5, avoid=set())
+                    knowledge = _cached_fetch(
+                        "knowledge", cache, CACHE_TTL_SECONDS,
+                        get_knowledge_for_creation, None, api_base=api_base,
+                    )
+                    interpretation_prompts = knowledge.get("interpretation_prompts", [])
+                    avoid = {
+                        p.get("prompt", "").strip()
+                        for p in interpretation_prompts
+                        if isinstance(p, dict) and p.get("prompt")
+                    }
+                    linguistic_registry = _cached_fetch(
+                        "linguistic", cache, CACHE_TTL_SECONDS,
+                        fetch_linguistic_registry, api_base,
+                    )
+                    raw_generated = generate_interpretation_prompt_batch(
+                        5, avoid=avoid, knowledge=knowledge
+                    )
+                    generated = filter_gibberish_prompts(raw_generated, strict=True)
                     all_extracted: list[dict] = []
                     for prompt in generated:
                         try:

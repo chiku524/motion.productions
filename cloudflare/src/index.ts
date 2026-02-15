@@ -503,9 +503,10 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
          WHERE j.prompt IS NOT NULL AND j.prompt != '' AND i.id IS NULL
          ORDER BY j.created_at DESC LIMIT ?`
       )
-        .bind(limit)
+        .bind(limit * 2)
         .all<{ prompt: string }>();
-      const prompts = (rows.results || []).map((r) => r.prompt);
+      const raw = (rows.results || []).map((r) => r.prompt);
+      const prompts = raw.filter((p) => !isGibberishPrompt(p, true)).slice(0, limit);
       return json({ prompts });
     }
 
@@ -525,6 +526,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       for (const it of toInsert) {
         const prompt = typeof it.prompt === "string" ? it.prompt.trim() : "";
         if (!prompt) continue;
+        if (isGibberishPrompt(prompt, true)) continue;
         const instruction = it.instruction && typeof it.instruction === "object" ? it.instruction : null;
         if (!instruction) continue;
         const source = typeof it.source === "string" && /^(web|worker|loop|backfill)$/.test(it.source) ? it.source : "backfill";
@@ -617,6 +619,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       }
       const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
       if (!prompt) return err("prompt is required");
+      if (isGibberishPrompt(prompt, true)) return err("prompt appears to be gibberish; interpretation registry requires meaningful prompts");
       const instruction = body.instruction && typeof body.instruction === "object" ? body.instruction : null;
       if (!instruction) return err("instruction is required");
       const source = typeof body.source === "string" && /^(web|worker|loop|backfill)$/.test(body.source) ? body.source : "worker";
@@ -772,16 +775,18 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         static_sound?: Array<{ key: string; amplitude?: number; weight?: number; strength_pct?: number; tone?: string; timbre?: string; depth_breakdown?: Record<string, unknown>; source_prompt?: string; name?: string }>;
         colors?: Array<{ key: string; r: number; g: number; b: number; source_prompt?: string }>;
         blends?: Array<{ name: string; domain: string; inputs: Record<string, unknown>; output: Record<string, unknown>; primitive_depths?: Record<string, unknown>; source_prompt?: string }>;
-        motion?: Array<{ key: string; motion_level: number; motion_std: number; motion_trend: string; motion_direction?: string; motion_rhythm?: string; source_prompt?: string }>;
-        lighting?: Array<{ key: string; brightness: number; contrast: number; saturation: number; source_prompt?: string }>;
+        motion?: Array<{ key: string; motion_level: number; motion_std: number; motion_trend: string; motion_direction?: string; motion_rhythm?: string; depth_breakdown?: Record<string, unknown>; source_prompt?: string }>;
+        lighting?: Array<{ key: string; brightness: number; contrast: number; saturation: number; depth_breakdown?: Record<string, unknown>; source_prompt?: string }>;
         composition?: Array<{ key: string; center_x: number; center_y: number; luminance_balance: number; source_prompt?: string }>;
         graphics?: Array<{ key: string; edge_density: number; spatial_variance: number; busyness: number; source_prompt?: string }>;
         temporal?: Array<{ key: string; duration: number; motion_trend: string; source_prompt?: string }>;
         technical?: Array<{ key: string; width: number; height: number; fps: number; source_prompt?: string }>;
         audio_semantic?: Array<{ key: string; role: string; mood?: string; tempo?: string; source_prompt?: string; name?: string }>;
         time?: Array<{ key: string; duration: number; fps: number; source_prompt?: string }>;
-        gradient?: Array<{ key: string; gradient_type: string; strength?: number; source_prompt?: string }>;
-        camera?: Array<{ key: string; motion_type: string; speed?: string; source_prompt?: string }>;
+        gradient?: Array<{ key: string; gradient_type: string; strength?: number; depth_breakdown?: Record<string, unknown>; source_prompt?: string }>;
+        camera?: Array<{ key: string; motion_type: string; speed?: string; depth_breakdown?: Record<string, unknown>; source_prompt?: string }>;
+        transition?: Array<{ key: string; type: string; duration_seconds?: number; source_prompt?: string }>;
+        depth?: Array<{ key: string; parallax_strength?: number; layer_count?: number; source_prompt?: string }>;
         narrative?: Record<string, Array<{ key: string; value?: string; source_prompt?: string; name?: string }>>;
         job_id?: string;
       };
@@ -790,7 +795,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       } catch {
         return err("Invalid JSON");
       }
-      const results: Record<string, number> = { static_colors: 0, static_sound: 0, narrative: 0, colors: 0, blends: 0, motion: 0, lighting: 0, composition: 0, graphics: 0, temporal: 0, technical: 0, audio_semantic: 0, time: 0, gradient: 0, camera: 0 };
+      const results: Record<string, number> = { static_colors: 0, static_sound: 0, narrative: 0, colors: 0, blends: 0, motion: 0, lighting: 0, composition: 0, graphics: 0, temporal: 0, technical: 0, audio_semantic: 0, time: 0, gradient: 0, camera: 0, transition: 0, depth: 0 };
 
       try {
       // Static registry: per-frame color entries
@@ -886,8 +891,8 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           const name = await generateUniqueName(env);
           await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
           await env.DB.prepare(
-            "INSERT INTO learned_motion (id, profile_key, motion_level, motion_std, motion_trend, motion_direction, motion_rhythm, count, sources_json, name) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)"
-          ).bind(uuid(), m.key, m.motion_level, m.motion_std, m.motion_trend, m.motion_direction ?? "neutral", m.motion_rhythm ?? "steady", m.source_prompt ? JSON.stringify([m.source_prompt.slice(0, 80)]) : null, name).run();
+            "INSERT INTO learned_motion (id, profile_key, motion_level, motion_std, motion_trend, motion_direction, motion_rhythm, count, sources_json, name, depth_breakdown_json) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)"
+          ).bind(uuid(), m.key, m.motion_level, m.motion_std, m.motion_trend, m.motion_direction ?? "neutral", m.motion_rhythm ?? "steady", m.source_prompt ? JSON.stringify([m.source_prompt.slice(0, 80)]) : null, name, m.depth_breakdown ? JSON.stringify(m.depth_breakdown) : null).run();
         }
         results.motion++;
       }
@@ -899,8 +904,8 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           const name = await generateUniqueName(env);
           await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
           await env.DB.prepare(
-            "INSERT INTO learned_lighting (id, profile_key, brightness, contrast, saturation, count, sources_json, name) VALUES (?, ?, ?, ?, ?, 1, ?, ?)"
-          ).bind(uuid(), l.key, l.brightness, l.contrast, l.saturation, l.source_prompt ? JSON.stringify([l.source_prompt.slice(0, 80)]) : null, name).run();
+            "INSERT INTO learned_lighting (id, profile_key, brightness, contrast, saturation, count, sources_json, name, depth_breakdown_json) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)"
+          ).bind(uuid(), l.key, l.brightness, l.contrast, l.saturation, l.source_prompt ? JSON.stringify([l.source_prompt.slice(0, 80)]) : null, name, l.depth_breakdown ? JSON.stringify(l.depth_breakdown) : null).run();
         }
         results.lighting++;
       }
@@ -977,8 +982,8 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           const name = await generateUniqueName(env);
           await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
           await env.DB.prepare(
-            "INSERT INTO learned_gradient (id, profile_key, gradient_type, strength, count, sources_json, name) VALUES (?, ?, ?, ?, 1, ?, ?)"
-          ).bind(uuid(), g.key, g.gradient_type ?? "angled", g.strength ?? null, g.source_prompt ? JSON.stringify([g.source_prompt.slice(0, 80)]) : null, name).run();
+            "INSERT INTO learned_gradient (id, profile_key, gradient_type, strength, count, sources_json, name, depth_breakdown_json) VALUES (?, ?, ?, ?, 1, ?, ?, ?)"
+          ).bind(uuid(), g.key, g.gradient_type ?? "angled", g.strength ?? null, g.source_prompt ? JSON.stringify([g.source_prompt.slice(0, 80)]) : null, name, g.depth_breakdown ? JSON.stringify(g.depth_breakdown) : null).run();
         }
         results.gradient++;
       }
@@ -990,10 +995,36 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           const name = await generateUniqueName(env);
           await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
           await env.DB.prepare(
-            "INSERT INTO learned_camera (id, profile_key, motion_type, speed, count, sources_json, name) VALUES (?, ?, ?, ?, 1, ?, ?)"
-          ).bind(uuid(), c.key, c.motion_type ?? "static", c.speed ?? null, c.source_prompt ? JSON.stringify([c.source_prompt.slice(0, 80)]) : null, name).run();
+            "INSERT INTO learned_camera (id, profile_key, motion_type, speed, count, sources_json, name, depth_breakdown_json) VALUES (?, ?, ?, ?, 1, ?, ?, ?)"
+          ).bind(uuid(), c.key, c.motion_type ?? "static", c.speed ?? null, c.source_prompt ? JSON.stringify([c.source_prompt.slice(0, 80)]) : null, name, c.depth_breakdown ? JSON.stringify(c.depth_breakdown) : null).run();
         }
         results.camera++;
+      }
+      for (const t of body.transition || []) {
+        const existing = await env.DB.prepare("SELECT id FROM learned_transition WHERE profile_key = ?").bind(t.key).first();
+        if (existing) {
+          await env.DB.prepare("UPDATE learned_transition SET count = count + 1 WHERE profile_key = ?").bind(t.key).run();
+        } else {
+          const name = await generateUniqueName(env);
+          await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+          await env.DB.prepare(
+            "INSERT INTO learned_transition (id, profile_key, type, duration_seconds, count, sources_json, name) VALUES (?, ?, ?, ?, 1, ?, ?)"
+          ).bind(uuid(), t.key, t.type ?? "cut", t.duration_seconds ?? null, t.source_prompt ? JSON.stringify([t.source_prompt.slice(0, 80)]) : null, name).run();
+        }
+        results.transition++;
+      }
+      for (const d of body.depth || []) {
+        const existing = await env.DB.prepare("SELECT id FROM learned_depth WHERE profile_key = ?").bind(d.key).first();
+        if (existing) {
+          await env.DB.prepare("UPDATE learned_depth SET count = count + 1 WHERE profile_key = ?").bind(d.key).run();
+        } else {
+          const name = await generateUniqueName(env);
+          await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+          await env.DB.prepare(
+            "INSERT INTO learned_depth (id, profile_key, parallax_strength, layer_count, count, sources_json, name) VALUES (?, ?, ?, ?, 1, ?, ?)"
+          ).bind(uuid(), d.key, d.parallax_strength ?? null, d.layer_count ?? null, d.source_prompt ? JSON.stringify([d.source_prompt.slice(0, 80)]) : null, name).run();
+        }
+        results.depth++;
       }
       const totalResults = Object.values(results).reduce((a, b) => a + b, 0);
       const jobId = typeof (body as { job_id?: string }).job_id === "string" ? (body as { job_id: string }).job_id.trim() : null;
@@ -1154,60 +1185,188 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       }
     }
 
-    // POST /api/registries/backfill-names — replace gibberish names with semantic ones
+    // POST /api/registries/backfill-names — replace gibberish/inauthentic names with semantic ones
     if (path === "/api/registries/backfill-names" && request.method === "POST") {
-      const dryRun = new URL(request.url).searchParams.get("dry_run") === "1";
+      const url = new URL(request.url);
+      const dryRun = url.searchParams.get("dry_run") === "1";
+      const maxRows = Math.min(parseInt(url.searchParams.get("limit") || "20", 10), 200);
+      const tableFilter = url.searchParams.get("table")?.toLowerCase().trim() || null;
       let updated = 0;
       const usedNames = new Set<string>();
       const pickUniqueName = async (): Promise<string> => {
-        for (let i = 0; i < 100; i++) {
+        for (let i = 0; i < 50; i++) {
           const seed = Math.floor(Math.random() * 1000000) + i * 7919;
           const word = inventSemanticWord(seed);
           const name = toTitleCase(word);
           if (usedNames.has(name)) continue;
-          const inDb = await env.DB.prepare("SELECT 1 FROM learned_colors WHERE name = ?").bind(name).first();
+          const inDb = await env.DB.prepare("SELECT 1 FROM learned_blends WHERE name = ?").bind(name).first();
           if (inDb) continue;
           usedNames.add(name);
           return name;
         }
         return "Novel" + (Math.floor(Math.random() * 100000) + 1).toString().padStart(5, "0");
       };
+      const rgbToSemanticColorName = (r: number, g: number, b: number, existing: Set<string>): string => {
+        const hint = rgbToSemanticHint(r, g, b);
+        const vocab = RGB_COLOR_VOCAB[hint] ?? [hint];
+        for (const w of vocab) {
+          const c = w.length > 1 ? w[0].toUpperCase() + w.slice(1).toLowerCase() : w.toUpperCase();
+          if (!existing.has(c)) return c;
+        }
+        const seed = Math.abs((r * 31 + g * 37 + b * 41) % 0x7fffffff) + existing.size * 7919;
+        const word = inventSemanticWord(seed);
+        const name = toTitleCase(word);
+        if (!existing.has(name)) return name;
+        return "Novel" + (Math.abs(seed) % 100000).toString().padStart(5, "0");
+      };
       try {
-        const tables = [
-          { table: "learned_colors", idCol: "id", nameCol: "name" },
-          { table: "learned_motion", idCol: "id", nameCol: "name" },
-          { table: "learned_blends", idCol: "id", nameCol: "name" },
-          { table: "learned_gradient", idCol: "id", nameCol: "name" },
-          { table: "learned_camera", idCol: "id", nameCol: "name" },
-          { table: "static_colors", idCol: "id", nameCol: "name" },
-          { table: "static_sound", idCol: "id", nameCol: "name" },
-          { table: "narrative_entries", idCol: "id", nameCol: "name" },
-        ];
-        for (const { table, idCol, nameCol } of tables) {
+        // Color tables: use RGB-driven semantic naming
+        const colorTables = (["static_colors", "learned_colors"] as const).filter(
+          (t) => !tableFilter || t === tableFilter
+        );
+        for (const table of colorTables) {
           try {
-            const rows = await env.DB.prepare(`SELECT ${idCol}, ${nameCol} FROM ${table}`)
-              .all<{ id: string; name: string }>();
+            const rows = await env.DB.prepare(
+              `SELECT id, name, r, g, b FROM ${table} WHERE name GLOB 'dsc_*' OR name GLOB 'Novel*' OR name GLOB 'color_*' LIMIT ?`
+            ).bind(maxRows).all<{ id: string; name: string; r: number; g: number; b: number }>();
             for (const r of rows.results || []) {
-              const row = r as { id: string; name: string | null };
-              if (isGibberishName(row.name)) {
-                const newName = await pickUniqueName();
+              const row = r as { id: string; name: string | null; r: number; g: number; b: number };
+              if (updated >= maxRows) break;
+              if (shouldBackfillColorName(row.name)) {
+                const oldName = row.name;
+                const newName = rgbToSemanticColorName(row.r ?? 0, row.g ?? 0, row.b ?? 0, usedNames);
+                usedNames.add(newName);
                 if (!dryRun) {
-                  await env.DB.prepare(`UPDATE ${table} SET ${nameCol} = ? WHERE ${idCol} = ?`)
+                  await env.DB.prepare(`UPDATE ${table} SET name = ? WHERE id = ?`)
                     .bind(newName, row.id)
                     .run();
+                  await cascadeNameUpdate(env, oldName, newName);
                 }
                 updated++;
               }
             }
           } catch {
-            // Table may not exist; skip
+            /* table may not exist */
           }
         }
-        return json({ updated, dry_run: dryRun });
+        // Non-color tables: generic semantic names
+        const otherTablesAll = [
+          { table: "learned_motion", idCol: "id", nameCol: "name" },
+          { table: "learned_blends", idCol: "id", nameCol: "name" },
+          { table: "learned_gradient", idCol: "id", nameCol: "name" },
+          { table: "learned_camera", idCol: "id", nameCol: "name" },
+          { table: "learned_lighting", idCol: "id", nameCol: "name" },
+          { table: "learned_composition", idCol: "id", nameCol: "name" },
+          { table: "learned_graphics", idCol: "id", nameCol: "name" },
+          { table: "learned_temporal", idCol: "id", nameCol: "name" },
+          { table: "learned_technical", idCol: "id", nameCol: "name" },
+          { table: "learned_audio_semantic", idCol: "id", nameCol: "name" },
+          { table: "learned_time", idCol: "id", nameCol: "name" },
+          { table: "learned_transition", idCol: "id", nameCol: "name" },
+          { table: "learned_depth", idCol: "id", nameCol: "name" },
+          { table: "static_sound", idCol: "id", nameCol: "name" },
+          { table: "narrative_entries", idCol: "id", nameCol: "name" },
+        ];
+        const otherTables = tableFilter
+          ? otherTablesAll.filter((o) => o.table === tableFilter)
+          : otherTablesAll;
+        for (const { table, idCol, nameCol } of otherTables) {
+          try {
+            const rows = await env.DB.prepare(
+              `SELECT ${idCol}, ${nameCol} FROM ${table} WHERE ${nameCol} GLOB 'dsc_*' OR ${nameCol} GLOB 'Novel*' LIMIT ?`
+            ).bind(maxRows).all<{ id: string; name: string }>();
+            for (const r of rows.results || []) {
+              const row = r as { id: string; name: string | null };
+              if (updated >= maxRows) break;
+              if (isGibberishName(row.name)) {
+                const oldName = row.name;
+                const newName = await pickUniqueName();
+                if (!dryRun) {
+                  await env.DB.prepare(`UPDATE ${table} SET ${nameCol} = ? WHERE ${idCol} = ?`)
+                    .bind(newName, row.id)
+                    .run();
+                  await cascadeNameUpdate(env, oldName, newName);
+                }
+                updated++;
+              }
+            }
+          } catch {
+            /* table may not exist */
+          }
+        }
+        return json({ updated, dry_run: dryRun, limit: maxRows });
       } catch (e) {
         console.error("Backfill names failed:", e);
         return json({ error: "Backfill failed", details: String(e) }, 500);
       }
+    }
+
+    // GET /api/registries/backfill-rows — raw rows for depth recalculation (Python script)
+    if (path === "/api/registries/backfill-rows" && request.method === "GET") {
+      const url = new URL(request.url);
+      const table = url.searchParams.get("table") || "";
+      const limit = Math.min(parseInt(url.searchParams.get("limit") || "50", 10), 200);
+      if (!table) return err("table required");
+      const valid = ["static_colors", "learned_motion", "learned_lighting"];
+      if (!valid.includes(table)) return err("table must be one of: " + valid.join(", "));
+      try {
+        let rows: unknown[] = [];
+        if (table === "static_colors") {
+          const r = await env.DB.prepare(
+            "SELECT id, r, g, b FROM static_colors LIMIT ?"
+          ).bind(limit).all<{ id: string; r: number; g: number; b: number }>();
+          rows = r.results || [];
+        } else if (table === "learned_motion") {
+          const r = await env.DB.prepare(
+            "SELECT id, motion_level, motion_trend FROM learned_motion LIMIT ?"
+          ).bind(limit).all<{ id: string; motion_level: number; motion_trend: string }>();
+          rows = r.results || [];
+        } else if (table === "learned_lighting") {
+          const r = await env.DB.prepare(
+            "SELECT id, brightness, contrast, saturation FROM learned_lighting LIMIT ?"
+          ).bind(limit).all<{ id: string; brightness: number; contrast: number; saturation: number }>();
+          rows = r.results || [];
+        }
+        return json({ table, rows });
+      } catch (e) {
+        console.error("GET backfill-rows failed:", e);
+        return json({ error: "Backfill rows failed", details: String(e) }, 500);
+      }
+    }
+
+    // POST /api/registries/backfill-depths — update depth_breakdown (from Python script)
+    if (path === "/api/registries/backfill-depths" && request.method === "POST") {
+      let body: { updates?: Array<{ table: string; id: string; depth_breakdown: Record<string, number> }> };
+      try {
+        body = (await request.json()) as typeof body;
+      } catch {
+        return err("Invalid JSON");
+      }
+      const updates = body.updates || [];
+      const dryRun = new URL(request.url).searchParams.get("dry_run") === "1";
+      let updated = 0;
+      const depthTables: Record<string, string> = {
+        static_colors: "depth_breakdown_json",
+        learned_motion: "depth_breakdown_json",
+        learned_lighting: "depth_breakdown_json",
+      };
+      for (const u of updates) {
+        const col = depthTables[u.table];
+        if (!col) continue;
+        try {
+          if (!dryRun) {
+            await env.DB.prepare(
+              `UPDATE ${u.table} SET ${col} = ? WHERE id = ?`
+            )
+              .bind(JSON.stringify(u.depth_breakdown), u.id)
+              .run();
+          }
+          updated++;
+        } catch {
+          /* skip */
+        }
+      }
+      return json({ updated, dry_run: dryRun });
     }
 
     // GET /api/registries — pure (STATIC) vs non-pure (DYNAMIC + NARRATIVE); depth % vs primitives always
@@ -1518,7 +1677,10 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         summary: {
           missing_learning,
           missing_discovery,
-          hint: missing_learning > 0 ? "Jobs without learning_run: POST /api/learning may have failed or job completed via different path" : null,
+          hint:
+          missing_learning > 0 || missing_discovery > 0
+            ? "Missing learning: POST /api/learning may have failed or job completed via different path. Missing discovery: POST /api/knowledge/discoveries with job_id may have failed or path did not pass job_id."
+            : null,
         },
       });
     }
@@ -1570,12 +1732,138 @@ function isGibberishName(name: string | null): boolean {
   if (!name || typeof name !== "string") return false;
   const n = name.trim().toLowerCase();
   if (n.length < 4) return false;
-  if (n.startsWith("novel") && /^\d+$/.test(n.slice(5))) return false;
+  if (/^dsc_[a-f0-9]+$/i.test(n)) return true;
+  if (n.startsWith("novel") && /^\d+$/.test(n.slice(5))) return true;
   if (SEMANTIC_WORDS.some((w) => w === n)) return false;
   if (SEMANTIC_START.some((s) => n.startsWith(s))) return false;
   if (SEMANTIC_END.some((e) => n.endsWith(e))) return false;
   if (n.length <= 8) return false;
   return true;
+}
+
+// Gibberish prompt detection (mirrors Python interpretation/gibberish.py)
+const KNOWN_WORDS = new Set([
+  "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for", "of", "with", "by", "from", "as",
+  "is", "was", "are", "were", "be", "been", "have", "has", "had", "do", "does", "did", "will", "would",
+  "could", "should", "can", "may", "might", "must", "shall", "video", "motion", "flow", "calm", "slow",
+  "fast", "bright", "dark", "soft", "dreamy", "abstract", "cinematic", "minimal", "realistic", "style",
+  "feel", "look", "vibe", "mood", "tone", "color", "colours", "blue", "red", "green", "ocean", "sunset",
+  "night", "day", "golden", "hour", "warm", "cool", "gradient", "smooth", "gentle", "peaceful",
+  "energetic", "dynamic", "static", "pan", "zoom", "tilt", "tracking", "handheld", "documentary",
+  "neon", "pastel", "vintage", "modern", "retro", "nostalgic", "melancholic", "serene", "dramatic",
+  "subtle", "bold", "muted", "vibrant", "intense", "explainer", "tutorial", "explain", "gradual",
+  "symmetric", "silence", "ambient", "music", "sfx", "balanced", "slight", "bilateral", "centered",
+  "lit", "chill", "vibing", "vibes", "lowkey", "glowy", "mellow",
+]);
+const GIBBERISH_RE = /(?:[bcdfghjklmnpqrstvwxz]{4,}|([a-z]{2})\1{2,}|[qxjz]{2,})/i;
+
+// RGB → semantic color vocabulary (mirrors Python blend_names.py)
+const RGB_COLOR_VOCAB: Record<string, string[]> = {
+  shadow: ["shadow", "charcoal", "obsidian", "onyx", "raven", "coal", "ink"],
+  graphite: ["graphite", "iron", "lead", "pewter", "gunmetal"],
+  slate: ["slate", "stone", "flint", "ash", "steel", "silver"],
+  mist: ["mist", "fog", "haze", "pearl", "cloud", "frost"],
+  ember: ["ember", "rust", "copper", "terracotta", "brick"],
+  sunset: ["sunset", "coral", "salmon", "blush", "apricot", "tangerine"],
+  rust: ["rust", "sienna", "ochre", "bronze", "umber"],
+  moss: ["moss", "sage", "fern", "olive", "jade"],
+  forest: ["forest", "pine", "cedar", "evergreen", "laurel"],
+  olive: ["olive", "khaki", "sand", "tan", "taupe"],
+  teal: ["teal", "turquoise", "aqua", "cyan", "mint"],
+  violet: ["violet", "lavender", "lilac", "plum", "amethyst"],
+  ocean: ["ocean", "navy", "indigo", "sapphire", "azure"],
+  midnight: ["midnight", "twilight", "dusk", "deep", "abyss"],
+  neutral: ["stone", "sand", "linen", "ivory", "cream"],
+};
+
+function rgbToSemanticHint(r: number, g: number, b: number): string {
+  const mx = Math.max(r, g, b);
+  const mn = Math.min(r, g, b);
+  if (mx < 50) return "shadow";
+  if (mx - mn < 40) {
+    const lum = (r + g + b) / 3;
+    if (lum < 80) return "graphite";
+    if (lum < 140) return "slate";
+    return "mist";
+  }
+  if (r >= g && r >= b && r > 0) return b > g ? "ember" : r > 180 ? "sunset" : "rust";
+  if (g >= r && g >= b && g > 0) return r > b ? "moss" : g > 120 ? "forest" : "olive";
+  if (b >= r && b >= g && b > 0) return g > r ? "teal" : r > g ? "violet" : b > 140 ? "ocean" : "midnight";
+  return "neutral";
+}
+
+/** Cascade oldName→newName to prompts and sources when backfilling registry names. */
+async function cascadeNameUpdate(env: Env, oldName: string, newName: string): Promise<void> {
+  if (!oldName || oldName === newName) return;
+  const like = "%" + oldName.replace(/[%_]/g, "\\$&") + "%";
+  const tables: { table: string; col: string }[] = [
+    { table: "learning_runs", col: "prompt" },
+    { table: "interpretations", col: "prompt" },
+    { table: "interpretations", col: "instruction_json" },
+    { table: "jobs", col: "prompt" },
+    { table: "learned_blends", col: "source_prompt" },
+    { table: "static_colors", col: "sources_json" },
+    { table: "static_sound", col: "sources_json" },
+    { table: "learned_colors", col: "sources_json" },
+    { table: "learned_motion", col: "sources_json" },
+    { table: "learned_lighting", col: "sources_json" },
+    { table: "learned_composition", col: "sources_json" },
+    { table: "learned_graphics", col: "sources_json" },
+    { table: "learned_temporal", col: "sources_json" },
+    { table: "learned_technical", col: "sources_json" },
+    { table: "learned_gradient", col: "sources_json" },
+    { table: "learned_camera", col: "sources_json" },
+    { table: "learned_time", col: "sources_json" },
+    { table: "narrative_entries", col: "sources_json" },
+  ];
+  for (const { table, col } of tables) {
+    try {
+      await env.DB.prepare(
+        `UPDATE ${table} SET ${col} = REPLACE(${col}, ?, ?) WHERE ${col} LIKE ? ESCAPE '\\'`
+      )
+        .bind(oldName, newName, like)
+        .run();
+    } catch {
+      /* table/col may not exist */
+    }
+  }
+}
+
+function shouldBackfillColorName(name: string | null): boolean {
+  if (!name || typeof name !== "string") return true;
+  const n = name.trim().toLowerCase();
+  if (n.length < 4) return false;
+  const realColorWords = new Set([
+    "amber", "velvet", "coral", "silver", "river", "mist", "dawn", "dusk", "wave",
+    "slate", "stone", "iron", "oak", "pine", "cedar", "jade", "shadow", "graphite",
+    "ember", "rust", "sienna", "sage", "fern", "olive", "teal", "ocean", "navy",
+    "violet", "lavender", "pearl", "cloud", "frost", "ink", "coal", "ash",
+  ]);
+  if (realColorWords.has(n)) return false;
+  if (n.startsWith("color_")) return true;
+  if (SEMANTIC_WORDS.some((w) => w === n)) return false;
+  if (SEMANTIC_START.some((s) => n.startsWith(s)) && SEMANTIC_END.some((e) => n.endsWith(e))) return true;
+  return isGibberishName(name);
+}
+
+function isGibberishPrompt(prompt: string, strict = false): boolean {
+  if (!prompt || typeof prompt !== "string") return true;
+  const text = prompt.trim();
+  if (text.length < 3) return false;
+  const lower = text.toLowerCase();
+  if (GIBBERISH_RE.test(lower)) return true;
+  const words = lower.match(/[a-z]{3,}/g) || [];
+  if (!words.length) return false;
+  const known = words.filter((w) => KNOWN_WORDS.has(w)).length;
+  const ratio = known / words.length;
+  const longUnknown = words.filter((w) => w.length >= 10 && !KNOWN_WORDS.has(w));
+  if (longUnknown.length > 0) return true;
+  const avgLen = words.reduce((s, w) => s + w.length, 0) / words.length;
+  if (strict) {
+    if (ratio < 0.25 && avgLen > 6) return true;
+    if (ratio < 0.15) return true;
+  } else if (ratio < 0.15 && avgLen > 7) return true;
+  return false;
 }
 
 async function generateUniqueName(env: Env): Promise<string> {

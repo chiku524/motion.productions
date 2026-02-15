@@ -183,11 +183,20 @@ def extract_narrative_from_spec(
         if h and str(h).strip() and str(h).strip().lower() not in {x.strip().lower() for x in out["themes"]}:
             out["themes"].append(str(h).strip())
     if prompt:
-        words = [w.lower() for w in prompt.split() if len(w) >= 3]
-        setting_keywords = {"forest", "city", "night", "day", "outdoor", "indoor", "sea", "ocean", "dusk", "dawn", "golden", "abstract"}
+        words = [w.lower() for w in prompt.split() if len(w) >= 2]
+        setting_keywords = {"forest", "city", "night", "day", "outdoor", "indoor", "sea", "ocean", "dusk", "dawn", "golden", "abstract", "desert", "mountain", "street", "room", "sky", "water", "snow", "beach", "studio"}
+        genre_keywords = {"documentary", "drama", "horror", "comedy", "sci-fi", "fantasy", "abstract", "music", "vlog", "art", "cinematic", "minimal", "experimental"}
+        mood_keywords = {"calm", "tense", "peaceful", "chaotic", "moody", "uplifting", "dark", "bright", "melancholic", "energetic", "chill", "dramatic", "soft", "intense", "dreamy", "harsh"}
+        theme_keywords = {"nature", "urban", "love", "conflict", "transformation", "journey", "light", "shadow", "motion", "stillness", "color", "minimalism", "geometry"}
         for w in words:
             if w in setting_keywords and w not in [x.lower() for x in out["settings"]]:
                 out["settings"].append(w)
+            if w in genre_keywords and w not in [x.lower() for x in out["genre"]]:
+                out["genre"].append(w)
+            if w in mood_keywords and w not in [x.lower() for x in out["mood"]]:
+                out["mood"].append(w)
+            if w in theme_keywords and w not in [x.lower() for x in out["themes"]]:
+                out["themes"].append(w)
     return out
 
 

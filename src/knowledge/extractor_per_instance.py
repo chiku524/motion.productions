@@ -23,6 +23,24 @@ from ..analysis.metrics import (
 )
 
 
+def read_video_once(
+    video_path: str | Path,
+    *,
+    max_frames: int | None = None,
+    sample_every: int = 1,
+) -> tuple[list[np.ndarray], float, int, int, list[dict[str, Any]]]:
+    """
+    Read video once and return frames + metadata + per-frame audio segments.
+    Use this when both static and dynamic extraction are needed to avoid double decoding.
+    Returns: (frames, fps, width, height, audio_segments)
+    """
+    frames, fps, width, height = _read_frames(
+        video_path, max_frames=max_frames, sample_every=sample_every
+    )
+    audio_segments = _extract_audio_segments(video_path, fps, len(frames))
+    return frames, fps, width, height, audio_segments
+
+
 def _read_frames(
     video_path: str | Path,
     *,
@@ -140,35 +158,18 @@ def _extract_audio_segments(
     return out
 
 
-def extract_static_per_frame(
-    video_path: str | Path,
-    *,
-    max_frames: int | None = None,
-    sample_every: int = 1,
+def _extract_static_from_preloaded(
+    frames: list[np.ndarray],
+    fps: float,
+    audio_segments: list[dict[str, Any]],
 ) -> Iterator[dict[str, Any]]:
-    """
-    Yield one static instance per frame. Each instance contains COLOR (and when
-    audio extraction exists, SOUND) for that single frame. Compare each to the
-    static registry; if not present, add with a sensible name.
-
-    Yields:
-        {
-            "frame_index": int,
-            "time_seconds": float,
-            "color": {"r", "g", "b", "brightness", "contrast", "saturation", "hue", "dominant_rgb"},
-            "sound": {}  # placeholder until audio extraction per segment is implemented
-        }
-    """
-    frames, fps, width, height = _read_frames(video_path, max_frames=max_frames, sample_every=sample_every)
-    audio_segments = _extract_audio_segments(video_path, fps, len(frames))
-
+    """Yield one static instance per frame from pre-loaded frames and audio. Internal use."""
     for i, fr in enumerate(frames):
         bc = brightness_and_contrast(fr)
         sh = saturation_and_hue(fr)
         dom = dominant_colors(fr, n=1)
         dominant_rgb = dom[0] if dom else (0.0, 0.0, 0.0)
         sound = audio_segments[i] if i < len(audio_segments) else {}
-        # Every static color sub-aspect (doc: blending, opacity, chroma, luminance, hue, saturation, brightness, contrast)
         brightness_val = bc["brightness"]
         sat_val = sh["saturation"]
         yield {
@@ -191,35 +192,59 @@ def extract_static_per_frame(
         }
 
 
-def extract_dynamic_per_window(
+def extract_static_per_frame(
     video_path: str | Path,
     *,
-    window_seconds: float = 1.0,
     max_frames: int | None = None,
     sample_every: int = 1,
 ) -> Iterator[dict[str, Any]]:
     """
-    Yield one dynamic instance per window of combined frames (e.g. 1 second).
-    Each instance contains MOTION, TIME, and other dynamic aspects over that window.
-    Compare each to the dynamic registry; if not present, add with a sensible name.
-
-    Yields:
-        {
-            "window_index": int,
-            "start_seconds": float,
-            "end_seconds": float,
-            "motion": {"level", "std", "trend"},
-            "time": {"duration", "fps"},
-            "lighting": {"brightness", "contrast", "saturation"},
-            "composition": {"center_x", "center_y", "luminance_balance"},
-            "graphics": {"edge_density", "spatial_variance", "busyness"},
-            "audio_semantic": {}  # placeholder until semantic audio classification
-        }
+    Yield one static instance per frame. Each instance contains COLOR and SOUND.
+    Uses read_video_once internally. For unified extraction, prefer read_video_once + _extract_static_from_preloaded.
     """
-    frames, fps, width, height = _read_frames(video_path, max_frames=max_frames, sample_every=sample_every)
+    frames, fps, _, _, audio_segments = read_video_once(
+        video_path, max_frames=max_frames, sample_every=sample_every
+    )
+    yield from _extract_static_from_preloaded(frames, fps, audio_segments)
+
+
+def _derive_audio_semantic_from_segments(
+    audio_segments: list[dict[str, Any]],
+    start_i: int,
+    end_i: int,
+) -> dict[str, Any]:
+    """Infer audio_semantic (role, mood, tempo) from per-frame audio segments in the window."""
+    segs = [audio_segments[i] for i in range(start_i, min(end_i, len(audio_segments))) if i < len(audio_segments) and audio_segments[i]]
+    if not segs:
+        return {}
+    amps = [float(s.get("amplitude") or s.get("weight") or 0) for s in segs]
+    tones = [str(s.get("tone") or "mid").strip() for s in segs if s.get("tone")]
+    mean_amp = sum(amps) / len(amps) if amps else 0
+    amp_std = (sum((a - mean_amp) ** 2 for a in amps) / len(amps)) ** 0.5 if len(amps) > 1 else 0
+    dominant_tone = max(set(tones), key=tones.count) if tones else "mid"
+    if mean_amp < 0.05:
+        role, presence = "ambient", "silence"
+    elif mean_amp > 0.3:
+        role, presence = "music", "full"
+    else:
+        role, presence = "ambient", "ambient"
+    tempo = "medium" if amp_std > 0.05 else "slow"
+    mood = "calm" if mean_amp < 0.1 else ("energetic" if mean_amp > 0.4 else "neutral")
+    return {"role": role, "type": role, "mood": mood, "tempo": tempo, "presence": presence}
+
+
+def _extract_dynamic_from_preloaded(
+    frames: list[np.ndarray],
+    fps: float,
+    width: int,
+    height: int,
+    *,
+    window_seconds: float = 1.0,
+    audio_segments: list[dict[str, Any]] | None = None,
+) -> Iterator[dict[str, Any]]:
+    """Yield one dynamic instance per window from pre-loaded frames. Internal use."""
     if not frames or fps <= 0:
         return
-
     n = len(frames)
     frames_per_window = max(1, int(round(window_seconds * fps)))
     num_windows = max(1, (n + frames_per_window - 1) // frames_per_window)
@@ -231,7 +256,7 @@ def extract_dynamic_per_window(
 
         # Motion over window (level, trend, direction, rhythm)
         per_motion: list[float] = []
-        direction_scores: list[tuple[float, float]] = []  # (horizontal_bias, vertical_bias)
+        direction_scores: list[tuple[float, float]] = []
         for j in range(1, len(window_frames)):
             fa = window_frames[j - 1].astype(np.float64)
             fb = window_frames[j].astype(np.float64)
@@ -240,10 +265,10 @@ def extract_dynamic_per_window(
                 if diff.ndim == 3:
                     diff = diff.mean(axis=-1)
                 per_motion.append(float(diff.mean()))
-                h, w = diff.shape[:2]
-                if w >= 2 and h >= 2:
-                    left = float(diff[:, : w // 2].sum())
-                    right = float(diff[:, w // 2 :].sum())
+                h, ww = diff.shape[:2]
+                if ww >= 2 and h >= 2:
+                    left = float(diff[:, : ww // 2].sum())
+                    right = float(diff[:, ww // 2 :].sum())
                     top = float(diff[: h // 2, :].sum())
                     bottom = float(diff[h // 2 :, :].sum())
                     horiz = abs(left - right)
@@ -260,22 +285,14 @@ def extract_dynamic_per_window(
             motion_trend = "increasing" if diff > 2.0 else ("decreasing" if diff < -2.0 else "steady")
         else:
             motion_trend = "steady"
-        # Direction: horizontal vs vertical bias from spatial distribution of frame-to-frame change
         if direction_scores:
             mean_h = sum(s[0] for s in direction_scores) / len(direction_scores)
             mean_v = sum(s[1] for s in direction_scores) / len(direction_scores)
-            if mean_h > mean_v * 1.2:
-                motion_direction = "horizontal"
-            elif mean_v > mean_h * 1.2:
-                motion_direction = "vertical"
-            else:
-                motion_direction = "neutral"
+            motion_direction = "horizontal" if mean_h > mean_v * 1.2 else ("vertical" if mean_v > mean_h * 1.2 else "neutral")
         else:
             motion_direction = "neutral"
-        # Rhythm: steady vs pulsing from variance of per-frame motion
         motion_rhythm = "pulsing" if (per_motion and motion_std > max(2.0, motion_level * 0.5)) else "steady"
 
-        # Lighting/composition/graphics/gradient/camera from middle frame and motion
         mid_idx = len(window_frames) // 2
         mid_fr = window_frames[mid_idx]
         bc = brightness_and_contrast(mid_fr)
@@ -283,13 +300,10 @@ def extract_dynamic_per_window(
         cx, cy = center_of_mass(mid_fr)
         edge_den = edge_density(mid_fr)
         spat_var = spatial_variance(mid_fr)
-        cx_norm = cx / width if width else 0.5
-        cy_norm = cy / height if height else 0.5
         lum_bal = min(1.0, max(0.0, bc["brightness"] / 255.0))
         grad_str = gradient_strength(mid_fr)
         grad_dir = gradient_direction(mid_fr)
         gradient_type = grad_dir if grad_str > 0.05 else "static"
-        # Infer camera motion from window motion: direction + level → pan/tilt/zoom/static
         if motion_level < 1.0:
             camera_motion = "static"
         elif motion_direction == "horizontal":
@@ -302,6 +316,10 @@ def extract_dynamic_per_window(
             camera_motion = "zoom_out"
         else:
             camera_motion = "static"
+
+        audio_semantic = {}
+        if audio_segments:
+            audio_semantic = _derive_audio_semantic_from_segments(audio_segments, start_i, end_i)
 
         yield {
             "window_index": w,
@@ -318,9 +336,31 @@ def extract_dynamic_per_window(
             "gradient": {"gradient_type": gradient_type, "strength": grad_str},
             "camera": {"motion_type": camera_motion, "speed": "medium" if motion_level > 5 else "slow"},
             "lighting": {"brightness": bc["brightness"], "contrast": bc["contrast"], "saturation": sh["saturation"]},
-            "composition": {"center_x": cx_norm, "center_y": cy_norm, "luminance_balance": lum_bal},
+            "composition": {"center_x": cx / width if width else 0.5, "center_y": cy / height if height else 0.5, "luminance_balance": lum_bal},
             "graphics": {"edge_density": edge_den, "spatial_variance": spat_var, "busyness": 0.5 * edge_den + 0.5 * spat_var},
-            "audio_semantic": {},  # Filled from spec in grow_dynamic_from_video when not from decoded audio
-            "transition": {},   # Filled from spec or future cut-detection
-            "depth": {},        # Filled from spec or future parallax/layer extraction
+            "audio_semantic": audio_semantic,
+            "transition": {},
+            "depth": {},
         }
+
+
+def extract_dynamic_per_window(
+    video_path: str | Path,
+    *,
+    window_seconds: float = 1.0,
+    max_frames: int | None = None,
+    sample_every: int = 1,
+) -> Iterator[dict[str, Any]]:
+    """
+    Yield one dynamic instance per window of combined frames (e.g. 1 second).
+    For unified extraction, prefer read_video_once + _extract_dynamic_from_preloaded.
+    Includes audio_semantic inferred from per-frame audio when available.
+    """
+    frames, fps, width, height, audio_segments = read_video_once(
+        video_path, max_frames=max_frames, sample_every=sample_every
+    )
+    yield from _extract_dynamic_from_preloaded(
+        frames, fps, width, height,
+        window_seconds=window_seconds,
+        audio_segments=audio_segments,
+    )
