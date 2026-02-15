@@ -203,9 +203,10 @@ def ensure_static_color_in_registry(
     # Depth breakdown required: origin color % and opacity level (per REGISTRY_FOUNDATION)
     from .blend_depth import compute_color_depth
     origin_colors = compute_color_depth(r_val, g_val, b_val)
+    # Flat structure: primitive weights (0–1) + opacity; API/backfill expect flattenable depth
     depth_breakdown: dict[str, Any] = {
-        "origin_colors": origin_colors,
-        "opacity": round(opacity_val, 2),
+        **{k: round(v * 100) for k, v in origin_colors.items()},
+        "opacity": round(opacity_val * 100),
     }
     # Static = pure only: R, G, B, opacity; depth_breakdown = weights of origin + opaque level
     entry: dict[str, Any] = {

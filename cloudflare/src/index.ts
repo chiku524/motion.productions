@@ -1272,8 +1272,9 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           : otherTablesAll;
         for (const { table, idCol, nameCol } of otherTables) {
           try {
+            // Include dsc_*, Novel*, and long names (9+ chars) that may be gibberish
             const rows = await env.DB.prepare(
-              `SELECT ${idCol}, ${nameCol} FROM ${table} WHERE ${nameCol} GLOB 'dsc_*' OR ${nameCol} GLOB 'Novel*' LIMIT ?`
+              `SELECT ${idCol}, ${nameCol} FROM ${table} WHERE ${nameCol} GLOB 'dsc_*' OR ${nameCol} GLOB 'Novel*' OR LENGTH(TRIM(${nameCol})) > 9 LIMIT ?`
             ).bind(maxRows).all<{ id: string; name: string }>();
             for (const r of rows.results || []) {
               const row = r as { id: string; name: string | null };
@@ -1503,8 +1504,16 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
               try {
                 const stored = JSON.parse(r.depth_breakdown_json) as Record<string, unknown>;
                 depth_breakdown = {};
+                // Flatten origin_colors (Python growth) or direct numeric keys
+                const oc = stored.origin_colors as Record<string, number> | undefined;
+                if (oc && typeof oc === "object") {
+                  for (const [k, v] of Object.entries(oc)) {
+                    depth_breakdown[k] = typeof v === "number" ? (v <= 1 ? Math.round(v * 100) : Math.round(v)) : 0;
+                  }
+                }
                 for (const [k, v] of Object.entries(stored)) {
-                  if (typeof v === "number") depth_breakdown[k] = v;
+                  if (k === "origin_colors") continue;
+                  if (typeof v === "number") depth_breakdown[k] = v <= 1 && k === "opacity" ? Math.round(v * 100) : (v <= 1 ? Math.round(v * 100) : Math.round(v));
                 }
                 depth_pct = Object.keys(depth_breakdown).length ? 100 : 0;
               } catch {
