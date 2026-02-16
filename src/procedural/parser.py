@@ -76,6 +76,9 @@ class SceneSpec:
     text_position: str = "center"
     educational_template: str | None = None
     depth_parallax: bool = False      # Phase 7: enable 2.5D parallax
+    # Pure-per-frame creation (§7): randomly place pure colors at random pixel locations → emergent blends
+    pure_colors: list[tuple[int, int, int]] | None = None  # origin + discovered static RGBs
+    creation_mode: str = "blended"    # "blended" | "pure_per_frame"
 
 
 def parse_prompt_to_spec(prompt: str, *, seed: int | None = None) -> SceneSpec:

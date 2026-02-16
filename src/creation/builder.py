@@ -12,6 +12,7 @@ from typing import Any
 from ..interpretation import InterpretedInstruction
 from ..procedural.parser import SceneSpec
 from ..random_utils import secure_choice
+from ..knowledge.blend_depth import COLOR_ORIGIN_PRIMITIVES
 
 logger = logging.getLogger(__name__)
 from ..procedural.data.palettes import PALETTES
@@ -200,6 +201,10 @@ def build_spec_from_instruction(
         pool = _pool_from_knowledge(knowledge, "learned_camera", "origin_camera", _CAMERA_VALID)
         camera = secure_choice(pool) if pool else secure_choice([v for v in CAMERA_ORIGINS["motion_type"] if v in _CAMERA_VALID] or list(_CAMERA_VALID))
 
+    # Pure-per-frame creation (§7): pool = origin primitives + discovered static (learned) colors
+    pure_colors = _build_pure_color_pool(knowledge, instruction, avoid_palette=avoid_palette)
+    creation_mode = "pure_per_frame" if pure_colors else "blended"
+
     spec = SceneSpec(
         palette_name=palette,
         motion_type=motion,
@@ -226,10 +231,49 @@ def build_spec_from_instruction(
         text_position=text_position,
         educational_template=educational_template,
         depth_parallax=depth_parallax,
+        pure_colors=pure_colors,
+        creation_mode=creation_mode,
     )
 
     _validate_spec_against_instruction(spec, instruction)
     return spec
+
+
+def _build_pure_color_pool(
+    knowledge: dict[str, Any] | None,
+    instruction: InterpretedInstruction,
+    *,
+    avoid_palette: set[str] | None = None,
+) -> list[tuple[int, int, int]]:
+    """
+    Build pool of pure colors for pure-per-frame creation (§7).
+    Origin primitives (STATIC) + previously extracted/discovered colors (learned_colors).
+    No fixed default list — only registry data so creation progresses as loop runs.
+    """
+    pool: list[tuple[int, int, int]] = []
+    seen: set[tuple[int, int, int]] = set()
+
+    # 1. Origin primitives (always included)
+    for _name, (r, g, b) in COLOR_ORIGIN_PRIMITIVES:
+        t = (int(round(r)), int(round(g)), int(round(b)))
+        if t not in seen:
+            seen.add(t)
+            pool.append(t)
+
+    # 2. Learned/discovered colors from registry (authentic names = previously extracted)
+    learned = (knowledge or {}).get("learned_colors") or {}
+    if isinstance(learned, dict):
+        for _key, data in learned.items():
+            if not isinstance(data, dict) or "r" not in data or "g" not in data or "b" not in data:
+                continue
+            r, g, b = int(round(float(data["r"]))), int(round(float(data["g"]))), int(round(float(data["b"])))
+            r, g, b = max(0, min(255, r)), max(0, min(255, g)), max(0, min(255, b))
+            t = (r, g, b)
+            if t not in seen:
+                seen.add(t)
+                pool.append(t)
+
+    return pool
 
 
 def _validate_spec_against_instruction(

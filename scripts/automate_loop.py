@@ -258,8 +258,12 @@ def run() -> None:
         exploit_ratio = max(0.0, min(1.0, exploit_ratio))
         progress = _load_progress(args.api_base)
         exploit_ratio = _get_discovery_adjusted_exploit_ratio(exploit_ratio, progress, override_active)
-        # workflow_type for site: explorer (discovery) | exploiter (interpretation) | main (balanced)
+        # workflow_type for site: explorer | exploiter | main (prompt choice)
         workflow_type = os.environ.get("LOOP_WORKFLOW_TYPE") or ("explorer" if override == "0" else "exploiter" if override == "1" else "main")
+        # extraction_focus: frame (per-frame / pure static only) | window (per-window blends only) | unset = all
+        extraction_focus = (os.environ.get("LOOP_EXTRACTION_FOCUS") or "").strip().lower() or "all"
+        if extraction_focus not in ("frame", "window", "all"):
+            extraction_focus = "all"
 
         knowledge = {}
         try:
@@ -334,13 +338,16 @@ def run() -> None:
             ext = extract_from_video(path)
             analysis_dict = ext.to_dict()
 
-            # Unified growth: single video read for static + dynamic; batch sync
+            # Growth + sync: gated by extraction_focus (frame | window | all)
             try:
                 from src.knowledge.growth_per_instance import grow_all_from_video
                 from src.knowledge.narrative_registry import grow_narrative_from_spec
                 from src.knowledge.remote_sync import (
                     grow_and_sync_to_api,
                     post_all_discoveries,
+                    post_static_discoveries,
+                    post_dynamic_discoveries,
+                    post_narrative_discoveries,
                     growth_metrics,
                 )
                 added, novel_for_sync = grow_all_from_video(
@@ -352,35 +359,52 @@ def run() -> None:
                     window_seconds=1.0,
                     collect_novel_for_sync=bool(args.api_base),
                     spec=spec,
+                    extraction_focus=extraction_focus,
                 )
                 if any(added.values()):
                     metrics = growth_metrics(added)
-                    logger.info("Growth: total=%s static=%s dynamic=%s aspects=%s", metrics["total_added"], metrics["static_added"], metrics["dynamic_added"], metrics["by_aspect"])
-                narrative_added, narrative_novel = grow_narrative_from_spec(
-                    spec, prompt=prompt, config=config, instruction=instruction, collect_novel_for_sync=True
-                )
-                if args.api_base:
-                    post_all_discoveries(
-                        args.api_base,
-                        novel_for_sync.get("static_colors", []),
-                        novel_for_sync.get("static_sound") or [],
-                        novel_for_sync,
-                        narrative_novel,
-                        job_id=job_id,
+                    logger.info("Growth [%s]: total=%s static=%s dynamic=%s aspects=%s", extraction_focus, metrics["total_added"], metrics["static_added"], metrics["dynamic_added"], metrics["by_aspect"])
+                narrative_novel = {}
+                if extraction_focus in ("window", "all"):
+                    narrative_added, narrative_novel = grow_narrative_from_spec(
+                        spec, prompt=prompt, config=config, instruction=instruction, collect_novel_for_sync=True
                     )
+                if args.api_base:
+                    if extraction_focus == "frame":
+                        post_static_discoveries(
+                            args.api_base,
+                            novel_for_sync.get("static_colors", []),
+                            novel_for_sync.get("static_sound") or [],
+                            job_id=job_id,
+                        )
+                    elif extraction_focus == "window":
+                        post_dynamic_discoveries(args.api_base, novel_for_sync, job_id=job_id)
+                        if narrative_novel and any(narrative_novel.values()):
+                            post_narrative_discoveries(args.api_base, narrative_novel, job_id=job_id)
+                    else:
+                        post_all_discoveries(
+                            args.api_base,
+                            novel_for_sync.get("static_colors", []),
+                            novel_for_sync.get("static_sound") or [],
+                            novel_for_sync,
+                            narrative_novel,
+                            job_id=job_id,
+                        )
             except APIError as e:
                 logger.warning("Per-instance or narrative sync failed (status=%s): %s", e.status_code, e)
             except Exception as e:
                 logger.warning("Per-instance or narrative growth/sync: %s", e)
 
-            try:
-                from src.knowledge.remote_sync import grow_and_sync_to_api
-                grow_and_sync_to_api(analysis_dict, prompt=prompt, api_base=args.api_base, spec=spec, job_id=job_id)
-            except APIError as e:
-                logger.warning("POST /api/knowledge/discoveries failed (status=%s): %s", e.status_code, e)
-                print(f"  (discoveries sync: {e})")
-            except Exception as e:
-                print(f"  (discoveries sync: {e})")
+            # Whole-video blends (learned_colors, learned_motion, learned_blends): only for window or all
+            if extraction_focus in ("window", "all"):
+                try:
+                    from src.knowledge.remote_sync import grow_and_sync_to_api
+                    grow_and_sync_to_api(analysis_dict, prompt=prompt, api_base=args.api_base, spec=spec, job_id=job_id)
+                except APIError as e:
+                    logger.warning("POST /api/knowledge/discoveries failed (status=%s): %s", e.status_code, e)
+                    print(f"  (discoveries sync: {e})")
+                except Exception as e:
+                    print(f"  (discoveries sync: {e})")
 
             # Guaranteed discovery run recording — ensures diagnostics show ✓ disc even when
             # post_all_discoveries or grow_and_sync failed or threw before recording

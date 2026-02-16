@@ -1,6 +1,6 @@
 # Workflows and registries — full picture
 
-This doc clarifies: (1) **colors and audio in both STATIC and DYNAMIC**; (2) that **no workflow is “static-only” or “dynamic-only”** — all workflows run the same pipeline and grow all three registries; (3) the **details and entirety** of each of the three workflows.
+This doc clarifies: (1) **colors and audio in both STATIC and DYNAMIC**; (2) that **no workflow is “static-only” or “dynamic-only”** — all workflows run the same pipeline and grow all three registries; (3) the **details and entirety** of each workflow.
 
 ---
 
@@ -13,19 +13,21 @@ This doc clarifies: (1) **colors and audio in both STATIC and DYNAMIC**; (2) tha
 | **STATIC** (pure, per-frame) | **static_colors** — one dominant color (and related metrics) per frame. Grown by `grow_all_from_video()` → per-frame extraction → compare → add novel with name. Synced to D1 `static_colors`. | **static_sound** — per-frame or per-sample sound (amplitude, tone, timbre). Grown by `grow_all_from_video()`; when per-frame audio extraction is not yet available, spec-derived static sound (audio_tempo, audio_mood, audio_presence) is still recorded. Synced to D1 `static_sound`. |
 | **DYNAMIC** (non-pure, multi-frame / whole-video) | **learned_colors** — whole-video dominant color (and aggregates). Grown by `grow_and_sync_to_api()` from analysis → D1 `learned_colors`. Used in creation (palette blending). | **Audio as non-pure** — tempo, mood, presence per run stored as blends (domain `audio`) in `learned_blends`. Shown in registries UI under Dynamic → Sound. Creation uses `learned_audio` from API. |
 
-So every run can add both **static** (per-frame color + sound) and **dynamic** (whole-video color + audio blends, plus motion, lighting, etc.). There is no workflow that only feeds static or only dynamic; all three workflows use the same growth path and thus feed both.
+So every run can add both **static** (per-frame color + sound) and **dynamic** (whole-video color + audio blends, plus motion, lighting, etc.). With **LOOP_EXTRACTION_FOCUS** you can run 2 workers that feed only static (frame) and 1 that feeds only dynamic + narrative (window), or leave it unset to feed both.
 
 ---
 
-## 2. Is there a workflow solely for static or solely for dynamic?
+## 2. Extraction focus: frame vs window (three workflows)
 
-**No.** There is no workflow dedicated only to static values and none only to dynamic values.
+**Yes.** You run **2 workflows** dedicated to **extraction + discovery within an individual frame** (pure/static) and **1 workflow** dedicated to **discovering + extracting blends within windows of frames** (blended/dynamic).
 
-- All three workers (Explorer, Exploiter, Main) run the **same** script: `scripts/automate_loop.py`.
-- Every run does the **same** pipeline: pick prompt → interpret → create → render → extract → **grow (static + dynamic + narrative)** → sync.
-- So every run grows **all three registries** (static, dynamic, narrative). The only thing that changes between the three is **how the next prompt is chosen** (exploit vs explore), not which registries are updated.
+- All run the **same** script: `scripts/automate_loop.py`.
+- **LOOP_EXTRACTION_FOCUS** (env) controls what is extracted and grown:
+  - **frame** — Per-frame only: extract static (color, sound) per frame, grow only the **static** registry, post only static discoveries. Every new value gets a **newly created (authentic) name**. Use on **2 workers** (e.g. one with explore, one with exploit for prompt choice).
+  - **window** — Per-window only: extract dynamic (motion, gradient, camera, lighting, etc.) over windows of frames, grow **dynamic** and **narrative** registries, post dynamic + narrative discoveries and whole-video aggregates (learned_colors, learned_motion, learned_blends). Use on **1 worker**.
+  - **Unset** — **all**: current behaviour (both per-frame and per-window growth and sync).
 
-Static vs dynamic is a **registry classification** (pure per-frame vs non-pure multi-frame), not a workflow type.
+So: **2 workers** with `LOOP_EXTRACTION_FOCUS=frame`, **1 worker** with `LOOP_EXTRACTION_FOCUS=window`. Prompt choice (explorer / exploiter / main) is independent and set via **LOOP_EXPLOIT_RATIO_OVERRIDE** and **LOOP_WORKFLOW_TYPE**.
 
 ---
 
@@ -88,9 +90,9 @@ Each workflow is one **continuous loop** that repeats the same steps. Only **pro
 |----------|--------|
 | Colors in both static and dynamic? | Yes. Static = per-frame (static_colors). Dynamic = whole-video/aggregate (learned_colors). |
 | Audio in both static and dynamic? | Yes. Static = per-frame sound (static_sound). Dynamic = audio as blends (tempo/mood/presence in learned_blends). |
-| A workflow only for dynamic? | No. All three workflows run the same pipeline and grow static + dynamic + narrative. |
-| A workflow only for static? | No. Same as above. |
-| What actually differs between the three? | Only **prompt choice**: Explorer = 100% new prompts; Exploiter = 100% good prompts; Main = adjustable % (e.g. 70% good / 30% new). |
+| A workflow only for dynamic? | Yes. **1 worker** with `LOOP_EXTRACTION_FOCUS=window` grows only dynamic + narrative (blends over windows). |
+| A workflow only for static? | Yes. **2 workers** with `LOOP_EXTRACTION_FOCUS=frame` grow only static (per-frame extraction + discovery, authentic names). |
+| What actually differs? | **Extraction focus**: frame (per-frame only) vs window (per-window only) vs all. **Prompt choice** (explorer/exploiter/main) is independent. |
 | Fourth workflow (Interpretation)? | Yes. **Interpretation** runs `interpret_loop.py`; no create/render; stores prompt + instruction in D1; main loop uses `interpretation_prompts` from for-creation when picking prompts. |
 
 For config and env details, see `config/workflows.yaml` and [RAILWAY_CONFIG.md](RAILWAY_CONFIG.md).

@@ -65,6 +65,49 @@ def _gradient_value(
     return np.clip(v, 0, 1)
 
 
+def _render_pure_per_frame(
+    xx: "np.ndarray",
+    yy: "np.ndarray",
+    pure_colors: list[tuple[int, int, int]],
+    t: float,
+    seed: int,
+    intensity: float,
+) -> tuple["np.ndarray", "np.ndarray", "np.ndarray"]:
+    """
+    Pure-per-frame creation (§7): pure values from the registry at random pixel locations.
+
+    Within each frame, placement is by pixel (x, y) only; time is not a dimension inside
+    a single frame. Each pixel gets a pure color chosen by a deterministic hash of (x, y)
+    and optionally frame time t so that across frames the pattern varies (temporal
+    variation matters only in windows of multiple frames for extraction).
+    """
+    n_colors = len(pure_colors)
+    if n_colors == 0:
+        raise ValueError("pure_colors must be non-empty for pure_per_frame")
+    # Deterministic per-pixel index: hash of position + time + seed
+    h = (
+        np.floor(xx * 997.0).astype(np.int64)
+        + np.floor(yy * 997.0).astype(np.int64) * 1000
+        + int(t * 200.0) * 1000000
+        + seed * 100000000
+    )
+    idx = np.mod(np.abs(h), n_colors)
+    R_arr = np.array([c[0] for c in pure_colors], dtype=np.float32)
+    G_arr = np.array([c[1] for c in pure_colors], dtype=np.float32)
+    B_arr = np.array([c[2] for c in pure_colors], dtype=np.float32)
+    r = R_arr[idx]
+    g = G_arr[idx]
+    b = B_arr[idx]
+    # Light noise so extraction still sees local variation (emergent blends)
+    n = np.sin(xx * 12.9898 + yy * 78.233 + (seed + t * 100) * 43758.5453) * 43758.5453
+    n = n - np.floor(n)
+    amp = 12 * intensity
+    r = np.clip(r + (n - 0.5) * amp, 0, 255)
+    g = np.clip(g + (n - 0.5) * amp, 0, 255)
+    b = np.clip(b + (n - 0.5) * amp, 0, 255)
+    return r, g, b
+
+
 def render_frame(
     spec: SceneSpec,
     t: float,
@@ -77,9 +120,11 @@ def render_frame(
     """
     Generate one RGB frame (H, W, 3) uint8 from our procedural algorithms.
     Supports vertical, radial, angled, horizontal gradients and camera motion (zoom, pan, rotate).
-    Uses values from primitive blending: palette_colors (blended RGB) is primary;
-    palette_name is fallback only when palette_colors is missing (e.g. legacy specs).
+    When creation_mode is pure_per_frame, uses randomly placed pure colors (§7) for emergent blends.
     """
+    creation_mode = getattr(spec, "creation_mode", "blended") or "blended"
+    pure_colors = getattr(spec, "pure_colors", None) or []
+
     palette = getattr(spec, "palette_colors", None)
     if not palette:
         palette = PALETTES.get(spec.palette_name, PALETTES["default"])
@@ -115,37 +160,41 @@ def render_frame(
         pan_y += np.sin(t * 17.3) * handheld * 0.02
     xx, yy = _apply_camera_transform(xx, yy, zoom, pan_x, pan_y, rotate)
 
-    # Compute gradient value per pixel
-    v = _gradient_value(xx, yy, gradient_type, motion_val)
-    idx = v * (len(palette) - 1)
-    i0 = np.clip(np.floor(idx).astype(np.int32), 0, len(palette) - 2)
-    i1 = i0 + 1
-    frac = idx - i0
+    if creation_mode == "pure_per_frame" and pure_colors:
+        r, g, b = _render_pure_per_frame(xx, yy, pure_colors, t, seed, intensity)
+    else:
+        # Compute gradient value per pixel (blended mode)
+        v = _gradient_value(xx, yy, gradient_type, motion_val)
+        idx = v * (len(palette) - 1)
+        i0 = np.clip(np.floor(idx).astype(np.int32), 0, len(palette) - 2)
+        i1 = i0 + 1
+        frac = idx - i0
 
-    r0 = np.array([palette[i][0] for i in i0.flat]).reshape(i0.shape)
-    g0 = np.array([palette[i][1] for i in i0.flat]).reshape(i0.shape)
-    b0 = np.array([palette[i][2] for i in i0.flat]).reshape(i0.shape)
-    r1 = np.array([palette[i][0] for i in i1.flat]).reshape(i1.shape)
-    g1 = np.array([palette[i][1] for i in i1.flat]).reshape(i1.shape)
-    b1 = np.array([palette[i][2] for i in i1.flat]).reshape(i1.shape)
+        r0 = np.array([palette[i][0] for i in i0.flat]).reshape(i0.shape)
+        g0 = np.array([palette[i][1] for i in i0.flat]).reshape(i0.shape)
+        b0 = np.array([palette[i][2] for i in i0.flat]).reshape(i0.shape)
+        r1 = np.array([palette[i][0] for i in i1.flat]).reshape(i1.shape)
+        g1 = np.array([palette[i][1] for i in i1.flat]).reshape(i1.shape)
+        b1 = np.array([palette[i][2] for i in i1.flat]).reshape(i1.shape)
 
-    r = r0 * (1 - frac) + r1 * frac
-    g = g0 * (1 - frac) + g1 * frac
-    b = b0 * (1 - frac) + b1 * frac
+        r = r0 * (1 - frac) + r1 * frac
+        g = g0 * (1 - frac) + g1 * frac
+        b = b0 * (1 - frac) + b1 * frac
 
-    # Add noise texture (our algorithm — vectorized)
-    n = np.sin(xx * 12.9898 + yy * 78.233 + (seed + t * 100) * 43758.5453) * 43758.5453
-    n = n - np.floor(n)
-    amp = 20 * intensity
-    r = np.clip(r + (n - 0.5) * amp, 0, 255)
-    g = np.clip(g + (n - 0.5) * amp, 0, 255)
-    b = np.clip(b + (n - 0.5) * amp, 0, 255)
+        # Add noise texture (our algorithm — vectorized)
+        n = np.sin(xx * 12.9898 + yy * 78.233 + (seed + t * 100) * 43758.5453) * 43758.5453
+        n = n - np.floor(n)
+        amp = 20 * intensity
+        r = np.clip(r + (n - 0.5) * amp, 0, 255)
+        g = np.clip(g + (n - 0.5) * amp, 0, 255)
+        b = np.clip(b + (n - 0.5) * amp, 0, 255)
 
     # Shape overlay (soft circle or rect)
     shape_overlay = getattr(spec, "shape_overlay", "none") or "none"
-    if shape_overlay in ("circle", "rect") and palette:
-        mid = len(palette) // 2
-        cr, cg, cb = palette[mid][0], palette[mid][1], palette[mid][2]
+    overlay_palette = pure_colors if (creation_mode == "pure_per_frame" and pure_colors) else palette
+    if shape_overlay in ("circle", "rect") and overlay_palette:
+        mid = len(overlay_palette) // 2
+        cr, cg, cb = overlay_palette[mid][0], overlay_palette[mid][1], overlay_palette[mid][2]
         cx, cy = 0.5, 0.5
         if shape_overlay == "circle":
             dist = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2) * 2

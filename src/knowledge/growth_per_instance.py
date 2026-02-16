@@ -824,11 +824,16 @@ def grow_all_from_video(
     window_seconds: float = 1.0,
     collect_novel_for_sync: bool = False,
     spec: Any = None,
+    extraction_focus: str = "all",
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """
     Unified growth: single video read for both static and dynamic extraction.
     Runs per-frame static growth (color, sound) and per-window dynamic growth
     (motion, lighting, gradient, camera, etc.) in one pass.
+    extraction_focus: "all" (default) | "frame" | "window"
+      - "frame": only per-frame extraction and static growth (pure/static registry); all new values get authentic names.
+      - "window": only per-window extraction and dynamic growth (+ narrative from spec); blends only.
+      - "all": both (current behaviour).
     Returns: (added, novel_for_sync) with combined counts and payloads.
     """
     added: dict[str, Any] = {
@@ -867,8 +872,11 @@ def grow_all_from_video(
     if not path.exists():
         return added, novel_for_sync
 
-    ensure_static_primitives_seeded(config)
-    ensure_dynamic_primitives_seeded(config)
+    do_frame = extraction_focus in ("all", "frame")
+    do_window = extraction_focus in ("all", "window")
+
+    ensure_static_primitives_seeded(config) if do_frame else None
+    ensure_dynamic_primitives_seeded(config) if do_window else None
 
     try:
         frames, fps, width, height, audio_segments = read_video_once(
@@ -879,73 +887,75 @@ def grow_all_from_video(
         logging.getLogger(__name__).warning("grow_all_from_video: could not read video: %s", e)
         return added, novel_for_sync
 
-    out_static_colors = novel_for_sync["static_colors"] if collect_novel_for_sync else None
-    out_sound = novel_for_sync["static_sound"] if collect_novel_for_sync else None
+    out_static_colors = novel_for_sync["static_colors"] if (collect_novel_for_sync and do_frame) else None
+    out_sound = novel_for_sync["static_sound"] if (collect_novel_for_sync and do_frame) else None
 
-    for frame in _extract_static_from_preloaded(frames, fps, audio_segments):
-        if ensure_static_color_in_registry(
-            frame.get("color", {}),
-            source_prompt=prompt,
-            config=config,
-            out_novel=out_static_colors,
-        ):
-            added["static_colors"] += 1
-        if ensure_static_sound_in_registry(
-            frame.get("sound", {}), source_prompt=prompt, config=config, out_novel=out_sound
-        ):
-            added["static_sound"] += 1
+    if do_frame:
+        for frame in _extract_static_from_preloaded(frames, fps, audio_segments):
+            if ensure_static_color_in_registry(
+                frame.get("color", {}),
+                source_prompt=prompt,
+                config=config,
+                out_novel=out_static_colors,
+            ):
+                added["static_colors"] += 1
+            if ensure_static_sound_in_registry(
+                frame.get("sound", {}), source_prompt=prompt, config=config, out_novel=out_sound
+            ):
+                added["static_sound"] += 1
 
-    out_motion = novel_for_sync["motion"] if collect_novel_for_sync else None
-    out_time = novel_for_sync["time"] if collect_novel_for_sync else None
-    out_gradient = novel_for_sync["gradient"] if collect_novel_for_sync else None
-    out_camera = novel_for_sync["camera"] if collect_novel_for_sync else None
-    out_lighting = novel_for_sync["lighting"] if collect_novel_for_sync else None
-    out_composition = novel_for_sync["composition"] if collect_novel_for_sync else None
-    out_graphics = novel_for_sync["graphics"] if collect_novel_for_sync else None
-    out_temporal = novel_for_sync["temporal"] if collect_novel_for_sync else None
-    out_technical = novel_for_sync["technical"] if collect_novel_for_sync else None
-    out_audio_semantic = novel_for_sync["audio_semantic"] if collect_novel_for_sync else None
-    out_transition = novel_for_sync["transition"] if collect_novel_for_sync else None
-    out_depth = novel_for_sync["depth"] if collect_novel_for_sync else None
+    out_motion = novel_for_sync["motion"] if (collect_novel_for_sync and do_window) else None
+    out_time = novel_for_sync["time"] if (collect_novel_for_sync and do_window) else None
+    out_gradient = novel_for_sync["gradient"] if (collect_novel_for_sync and do_window) else None
+    out_camera = novel_for_sync["camera"] if (collect_novel_for_sync and do_window) else None
+    out_lighting = novel_for_sync["lighting"] if (collect_novel_for_sync and do_window) else None
+    out_composition = novel_for_sync["composition"] if (collect_novel_for_sync and do_window) else None
+    out_graphics = novel_for_sync["graphics"] if (collect_novel_for_sync and do_window) else None
+    out_temporal = novel_for_sync["temporal"] if (collect_novel_for_sync and do_window) else None
+    out_technical = novel_for_sync["technical"] if (collect_novel_for_sync and do_window) else None
+    out_audio_semantic = novel_for_sync["audio_semantic"] if (collect_novel_for_sync and do_window) else None
+    out_transition = novel_for_sync["transition"] if (collect_novel_for_sync and do_window) else None
+    out_depth = novel_for_sync["depth"] if (collect_novel_for_sync and do_window) else None
 
     registry_cache: dict[str, dict[str, Any]] = {}
 
-    for window in _extract_dynamic_from_preloaded(
-        frames, fps, width, height,
-        window_seconds=window_seconds,
-        audio_segments=audio_segments,
-    ):
-        if ensure_dynamic_motion_in_registry(window, source_prompt=prompt, config=config, out_novel=out_motion, registry_cache=registry_cache):
-            added["dynamic_motion"] += 1
-        if ensure_dynamic_time_in_registry(window, source_prompt=prompt, config=config, out_novel=out_time, registry_cache=registry_cache):
-            added["dynamic_time"] += 1
-        if ensure_dynamic_gradient_in_registry(window, source_prompt=prompt, config=config, out_novel=out_gradient, registry_cache=registry_cache):
-            added["dynamic_gradient"] += 1
-        if ensure_dynamic_camera_in_registry(window, source_prompt=prompt, config=config, out_novel=out_camera, registry_cache=registry_cache):
-            added["dynamic_camera"] += 1
-        if ensure_dynamic_lighting_in_registry(window, source_prompt=prompt, config=config, out_novel=out_lighting, registry_cache=registry_cache):
-            added["dynamic_lighting"] += 1
-        if ensure_dynamic_composition_in_registry(window, source_prompt=prompt, config=config, out_novel=out_composition, registry_cache=registry_cache):
-            added["dynamic_composition"] += 1
-        if ensure_dynamic_graphics_in_registry(window, source_prompt=prompt, config=config, out_novel=out_graphics, registry_cache=registry_cache):
-            added["dynamic_graphics"] += 1
-        if ensure_dynamic_temporal_in_registry(window, source_prompt=prompt, config=config, out_novel=out_temporal, registry_cache=registry_cache):
-            added["dynamic_temporal"] += 1
-        if ensure_dynamic_technical_in_registry(
-            window, width=width, height=height, fps=fps, source_prompt=prompt, config=config, out_novel=out_technical, registry_cache=registry_cache
+    if do_window:
+        for window in _extract_dynamic_from_preloaded(
+            frames, fps, width, height,
+            window_seconds=window_seconds,
+            audio_segments=audio_segments,
         ):
-            added["dynamic_technical"] += 1
-        if ensure_dynamic_audio_semantic_in_registry(window, source_prompt=prompt, config=config, out_novel=out_audio_semantic, registry_cache=registry_cache):
-            added["dynamic_audio_semantic"] += 1
-        if ensure_dynamic_transition_in_registry(window, source_prompt=prompt, config=config, out_novel=out_transition, registry_cache=registry_cache):
-            added["dynamic_transition"] += 1
-        if ensure_dynamic_depth_in_registry(window, source_prompt=prompt, config=config, out_novel=out_depth, registry_cache=registry_cache):
-            added["dynamic_depth"] += 1
+            if ensure_dynamic_motion_in_registry(window, source_prompt=prompt, config=config, out_novel=out_motion, registry_cache=registry_cache):
+                added["dynamic_motion"] += 1
+            if ensure_dynamic_time_in_registry(window, source_prompt=prompt, config=config, out_novel=out_time, registry_cache=registry_cache):
+                added["dynamic_time"] += 1
+            if ensure_dynamic_gradient_in_registry(window, source_prompt=prompt, config=config, out_novel=out_gradient, registry_cache=registry_cache):
+                added["dynamic_gradient"] += 1
+            if ensure_dynamic_camera_in_registry(window, source_prompt=prompt, config=config, out_novel=out_camera, registry_cache=registry_cache):
+                added["dynamic_camera"] += 1
+            if ensure_dynamic_lighting_in_registry(window, source_prompt=prompt, config=config, out_novel=out_lighting, registry_cache=registry_cache):
+                added["dynamic_lighting"] += 1
+            if ensure_dynamic_composition_in_registry(window, source_prompt=prompt, config=config, out_novel=out_composition, registry_cache=registry_cache):
+                added["dynamic_composition"] += 1
+            if ensure_dynamic_graphics_in_registry(window, source_prompt=prompt, config=config, out_novel=out_graphics, registry_cache=registry_cache):
+                added["dynamic_graphics"] += 1
+            if ensure_dynamic_temporal_in_registry(window, source_prompt=prompt, config=config, out_novel=out_temporal, registry_cache=registry_cache):
+                added["dynamic_temporal"] += 1
+            if ensure_dynamic_technical_in_registry(
+                window, width=width, height=height, fps=fps, source_prompt=prompt, config=config, out_novel=out_technical, registry_cache=registry_cache
+            ):
+                added["dynamic_technical"] += 1
+            if ensure_dynamic_audio_semantic_in_registry(window, source_prompt=prompt, config=config, out_novel=out_audio_semantic, registry_cache=registry_cache):
+                added["dynamic_audio_semantic"] += 1
+            if ensure_dynamic_transition_in_registry(window, source_prompt=prompt, config=config, out_novel=out_transition, registry_cache=registry_cache):
+                added["dynamic_transition"] += 1
+            if ensure_dynamic_depth_in_registry(window, source_prompt=prompt, config=config, out_novel=out_depth, registry_cache=registry_cache):
+                added["dynamic_depth"] += 1
 
-    if spec is not None:
-        audio_semantic = derive_audio_semantic_from_spec(spec)
-        fake_window = {"audio_semantic": audio_semantic}
-        if ensure_dynamic_audio_semantic_in_registry(fake_window, source_prompt=prompt, config=config, out_novel=out_audio_semantic, registry_cache=registry_cache):
-            added["dynamic_audio_semantic"] += 1
+        if spec is not None:
+            audio_semantic = derive_audio_semantic_from_spec(spec)
+            fake_window = {"audio_semantic": audio_semantic}
+            if ensure_dynamic_audio_semantic_in_registry(fake_window, source_prompt=prompt, config=config, out_novel=out_audio_semantic, registry_cache=registry_cache):
+                added["dynamic_audio_semantic"] += 1
 
     return added, novel_for_sync
