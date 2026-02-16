@@ -355,6 +355,9 @@ def generate_procedural_prompt(
         except (KeyError, ValueError):
             return None
 
+    max_attempts = 200
+    bias_audio = secure_random() < 0.18  # 18% of runs: ensure at least one audio modifier
+    use_instructive = instructive_ratio > 0 and secure_random() < instructive_ratio
     slot_pools = _build_slot_pools(knowledge) if use_instructive else None
     use_slot_based = (
         use_instructive
@@ -362,10 +365,6 @@ def generate_procedural_prompt(
         and all(slot_pools.get(k) for k in ("color", "motion", "lighting"))
         and secure_random() < 0.7
     )
-
-    max_attempts = 200
-    bias_audio = secure_random() < 0.18  # 18% of runs: ensure at least one audio modifier
-    use_instructive = instructive_ratio > 0 and secure_random() < instructive_ratio
 
     for _ in range(max_attempts):
         sub = secure_choice(sub_pool)
