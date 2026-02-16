@@ -69,6 +69,72 @@ TEMPLATES = [
     "{subject} feeling {mod}",
 ]
 
+# Instructive templates: read as user instructions so interpretation → video is tested
+INSTRUCTIVE_TEMPLATES = [
+    "Create a {subject} scene with {mod}",
+    "Show me a {subject} with {mod}",
+    "Make something {subject} that feels {mod}",
+    "I want a {subject} with {mod}",
+    "Give me a {subject} with {mod} feel",
+    "Render a {subject} with {mod}",
+]
+
+
+def _build_slot_pools_interpretation(knowledge: dict[str, Any] | None) -> dict[str, list[str]]:
+    """Build per-slot pools from pure/blends for interpretation prompts (dynamic values each use)."""
+    from ..knowledge.blend_names import is_semantic_name
+
+    color = list(dict.fromkeys(KEYWORD_TO_PALETTE.keys()))
+    motion = list(KEYWORD_TO_MOTION.keys())
+    lighting = list(KEYWORD_TO_LIGHTING.keys())
+    gradient = list(KEYWORD_TO_GRADIENT.keys())
+    camera = list(KEYWORD_TO_CAMERA.keys())
+    mood = list(dict.fromkeys(list(KEYWORD_TO_AUDIO_MOOD.keys()) + list(KEYWORD_TO_GENRE.keys())[:8]))
+
+    if knowledge:
+        for _key, data in (knowledge.get("learned_colors") or {}).items():
+            if isinstance(data, dict):
+                name = (data.get("name") or "").strip()
+                if name and len(name) >= 2 and is_semantic_name(name):
+                    color.append(name)
+        for m in (knowledge.get("learned_motion") or [])[:40]:
+            if isinstance(m, dict):
+                name = (m.get("name") or "").strip()
+                if name and len(name) >= 2 and is_semantic_name(name):
+                    motion.append(f"{name} motion")
+                trend = (m.get("motion_trend") or "").strip()
+                if trend and trend != "steady":
+                    motion.append(f"{trend} drift")
+        for item in (knowledge.get("learned_gradient") or [])[:15]:
+            v = item.get("gradient_type") if isinstance(item, dict) else (item if isinstance(item, str) else None)
+            if v and str(v).strip() and v not in gradient:
+                gradient.append(str(v).strip())
+        for item in (knowledge.get("learned_camera") or [])[:15]:
+            v = (item.get("camera_motion") or item.get("motion_type")) if isinstance(item, dict) else (item if isinstance(item, str) else None)
+            if v and str(v).strip() and v not in camera:
+                camera.append(str(v).strip())
+
+    return {
+        "color": [c for c in color if c],
+        "motion": [m for m in motion if m],
+        "lighting": [l for l in lighting if l],
+        "gradient": [g for g in gradient if g],
+        "camera": [c for c in camera if c],
+        "mood": [m for m in mood if m],
+    }
+
+
+# Slot-based instructive (same idea as automation): dynamic pure/blend values per template use
+INSTRUCTIVE_SLOT = [
+    "Create a {color} scene with {motion}",
+    "Show me {color} with {lighting}",
+    "Make something {motion} with {color} tones",
+    "I want a {color} vibe, {mood}",
+    "Create a {color} scene with {motion} and {lighting}",
+    "Show me {color} with {motion}, {mood}",
+    "Give me {motion} with {color} and {lighting}",
+]
+
 
 def _get_domain_keywords() -> dict[str, list[str]]:
     """Extract keywords by domain for variety."""
@@ -200,11 +266,12 @@ def generate_interpretation_prompt(
     seed: int | None = None,
     use_slang: bool = True,
     use_dialect: bool = True,
+    instructive_ratio: float = 0.5,
 ) -> str | None:
     """
     Generate one user-like prompt for the interpretation workflow.
     Uses primitives + learned/extracted values (colors, motion, etc.) from registries.
-    Includes slang, dialect, and informal variants for linguistic coverage.
+    When instructive_ratio > 0, that fraction uses instructive phrasing (Create/Show/Make).
     """
     if seed is not None:
         random.seed(seed)
@@ -233,19 +300,45 @@ def generate_interpretation_prompt(
     if use_dialect and secure_random() < 0.2:
         variant_mode = "dialect"
 
+    use_instructive = instructive_ratio > 0 and secure_random() < instructive_ratio
+    slot_pools = _build_slot_pools_interpretation(knowledge) if use_instructive else None
+    use_slot_based = (
+        use_instructive
+        and slot_pools
+        and all(slot_pools.get(k) for k in ("color", "motion", "lighting"))
+        and secure_random() < 0.6
+    )
+
+    template_list = INSTRUCTIVE_TEMPLATES if use_instructive else TEMPLATES
+
     max_attempts = 150
     for _ in range(max_attempts):
-        sub = secure_choice(subjects)
-        mod = secure_choice(modifiers)
+        if use_slot_based and slot_pools:
+            filled = {k: secure_choice(pool) for k, pool in slot_pools.items() if pool}
+            for k in ("gradient", "camera", "mood"):
+                if k not in filled and slot_pools.get("motion"):
+                    filled[k] = secure_choice(slot_pools["motion"])
+            if use_slang and secure_random() < 0.3:
+                for k in list(filled.keys()):
+                    filled[k] = _apply_variant(filled[k], "slang")
+            tmpl = secure_choice(INSTRUCTIVE_SLOT)
+            try:
+                prompt = tmpl.format(**{k: filled.get(k, "") for k in ("color", "motion", "lighting", "gradient", "camera", "mood")})
+            except (KeyError, ValueError):
+                prompt = None
+        else:
+            prompt = None
 
-        sub = _apply_variant(sub, variant_mode)
-        mod = _apply_variant(mod, variant_mode)
-
-        tmpl = secure_choice(TEMPLATES)
-        try:
-            prompt = tmpl.format(subject=sub, mod=mod)
-        except (KeyError, ValueError):
-            prompt = f"{sub} with {mod}"
+        if not prompt:
+            sub = secure_choice(subjects)
+            mod = secure_choice(modifiers)
+            sub = _apply_variant(sub, variant_mode)
+            mod = _apply_variant(mod, variant_mode)
+            tmpl = secure_choice(template_list)
+            try:
+                prompt = tmpl.format(subject=sub, mod=mod)
+            except (KeyError, ValueError):
+                prompt = f"Create a {sub} with {mod}" if use_instructive else f"{sub} with {mod}"
 
         if prompt:
             prompt = prompt.strip()

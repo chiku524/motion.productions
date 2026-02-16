@@ -73,14 +73,15 @@ def pick_prompt(
         # Exclude recently used for variety even when exploiting
         candidates = [p for p in good if p not in recent]
         return secure_choice(candidates) if candidates else secure_choice(good)
-    # When exploring: sometimes use a pre-interpreted user prompt from the interpretation registry
-    if interpretation_prompts and secure_random() < 0.35:
+    # When exploring: prefer pre-interpreted user prompts (often instructive) or instructive procedural prompts
+    if interpretation_prompts and secure_random() < 0.45:
         candidates = [p for p in interpretation_prompts if isinstance(p, dict) and p.get("prompt") and p["prompt"] not in recent]
         if candidates:
             return secure_choice(candidates)["prompt"]
+    # Prefer instructive phrasing (Create/Show/Make) so the loop tests interpretation → video
     return (
-        generate_procedural_prompt(avoid=recent, knowledge=knowledge)
-        or (secure_choice(good) if good else generate_procedural_prompt(knowledge=knowledge))
+        generate_procedural_prompt(avoid=recent, knowledge=knowledge, instructive_ratio=0.65)
+        or (secure_choice(good) if good else generate_procedural_prompt(knowledge=knowledge, instructive_ratio=0.65))
     )
 
 
@@ -334,6 +335,16 @@ def run() -> None:
             instruction = interpret_user_prompt(prompt, default_duration=duration)
             from src.knowledge import get_knowledge_for_creation
             spec = build_spec_from_instruction(instruction, knowledge=get_knowledge_for_creation(config))
+            # Learn from this prompt: extract (span, canonical, domain) so interpretation improves (slang, multi-sense)
+            if args.api_base:
+                try:
+                    from src.interpretation.linguistic import extract_linguistic_mappings
+                    from src.interpretation.linguistic_client import post_linguistic_growth
+                    mappings = extract_linguistic_mappings(prompt, instruction)
+                    if mappings:
+                        post_linguistic_growth(args.api_base, mappings)
+                except Exception as e:
+                    logger.warning("Linguistic growth from loop run failed: %s", e)
             from src.knowledge import extract_from_video
             ext = extract_from_video(path)
             analysis_dict = ext.to_dict()

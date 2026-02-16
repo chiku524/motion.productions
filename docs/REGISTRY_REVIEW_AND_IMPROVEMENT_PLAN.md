@@ -85,7 +85,14 @@ So: **themes, plots, settings, genre, mood, style, scene_type** in the export ar
 
 - **Storage:** Resolved prompts (prompt → instruction_json) in D1 `interpretations` (status = 'done').
 - **Interpret loop:** `scripts/interpret_loop.py` polls `GET /api/interpret/queue`, runs `interpret_user_prompt(prompt)`, stores via `PATCH /api/interpret/:id` or `POST /api/interpretations`.
-- **Prompt creation:** Main loop uses `get_knowledge_for_creation`; when exploring, with ~35% probability it picks from **interpretation_prompts** (pre-interpreted user prompts). New procedural prompts come from `generate_procedural_prompt()` (e.g. in `automation/prompt_gen.py` or `interpretation/prompt_gen.py`) using keywords, slang/dialect, and knowledge (learned colors, motion, etc.).
+- **Prompt creation:** Main loop uses `get_knowledge_for_creation`; when exploring, with ~45% probability it picks from **interpretation_prompts** (pre-interpreted user prompts). New procedural prompts come from `generate_procedural_prompt(..., instructive_ratio=0.65)` so most exploration uses **instructive** phrasing (Create/Show/Make) to test interpretation → video.
+
+### 4.1.1 Instructive prompts migration
+
+- **Goal:** Prompts should read as **instructions** (e.g. “Create a calm ocean scene with gentle waves”) rather than blend names (“green, Leafvale motion and Goldwood”). The same keyword vocabulary (palette, motion, lighting, etc.) is used so `interpret_user_prompt` can resolve them; the builder then turns the interpreted instruction into a spec and the renderer produces the MP4.
+- **Implementation:** `automation/prompt_gen.py` has `INSTRUCTIVE_SINGLE`, `INSTRUCTIVE_DOUBLE`, `INSTRUCTIVE_TRIPLE`; `generate_procedural_prompt(..., instructive_ratio=0.65)` uses them when exploring. `interpretation/prompt_gen.py` has `INSTRUCTIVE_TEMPLATES` and `generate_interpretation_prompt(..., instructive_ratio=0.5)`. Loop explore path uses 45% interpretation_prompts, then procedural with instructive_ratio=0.65.
+- **Dynamic slot-based templates:** Slots (color, motion, lighting, gradient, camera, mood) are filled from **pure/blend pools** (`_build_slot_pools` / `_build_slot_pools_interpretation`): learned_colors, learned_motion, learned_gradient, learned_camera + keyword fallbacks. Each template use picks different values. Automation: 70% of instructive prompts use slot-based; interpretation: 60%.
+- **Interpretation learning:** Every loop run calls `extract_linguistic_mappings(prompt, instruction)` and `post_linguistic_growth(api_base, mappings)` so the linguistic registry grows from template prompts (slang, same word different meaning per domain). Interpret worker does the same for its generated prompts.
 
 ### 4.2 Your requirements
 

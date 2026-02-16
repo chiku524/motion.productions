@@ -84,6 +84,115 @@ TEMPLATES_TRIPLE = [
 ]
 TEMPLATES_ALL = TEMPLATES_SINGLE + TEMPLATES_DOUBLE + TEMPLATES_TRIPLE
 
+# Instructive templates: read as user instructions (create/show/make) so the loop tests interpretation → video.
+# Same vocabulary (subject/modifier) so the parser resolves palette, motion, lighting, etc.
+INSTRUCTIVE_SINGLE = [
+    "Create a {subject} scene with {modifier}",
+    "Show me a {subject} with {modifier}",
+    "Make something {subject} that feels {modifier}",
+    "I want a {subject} vibe with {modifier}",
+    "Give me a {subject} with {modifier} feel",
+    "Render a {subject} look with {modifier}",
+]
+INSTRUCTIVE_DOUBLE = [
+    "Create a {subject} scene with {mod1} and {mod2}",
+    "Show me something {subject} with {mod1} and {mod2}",
+    "Make a {subject} that feels {mod1} and {mod2}",
+    "I want a {subject} with {mod1}, {mod2}",
+    "Give me a {subject} with {mod1} and {mod2} motion",
+    "Render a {subject} in {mod1} {mod2} style",
+]
+INSTRUCTIVE_TRIPLE = [
+    "Create a {subject} with {mod1}, {mod2} and {mod3}",
+    "Show me a {subject} that has {mod1}, {mod2} and {mod3}",
+    "Make something {subject} with {mod1}, {mod2} and {mod3}",
+]
+INSTRUCTIVE_ALL = INSTRUCTIVE_SINGLE + INSTRUCTIVE_DOUBLE + INSTRUCTIVE_TRIPLE
+
+# Slot-based instructive templates: each slot filled from pure/blend pools so each use gets different values.
+# Slots: color (palette/learned colors), motion, lighting, gradient, camera, mood.
+INSTRUCTIVE_SLOT_SINGLE = [
+    "Create a {color} scene with {motion}",
+    "Show me {color} with {lighting}",
+    "Make something {motion} with {color} tones",
+    "I want a {color} vibe, {mood}",
+    "Give me {motion} and {lighting}",
+]
+INSTRUCTIVE_SLOT_DOUBLE = [
+    "Create a {color} scene with {motion} and {lighting}",
+    "Show me {color} with {motion}, {mood}",
+    "Make a {color} that feels {motion} and {lighting}",
+    "I want {color} with {gradient} and {camera}",
+    "Give me {motion} with {color} and {lighting}",
+    "Render a {color} look with {motion} and {mood}",
+]
+INSTRUCTIVE_SLOT_TRIPLE = [
+    "Create a {color} with {motion}, {lighting} and {mood}",
+    "Show me {color} with {motion}, {lighting} and {gradient}",
+    "Make something {color} with {motion}, {lighting} and {camera}",
+]
+INSTRUCTIVE_SLOT_ALL = INSTRUCTIVE_SLOT_SINGLE + INSTRUCTIVE_SLOT_DOUBLE + INSTRUCTIVE_SLOT_TRIPLE
+
+
+def _build_slot_pools(knowledge: dict[str, Any] | None) -> dict[str, list[str]]:
+    """
+    Build per-slot pools from pure elements and blends (registry-first, then origin/keywords).
+    Each template use picks different values from these pools so prompts stay dynamic.
+    """
+    from ..knowledge.blend_names import is_semantic_name
+
+    # Color: palette keywords + learned color names (parser resolves via keywords or linguistic registry)
+    color = list(dict.fromkeys(SUBJECTS_BASE))
+    motion = list(dict.fromkeys(k for k in KEYWORD_TO_MOTION.keys()))
+    lighting = list(KEYWORD_TO_LIGHTING.keys())
+    gradient = list(KEYWORD_TO_GRADIENT.keys())
+    camera = list(KEYWORD_TO_CAMERA.keys())
+    mood = list(KEYWORD_TO_AUDIO_MOOD.keys()) + list(KEYWORD_TO_GENRE.keys())[:8]
+    mood = list(dict.fromkeys(mood))
+
+    if knowledge:
+        # Learned colors: names as display (e.g. "Slate", "Ocean"); parser may resolve via hints or linguistic
+        for _key, data in (knowledge.get("learned_colors") or {}).items():
+            if isinstance(data, dict):
+                name = (data.get("name") or "").strip()
+                if name and len(name) >= 2 and is_semantic_name(name):
+                    color.append(name)
+        # Learned motion: names and trend phrases
+        for m in (knowledge.get("learned_motion") or [])[:40]:
+            if isinstance(m, dict):
+                name = (m.get("name") or "").strip()
+                if name and len(name) >= 2 and is_semantic_name(name):
+                    motion.append(f"{name} motion")
+                trend = (m.get("motion_trend") or "").strip()
+                if trend and trend != "steady":
+                    motion.append(f"{trend} drift")
+        # Gradient/camera from API (learned + origin)
+        for item in (knowledge.get("learned_gradient") or [])[:15]:
+            v = item.get("gradient_type") if isinstance(item, dict) else (item if isinstance(item, str) else None)
+            if v and str(v).strip() and v not in gradient:
+                gradient.append(str(v).strip())
+        for item in (knowledge.get("origin_gradient") or [])[:8]:
+            v = item if isinstance(item, str) else (item.get("gradient_type") if isinstance(item, dict) else None)
+            if v and str(v).strip() and v not in gradient:
+                gradient.append(str(v).strip())
+        for item in (knowledge.get("learned_camera") or [])[:15]:
+            v = (item.get("camera_motion") or item.get("motion_type")) if isinstance(item, dict) else (item if isinstance(item, str) else None)
+            if v and str(v).strip() and v not in camera:
+                camera.append(str(v).strip())
+        for item in (knowledge.get("origin_camera") or [])[:8]:
+            v = item if isinstance(item, str) else (item.get("camera_motion") or item.get("motion_type"))
+            if v and str(v).strip() and v not in camera:
+                camera.append(str(v).strip())
+
+    return {
+        "color": [c for c in color if c],
+        "motion": [m for m in motion if m],
+        "lighting": [l for l in lighting if l],
+        "gradient": [g for g in gradient if g],
+        "camera": [c for c in camera if c],
+        "mood": [m for m in mood if m],
+    }
+
 
 def _expand_from_knowledge(knowledge: dict[str, Any] | None) -> tuple[list[str], list[str]]:
     """
@@ -166,10 +275,13 @@ def generate_procedural_prompt(
     knowledge: dict[str, Any] | None = None,
     seed: int | None = None,
     avoid: set[str] | None = None,
+    instructive_ratio: float = 0.0,
 ) -> str | None:
     """
     Generate one prompt by combining subject + modifier(s) from keyword data and learned discoveries.
     When knowledge is provided, uses learned colors, motion profiles, and proven keywords.
+    When instructive_ratio > 0, that fraction of attempts use instructive templates (e.g. "Create a
+    calm ocean scene with gentle waves") so the loop tests interpretation → video.
     Returns None if no new combination found (avoid set exhausted).
     """
     if seed is not None:
@@ -207,8 +319,54 @@ def generate_procedural_prompt(
             chosen.append(m)
         return chosen
 
+    def _format_instructive(sub: str, m1: str, m2: str, m3: str) -> str:
+        r = secure_random()
+        if r < 0.25 and m1 != m2 and m2 != m3 and m1 != m3:
+            tmpl = secure_choice(INSTRUCTIVE_TRIPLE)
+            try:
+                return tmpl.format(subject=sub, mod1=m1, mod2=m2, mod3=m3)
+            except (KeyError, ValueError):
+                return f"Create a {sub} with {m1}, {m2} and {m3}"
+        if r < 0.6 and m1 != m2:
+            tmpl = secure_choice(INSTRUCTIVE_DOUBLE)
+            try:
+                return tmpl.format(subject=sub, mod1=m1, mod2=m2)
+            except (KeyError, ValueError):
+                return f"Create a {sub} scene with {m1} and {m2}"
+        tmpl = secure_choice(INSTRUCTIVE_SINGLE)
+        try:
+            return tmpl.format(subject=sub, modifier=m1)
+        except (KeyError, ValueError):
+            return f"Create a {sub} scene with {m1}"
+
+    def _format_slot_instructive(slots: dict[str, list[str]]) -> str | None:
+        """Format a slot-based instructive template with random values from each pool."""
+        required = {"color", "motion", "lighting"}
+        if not all(slots.get(k) for k in required):
+            return None
+        filled = {k: secure_choice(pool) for k, pool in slots.items() if pool}
+        # Templates may use gradient, camera, mood; fallback to motion/lighting if a slot is missing
+        for k in ("gradient", "camera", "mood"):
+            if k not in filled and slots.get("motion"):
+                filled[k] = secure_choice(slots["motion"])
+        tmpl = secure_choice(INSTRUCTIVE_SLOT_ALL)
+        try:
+            return tmpl.format(**{k: filled.get(k, "") for k in ("color", "motion", "lighting", "gradient", "camera", "mood")})
+        except (KeyError, ValueError):
+            return None
+
+    slot_pools = _build_slot_pools(knowledge) if use_instructive else None
+    use_slot_based = (
+        use_instructive
+        and slot_pools
+        and all(slot_pools.get(k) for k in ("color", "motion", "lighting"))
+        and secure_random() < 0.7
+    )
+
     max_attempts = 200
     bias_audio = secure_random() < 0.18  # 18% of runs: ensure at least one audio modifier
+    use_instructive = instructive_ratio > 0 and secure_random() < instructive_ratio
+
     for _ in range(max_attempts):
         sub = secure_choice(sub_pool)
         mods = _pick_diverse_mods(3, bias_audio=bias_audio)
@@ -216,34 +374,39 @@ def generate_procedural_prompt(
         mod2 = mods[1] if len(mods) > 1 else mod1
         mod3 = mods[2] if len(mods) > 2 else mod2
 
-        # Pick template: 40% double, 25% triple (when we have 3 distinct), 35% single — more variety
-        r = secure_random()
-        if r < 0.25 and len(mod_pool) >= 3 and mod1 != mod2 and mod2 != mod3 and mod1 != mod3:
-            templates = TEMPLATES_TRIPLE
-            tmpl = secure_choice(templates)
-            try:
-                prompt = tmpl.format(subject=sub, mod1=mod1, mod2=mod2, mod3=mod3)
-            except (KeyError, ValueError):
-                prompt = f"{sub}, {mod1}, {mod2} and {mod3}"
-        elif r < 0.65 and mod1 != mod2:
-            templates = TEMPLATES_DOUBLE
-            tmpl = secure_choice(templates)
-            try:
-                prompt = tmpl.format(subject=sub, mod1=mod1, mod2=mod2)
-            except (KeyError, ValueError):
-                prompt = f"{sub}, {mod1} and {mod2}"
+        if use_slot_based and slot_pools:
+            prompt = _format_slot_instructive(slot_pools)
+        elif use_instructive:
+            prompt = _format_instructive(sub, mod1, mod2, mod3)
         else:
-            templates = TEMPLATES_SINGLE
-            tmpl = secure_choice(templates)
-            try:
-                if "mod2" in tmpl:
+            # Pick template: 40% double, 25% triple (when we have 3 distinct), 35% single — more variety
+            r = secure_random()
+            if r < 0.25 and len(mod_pool) >= 3 and mod1 != mod2 and mod2 != mod3 and mod1 != mod3:
+                templates = TEMPLATES_TRIPLE
+                tmpl = secure_choice(templates)
+                try:
+                    prompt = tmpl.format(subject=sub, mod1=mod1, mod2=mod2, mod3=mod3)
+                except (KeyError, ValueError):
+                    prompt = f"{sub}, {mod1}, {mod2} and {mod3}"
+            elif r < 0.65 and mod1 != mod2:
+                templates = TEMPLATES_DOUBLE
+                tmpl = secure_choice(templates)
+                try:
                     prompt = tmpl.format(subject=sub, mod1=mod1, mod2=mod2)
-                elif "modifier" in tmpl:
-                    prompt = tmpl.format(subject=sub, modifier=mod1)
-                else:
-                    prompt = tmpl.format(subject=sub)
-            except (KeyError, ValueError):
-                prompt = f"{sub}, {mod1}"
+                except (KeyError, ValueError):
+                    prompt = f"{sub}, {mod1} and {mod2}"
+            else:
+                templates = TEMPLATES_SINGLE
+                tmpl = secure_choice(templates)
+                try:
+                    if "mod2" in tmpl:
+                        prompt = tmpl.format(subject=sub, mod1=mod1, mod2=mod2)
+                    elif "modifier" in tmpl:
+                        prompt = tmpl.format(subject=sub, modifier=mod1)
+                    else:
+                        prompt = tmpl.format(subject=sub)
+                except (KeyError, ValueError):
+                    prompt = f"{sub}, {mod1}"
 
         if prompt and prompt not in avoid and not _is_near_duplicate(prompt, avoid):
             return prompt
