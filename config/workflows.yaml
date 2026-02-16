@@ -1,34 +1,36 @@
 # Multi-workflow configurations for Railway / Render / local
 # Copy env vars per service when creating multiple workers.
 #
-# INTENDED_LOOP dual-workflow design:
-#   - Workflow A (interpretation focus): ready for any user prompt; refine known-good.
-#   - Workflow B (growth focus): discovery; maximize new values in all three registries.
-# Both run the SAME full loop (interpret → create → render → extract → grow → sync).
-# The only difference is prompt selection: exploit (reuse good) vs explore (new combos).
+# Two dimensions:
+#   1. Prompt choice: explorer (100% explore) | exploiter (100% exploit) | balanced (UI ratio).
+#   2. Extraction focus: frame (per-frame / pure static only) | window (per-window blends only).
+# Set LOOP_EXTRACTION_FOCUS so that 2 workers do frame and 1 does window.
 #
-# Mapping: Explorer = Workflow B focus. Exploiter = Workflow A focus. Balanced = mix.
+# Recommended: Explorer + Exploiter = frame (2 frame workers). Balanced = window (1 window worker).
 
 workflows:
   explorer:
-    description: "Workflow B focus — 100% explore; broad discovery, maximizes registry growth"
+    description: "Frame-focused — 100% explore; per-frame extraction + static registry only; authentic names"
     env:
+      API_BASE: https://motion.productions
       LOOP_EXPLOIT_RATIO_OVERRIDE: "0"
       LOOP_WORKFLOW_TYPE: "explorer"
-      API_BASE: https://motion.productions
+      LOOP_EXTRACTION_FOCUS: "frame"
 
   balanced:
-    description: "Mixed — uses webapp config (default 70% exploit / 30% explore)"
+    description: "Window-focused — uses webapp config (exploit/explore ratio); per-window extraction + dynamic + narrative"
     env:
       API_BASE: https://motion.productions
+      LOOP_EXTRACTION_FOCUS: "window"
       # LOOP_WORKFLOW_TYPE: "main"  # optional, for badge on site
 
   exploiter:
-    description: "Workflow A focus — 100% exploit; refines known-good prompts"
+    description: "Frame-focused — 100% exploit; per-frame extraction + static registry only; authentic names"
     env:
+      API_BASE: https://motion.productions
       LOOP_EXPLOIT_RATIO_OVERRIDE: "1"
       LOOP_WORKFLOW_TYPE: "exploiter"
-      API_BASE: https://motion.productions
+      LOOP_EXTRACTION_FOCUS: "frame"
 
   interpretation:
     description: "Interpretation only — no create/render; fills interpretation registry (D1) for main pipeline"

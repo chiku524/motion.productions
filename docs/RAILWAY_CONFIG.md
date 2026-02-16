@@ -1,12 +1,12 @@
 # Railway config checklist — workflows on motion.productions
 
-Use this to confirm **Explorer**, **Exploiter**, and optionally **Balanced** and **Interpretation** are running. Explorer/Exploiter/Balanced output appears in **Recent videos** and **Recent activity** on [motion.productions](https://motion.productions). The **Interpretation** worker does not create videos; it only interprets user prompts and stores them in D1 so the main pipeline has more prompts to work with.
+Use this to confirm **Explorer**, **Exploiter**, **Balanced**, and **Interpretation** are running. The three video workflows differ by **prompt choice** (explore / exploit / UI) and **extraction focus** (frame vs window): **2 workers** do per-frame (pure/static) extraction only; **1 worker** does per-window (blended) extraction only. Set **LOOP_EXTRACTION_FOCUS** on each service as below.
 
 ---
 
 ## 1. Project layout
 
-- **One Railway project** with **two to four services** (Explorer, Exploiter, optional Balanced, optional Interpretation).
+- **One Railway project** with **three or four services** (Explorer, Exploiter, Balanced, optional Interpretation).
 - **Same repo** for all: root = repo root (not `cloudflare/`).
 - **Same build**: Dockerfile.
 - **Start command**:
@@ -15,9 +15,19 @@ Use this to confirm **Explorer**, **Exploiter**, and optionally **Balanced** and
 
 Only **environment variables** and **start command** differ per service.
 
+**Reconfiguration summary:** Add **LOOP_EXTRACTION_FOCUS** to each of the 3 video services. No new secrets; only env vars below.
+
+| Service    | LOOP_EXTRACTION_FOCUS | LOOP_EXPLOIT_RATIO_OVERRIDE | LOOP_WORKFLOW_TYPE | What it does |
+|------------|------------------------|-----------------------------|--------------------|--------------|
+| **Explorer**  | `frame` | `0` | `explorer` | Per-frame extraction only (static registry); 100% explore; authentic names. |
+| **Exploiter** | `frame` | `1` | `exploiter` | Per-frame extraction only (static registry); 100% exploit; authentic names. |
+| **Balanced**  | `window` | (do not set) | `main` (optional) | Per-window extraction only (dynamic + narrative + whole-video blends); ratio from UI. |
+
+**Interpretation** (no video): no LOOP_EXTRACTION_FOCUS; uses `interpret_loop.py` and `API_BASE` only.
+
 ---
 
-## 2. Service 1 — Explorer (discovery / growth focus)
+## 2. Service 1 — Explorer (frame-focused, 100% explore)
 
 | Setting | Value |
 |--------|--------|
@@ -31,19 +41,20 @@ Only **environment variables** and **start command** differ per service.
 | Variable | Value |
 |----------|--------|
 | `API_BASE` | `https://motion.productions` |
+| `LOOP_EXTRACTION_FOCUS` | `frame` |
 | `LOOP_EXPLOIT_RATIO_OVERRIDE` | `0` |
 
-**Optional (for explicit badge):**
+**Optional (for badge):**
 
 | Variable | Value |
 |----------|--------|
 | `LOOP_WORKFLOW_TYPE` | `explorer` |
 
-Effect: 100% **explore** — always picks new procedural prompts; maximizes discovery and registry growth. Videos show **Explore** on the site.
+Effect: **Per-frame extraction only** (pure/static registry); 100% **explore** prompts. New values get authentic names. Videos show **Explore** on the site.
 
 ---
 
-## 3. Service 2 — Exploiter (interpretation / refinement focus)
+## 3. Service 2 — Exploiter (frame-focused, 100% exploit)
 
 | Setting | Value |
 |--------|--------|
@@ -57,15 +68,16 @@ Effect: 100% **explore** — always picks new procedural prompts; maximizes disc
 | Variable | Value |
 |----------|--------|
 | `API_BASE` | `https://motion.productions` |
+| `LOOP_EXTRACTION_FOCUS` | `frame` |
 | `LOOP_EXPLOIT_RATIO_OVERRIDE` | `1` |
 
-**Optional (for explicit badge):**
+**Optional (for badge):**
 
 | Variable | Value |
 |----------|--------|
 | `LOOP_WORKFLOW_TYPE` | `exploiter` |
 
-Effect: 100% **exploit** — reuses known-good prompts; refines interpretation and creation. Videos show **Exploit** on the site.
+Effect: **Per-frame extraction only** (pure/static registry); 100% **exploit** (known-good prompts). New values get authentic names. Videos show **Exploit** on the site.
 
 ---
 
@@ -80,13 +92,16 @@ This is the **middle** workflow: exploit/explore ratio, delay, and duration come
 | **Builder** | Dockerfile |
 | **Start Command** | `python scripts/automate_loop.py` |
 
-**Environment variables:**
+**Environment variables (required):**
 
 | Variable | Value |
 |----------|--------|
 | `API_BASE` | `https://motion.productions` |
+| `LOOP_EXTRACTION_FOCUS` | `window` |
 
-Do **not** set `LOOP_EXPLOIT_RATIO_OVERRIDE`. Optionally set `LOOP_WORKFLOW_TYPE=main` for the **main** badge on the site.
+Do **not** set `LOOP_EXPLOIT_RATIO_OVERRIDE` (ratio comes from webapp). Optional: `LOOP_WORKFLOW_TYPE=main` for the **main** badge on the site.
+
+Effect: **Per-window extraction only** (dynamic + narrative + learned_colors, learned_motion, learned_blends). Prompt choice from UI.
 
 ---
 
@@ -119,26 +134,29 @@ Effect: Fills the **interpretation registry** (D1 `interpretations` table) from 
 
 ## 6. Quick reference (copy-paste)
 
-**Explorer**
+**Explorer (frame-focused, 100% explore)**
 
 ```env
 API_BASE=https://motion.productions
+LOOP_EXTRACTION_FOCUS=frame
 LOOP_EXPLOIT_RATIO_OVERRIDE=0
 LOOP_WORKFLOW_TYPE=explorer
 ```
 
-**Exploiter**
+**Exploiter (frame-focused, 100% exploit)**
 
 ```env
 API_BASE=https://motion.productions
+LOOP_EXTRACTION_FOCUS=frame
 LOOP_EXPLOIT_RATIO_OVERRIDE=1
 LOOP_WORKFLOW_TYPE=exploiter
 ```
 
-**Balanced (UI-controlled)**
+**Balanced (window-focused, UI-controlled)**
 
 ```env
 API_BASE=https://motion.productions
+LOOP_EXTRACTION_FOCUS=window
 # Do not set LOOP_EXPLOIT_RATIO_OVERRIDE — uses webapp Loop controls
 LOOP_WORKFLOW_TYPE=main
 ```
