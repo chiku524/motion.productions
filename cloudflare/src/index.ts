@@ -619,10 +619,11 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       }
       const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
       if (!prompt) return err("prompt is required");
-      if (isGibberishPrompt(prompt, true)) return err("prompt appears to be gibberish; interpretation registry requires meaningful prompts");
+      const source = typeof body.source === "string" && /^(web|worker|loop|backfill|generate)$/.test(body.source) ? body.source : "worker";
+      // Gibberish check: skip for source "loop" so every video run is recorded (interpretation registry grows from main workers)
+      if (source !== "loop" && isGibberishPrompt(prompt, true)) return err("prompt appears to be gibberish; interpretation registry requires meaningful prompts");
       const instruction = body.instruction && typeof body.instruction === "object" ? body.instruction : null;
       if (!instruction) return err("instruction is required");
-      const source = typeof body.source === "string" && /^(web|worker|loop|backfill)$/.test(body.source) ? body.source : "worker";
       const id = uuid();
       await env.DB.prepare(
         "INSERT INTO interpretations (id, prompt, instruction_json, source, status) VALUES (?, ?, ?, ?, 'done')"
@@ -847,14 +848,18 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       }
       for (const c of body.colors || []) {
         const existing = await env.DB.prepare("SELECT id, name, count FROM learned_colors WHERE color_key = ?").bind(c.key).first();
+        const depthJson = c.depth_breakdown && typeof c.depth_breakdown === "object" ? JSON.stringify(c.depth_breakdown) : null;
         if (existing) {
           await env.DB.prepare("UPDATE learned_colors SET count = count + 1 WHERE color_key = ?").bind(c.key).run();
+          if (depthJson) {
+            await env.DB.prepare("UPDATE learned_colors SET depth_breakdown_json = ? WHERE color_key = ?").bind(depthJson, c.key).run();
+          }
         } else {
-          const name = await generateUniqueName(env);
-          await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+          const name = (c.name && String(c.name).trim()) || await generateUniqueName(env);
+          if (!c.name || !String(c.name).trim()) await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
           await env.DB.prepare(
-            "INSERT INTO learned_colors (id, color_key, r, g, b, count, sources_json, name) VALUES (?, ?, ?, ?, ?, 1, ?, ?)"
-          ).bind(uuid(), c.key, c.r, c.g, c.b, c.source_prompt ? JSON.stringify([c.source_prompt.slice(0, 80)]) : null, name).run();
+            "INSERT INTO learned_colors (id, color_key, r, g, b, count, sources_json, name, depth_breakdown_json) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)"
+          ).bind(uuid(), c.key, c.r, c.g, c.b, c.source_prompt ? JSON.stringify([c.source_prompt.slice(0, 80)]) : null, name, depthJson).run();
         }
         results.colors++;
       }
@@ -1097,6 +1102,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         mood: (JSON.parse(r.output_json) as Record<string, unknown>).mood ?? "neutral",
         presence: (JSON.parse(r.output_json) as Record<string, unknown>).presence ?? "ambient",
         source_prompt: r.source_prompt ?? "",
+        created_at: r.created_at,
       }));
       // Gradient and camera from learned_blends (growth from spec) — creation picks from STATIC/registry
       const gradientSeen = new Set<string>();
@@ -1168,6 +1174,27 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         prompt: r.prompt,
         instruction: r.instruction_json ? (JSON.parse(r.instruction_json) as Record<string, unknown>) : {},
       }));
+      // Pure (static) colors for random-per-pixel creation: origin + discovered per-frame colors (include count for underused bias)
+      const staticColorRows = await env.DB.prepare(
+        "SELECT color_key, r, g, b, count, created_at FROM static_colors ORDER BY count DESC LIMIT ?"
+      ).bind(limit).all<{ color_key: string; r: number; g: number; b: number; count: number; created_at: string | null }>();
+      const static_colors: Record<string, { r: number; g: number; b: number; count?: number; created_at?: string }> = {};
+      for (const r of staticColorRows.results || []) {
+        static_colors[r.color_key] = { r: r.r, g: r.g, b: r.b, count: r.count, created_at: r.created_at ?? undefined };
+      }
+      // Pure (static) sound mesh: origin + discovered per-instant sounds (include count for underused bias)
+      const staticSoundRows = await env.DB.prepare(
+        "SELECT sound_key, tone, timbre, amplitude, name, count, created_at FROM static_sound ORDER BY count DESC LIMIT ?"
+      ).bind(limit).all<{ sound_key: string; tone: string | null; timbre: string | null; amplitude: number | null; name: string | null; count: number; created_at: string | null }>();
+      const static_sound = (staticSoundRows.results || []).map((r) => ({
+        key: r.sound_key,
+        tone: r.tone ?? undefined,
+        timbre: r.timbre ?? undefined,
+        amplitude: r.amplitude ?? undefined,
+        name: r.name ?? undefined,
+        count: r.count,
+        created_at: r.created_at ?? undefined,
+      }));
       return json({
         learned_colors: colors,
         learned_motion: motion,
@@ -1178,6 +1205,8 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         origin_camera,
         origin_motion,
         interpretation_prompts,
+        static_colors,
+        static_sound,
       });
       } catch (e) {
         console.error("GET /api/knowledge/for-creation failed:", e);
@@ -1189,7 +1218,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
     if (path === "/api/registries/backfill-names" && request.method === "POST") {
       const url = new URL(request.url);
       const dryRun = url.searchParams.get("dry_run") === "1";
-      const maxRows = Math.min(parseInt(url.searchParams.get("limit") || "20", 10), 200);
+      const maxRows = Math.min(parseInt(url.searchParams.get("limit") || "100", 10), 500);
       const tableFilter = url.searchParams.get("table")?.toLowerCase().trim() || null;
       let updated = 0;
       const usedNames = new Set<string>();
@@ -1308,7 +1337,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       const table = url.searchParams.get("table") || "";
       const limit = Math.min(parseInt(url.searchParams.get("limit") || "50", 10), 200);
       if (!table) return err("table required");
-      const valid = ["static_colors", "learned_motion", "learned_lighting"];
+      const valid = ["static_colors", "learned_colors", "learned_motion", "learned_lighting"];
       if (!valid.includes(table)) return err("table must be one of: " + valid.join(", "));
       try {
         let rows: unknown[] = [];
@@ -1316,6 +1345,11 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           const r = await env.DB.prepare(
             "SELECT id, r, g, b FROM static_colors LIMIT ?"
           ).bind(limit).all<{ id: string; r: number; g: number; b: number }>();
+          rows = r.results || [];
+        } else if (table === "learned_colors") {
+          const r = await env.DB.prepare(
+            "SELECT id, color_key, r, g, b FROM learned_colors LIMIT ?"
+          ).bind(limit).all<{ id: string; color_key: string; r: number; g: number; b: number }>();
           rows = r.results || [];
         } else if (table === "learned_motion") {
           const r = await env.DB.prepare(
@@ -1348,6 +1382,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       let updated = 0;
       const depthTables: Record<string, string> = {
         static_colors: "depth_breakdown_json",
+        learned_colors: "depth_breakdown_json",
         learned_motion: "depth_breakdown_json",
         learned_lighting: "depth_breakdown_json",
       };
@@ -1421,14 +1456,30 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         "SELECT sound_key, name, count, depth_breakdown_json, strength_pct FROM static_sound ORDER BY count DESC LIMIT ?"
       ).bind(regLimit).all<{ sound_key: string; name: string; count: number; depth_breakdown_json: string | null; strength_pct: number | null }>();
       const learnedColors = await env.DB.prepare(
-        "SELECT color_key, r, g, b, name, count FROM learned_colors ORDER BY count DESC LIMIT ?"
-      ).bind(regLimit).all<{ color_key: string; r: number; g: number; b: number; name: string; count: number }>();
+        "SELECT color_key, r, g, b, name, count, depth_breakdown_json FROM learned_colors ORDER BY count DESC LIMIT ?"
+      ).bind(regLimit).all<{ color_key: string; r: number; g: number; b: number; name: string; count: number; depth_breakdown_json: string | null }>();
       const learnedMotion = await env.DB.prepare(
         "SELECT profile_key, motion_trend, name, count FROM learned_motion ORDER BY count DESC LIMIT ?"
       ).bind(regLimit).all<{ profile_key: string; motion_trend: string; name: string | null; count: number }>();
       const blends = await env.DB.prepare(
         "SELECT name, domain, output_json, primitive_depths_json FROM learned_blends ORDER BY created_at DESC LIMIT ?"
       ).bind(regLimit).all<{ name: string; domain: string; output_json: string; primitive_depths_json: string | null }>();
+      // Merge discovery tables into dynamic (living plan §1.2 / Priority 1): per-window discoveries appear in export
+      const learnedGradientRows = await env.DB.prepare(
+        "SELECT profile_key, gradient_type, name, count, depth_breakdown_json FROM learned_gradient ORDER BY count DESC LIMIT ?"
+      ).bind(regLimit).all<{ profile_key: string; gradient_type: string; name: string; count: number; depth_breakdown_json: string | null }>();
+      const learnedCameraRows = await env.DB.prepare(
+        "SELECT profile_key, motion_type, name, count, depth_breakdown_json FROM learned_camera ORDER BY count DESC LIMIT ?"
+      ).bind(regLimit).all<{ profile_key: string; motion_type: string; name: string; count: number; depth_breakdown_json: string | null }>();
+      let learnedAudioSemanticRows: Array<{ profile_key: string; role: string; name: string; count: number }> = [];
+      try {
+        const r = await env.DB.prepare(
+          "SELECT profile_key, role, name, count FROM learned_audio_semantic ORDER BY count DESC LIMIT ?"
+        ).bind(regLimit).all<{ profile_key: string; role: string; name: string; count: number }>();
+        learnedAudioSemanticRows = r.results || [];
+      } catch {
+        // table may not exist
+      }
       const narrativeAspects = ["genre", "mood", "themes", "plots", "settings", "style", "scene_type"];
       const narrative: Record<string, Array<{ entry_key: string; value: string; name: string; count: number }>> = {};
       for (const aspect of narrativeAspects) {
@@ -1451,6 +1502,15 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         instruction: r.instruction_json ? (JSON.parse(r.instruction_json) as Record<string, unknown>) : null,
         updated_at: r.updated_at,
       }));
+      let linguistic: Array<{ span: string; canonical: string; domain: string; variant_type: string; count: number }> = [];
+      try {
+        const lingRows = await env.DB.prepare(
+          "SELECT span, canonical, domain, variant_type, count FROM linguistic_registry ORDER BY count DESC LIMIT ?"
+        ).bind(Math.min(regLimit, 200)).all<{ span: string; canonical: string; domain: string; variant_type: string; count: number }>();
+        linguistic = lingRows.results || [];
+      } catch {
+        // linguistic_registry may not exist in older deployments
+      }
       const depthFromBlendDepths = (depths: Record<string, unknown> | null): { depth_pct: number; depth_breakdown: Record<string, number> } => {
         const depth_breakdown: Record<string, number> = {};
         if (!depths || typeof depths !== "object") return { depth_pct: 0, depth_breakdown };
@@ -1469,25 +1529,58 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         const depth_pct = vals.length ? Math.max(...vals) : 0;
         return { depth_pct, depth_breakdown };
       };
-      const gradientBlends = (blends.results || []).filter((b) => b.domain === "gradient").map((b) => {
+      const gradientFromBlends = (blends.results || []).filter((b) => b.domain === "gradient").map((b) => {
         const out = JSON.parse(b.output_json) as Record<string, unknown>;
         const depths = b.primitive_depths_json ? (JSON.parse(b.primitive_depths_json) as Record<string, unknown>) : null;
         const { depth_pct, depth_breakdown } = depthFromBlendDepths(depths);
         return { name: b.name, key: String(out.gradient_type ?? b.domain), depth_pct, depth_breakdown };
       });
-      const cameraBlends = (blends.results || []).filter((b) => b.domain === "camera").map((b) => {
+      const gradientFromTable = (learnedGradientRows.results || []).map((r) => {
+        const depths = r.depth_breakdown_json ? (JSON.parse(r.depth_breakdown_json) as Record<string, unknown>) : null;
+        const { depth_pct, depth_breakdown } = depthFromBlendDepths(depths);
+        return { name: r.name || r.gradient_type, key: r.gradient_type, depth_pct, depth_breakdown };
+      });
+      const gradientKeys = new Set(gradientFromBlends.map((g) => g.key));
+      const gradientBlends = [...gradientFromBlends];
+      for (const g of gradientFromTable) {
+        if (!gradientKeys.has(g.key)) {
+          gradientKeys.add(g.key);
+          gradientBlends.push(g);
+        }
+      }
+      const cameraFromBlends = (blends.results || []).filter((b) => b.domain === "camera").map((b) => {
         const out = JSON.parse(b.output_json) as Record<string, unknown>;
         const depths = b.primitive_depths_json ? (JSON.parse(b.primitive_depths_json) as Record<string, unknown>) : null;
         const { depth_pct, depth_breakdown } = depthFromBlendDepths(depths);
         return { name: b.name, key: String(out.camera_motion ?? b.domain), depth_pct, depth_breakdown };
       });
-      const audioBlends = (blends.results || []).filter((b) => b.domain === "audio").map((b) => {
+      const cameraFromTable = (learnedCameraRows.results || []).map((r) => {
+        const depths = r.depth_breakdown_json ? (JSON.parse(r.depth_breakdown_json) as Record<string, unknown>) : null;
+        const { depth_pct, depth_breakdown } = depthFromBlendDepths(depths);
+        return { name: r.name || r.motion_type, key: r.motion_type, depth_pct, depth_breakdown };
+      });
+      const cameraKeys = new Set(cameraFromBlends.map((c) => c.key));
+      const cameraBlends = [...cameraFromBlends];
+      for (const c of cameraFromTable) {
+        if (!cameraKeys.has(c.key)) {
+          cameraKeys.add(c.key);
+          cameraBlends.push(c);
+        }
+      }
+      const audioFromBlends = (blends.results || []).filter((b) => b.domain === "audio").map((b) => {
         const out = JSON.parse(b.output_json) as Record<string, unknown>;
         const depths = b.primitive_depths_json ? (JSON.parse(b.primitive_depths_json) as Record<string, unknown>) : null;
         const { depth_pct, depth_breakdown } = depthFromBlendDepths(depths);
         const key = [out.tempo, out.mood, out.presence].filter(Boolean).join(" / ") || b.output_json.slice(0, 60);
         return { name: b.name, key, tempo: out.tempo, mood: out.mood, presence: out.presence, depth_pct, depth_breakdown };
       });
+      const audioFromSemantic = learnedAudioSemanticRows.map((r) => ({
+        name: r.name || r.role,
+        key: r.profile_key || r.role,
+        depth_pct: 0,
+        depth_breakdown: {} as Record<string, number>,
+      }));
+      const audioBlends = [...audioFromBlends, ...audioFromSemantic];
       const otherBlends = (blends.results || []).filter((b) => b.domain !== "gradient" && b.domain !== "camera" && b.domain !== "audio").map((b) => {
         const depths = b.primitive_depths_json ? (JSON.parse(b.primitive_depths_json) as Record<string, unknown>) : null;
         const { depth_pct, depth_breakdown } = depthFromBlendDepths(depths);
@@ -1535,7 +1628,27 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         },
         dynamic: {
           colors: (learnedColors.results || []).map((r) => {
-            const { depth_pct, depth_breakdown } = colorDepthVsPrimitives(r.r, r.g, r.b);
+            let depth_pct: number;
+            let depth_breakdown: Record<string, number>;
+            if (r.depth_breakdown_json) {
+              try {
+                const stored = JSON.parse(r.depth_breakdown_json) as Record<string, number>;
+                depth_breakdown = {};
+                for (const [k, v] of Object.entries(stored)) {
+                  depth_breakdown[k] = typeof v === "number" ? (v <= 1 ? Math.round(v * 100) : Math.round(v)) : 0;
+                }
+                const vals = Object.values(depth_breakdown);
+                depth_pct = vals.length ? Math.max(...vals) : 0;
+              } catch {
+                const comp = colorDepthVsPrimitives(r.r, r.g, r.b);
+                depth_pct = comp.depth_pct;
+                depth_breakdown = comp.depth_breakdown;
+              }
+            } else {
+              const comp = colorDepthVsPrimitives(r.r, r.g, r.b);
+              depth_pct = comp.depth_pct;
+              depth_breakdown = comp.depth_breakdown;
+            }
             return { key: r.color_key, name: r.name, count: r.count, depth_pct, depth_breakdown };
           }),
           motion: (learnedMotion.results || []).map((r) => ({ key: r.profile_key, name: r.name || r.profile_key, trend: r.motion_trend, count: r.count })),
@@ -1546,6 +1659,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         },
         narrative,
         interpretation,
+        linguistic,
       });
     }
 
@@ -1811,6 +1925,9 @@ async function cascadeNameUpdate(env: Env, oldName: string, newName: string): Pr
     { table: "interpretations", col: "instruction_json" },
     { table: "jobs", col: "prompt" },
     { table: "learned_blends", col: "source_prompt" },
+    { table: "learned_blends", col: "inputs_json" },
+    { table: "learned_blends", col: "output_json" },
+    { table: "learned_blends", col: "primitive_depths_json" },
     { table: "static_colors", col: "sources_json" },
     { table: "static_sound", col: "sources_json" },
     { table: "learned_colors", col: "sources_json" },

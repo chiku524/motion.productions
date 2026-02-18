@@ -262,13 +262,22 @@ def run() -> None:
         # workflow_type for site: explorer | exploiter | main (prompt choice)
         workflow_type = os.environ.get("LOOP_WORKFLOW_TYPE") or ("explorer" if override == "0" else "exploiter" if override == "1" else "main")
         # extraction_focus: frame (per-frame / pure static only) | window (per-window blends only) | unset = all
+        # Use LOOP_EXTRACTION_FOCUS (not LCXP_EXTRACTION_FOCUS). See RAILWAY_CONFIG.md §8 and MISSION_AND_STRATEGIC_OPTIMIZATIONS.md.
         extraction_focus = (os.environ.get("LOOP_EXTRACTION_FOCUS") or "").strip().lower() or "all"
         if extraction_focus not in ("frame", "window", "all"):
             extraction_focus = "all"
+        if extraction_focus == "all" and state.get("run_count", 0) == 0:
+            logger.info(
+                "LOOP_EXTRACTION_FOCUS is unset → Growth [all]. For split workers set LOOP_EXTRACTION_FOCUS=frame or =window (see RAILWAY_CONFIG.md §8)."
+            )
+        # static_focus: when frame extraction, grow only color | only sound | both (pure colors vs pure sounds workers)
+        static_focus = (os.environ.get("LOOP_STATIC_FOCUS") or "").strip().lower() or "both"
+        if static_focus not in ("color", "sound", "both"):
+            static_focus = "both"
 
         knowledge = {}
         try:
-            knowledge = get_knowledge_for_creation(config)
+            knowledge = get_knowledge_for_creation(config, api_base=args.api_base or None)
         except APIError as e:
             logger.warning("Knowledge fetch failed (path=%s, status=%s): %s — using empty knowledge", e.path, e.status_code, e)
         except Exception as e:
@@ -333,9 +342,28 @@ def run() -> None:
             run_succeeded = True
 
             instruction = interpret_user_prompt(prompt, default_duration=duration)
+            # Record interpretation first (so it's never skipped by later errors); visible in Railway logs
+            if args.api_base:
+                try:
+                    payload = instruction.to_api_dict() if hasattr(instruction, "to_api_dict") else instruction.to_dict()
+                    print("  [interpretation] posting...", flush=True)
+                    api_request_with_retry(
+                        args.api_base, "POST", "/api/interpretations",
+                        data={"prompt": prompt, "instruction": payload, "source": "loop"},
+                        timeout=30,
+                        max_retries=5,
+                        backoff_seconds=2.0,
+                    )
+                    print("  [interpretation] recorded", flush=True)
+                except APIError as e:
+                    print(f"  [interpretation] failed status={e.status_code}", flush=True)
+                    logger.warning("POST /api/interpretations failed (status=%s): %s", e.status_code, e)
+                except Exception as e:
+                    print(f"  [interpretation] failed: {e}", flush=True)
+                    logger.warning("Interpretation registry record failed: %s", e)
             from src.knowledge import get_knowledge_for_creation
             spec = build_spec_from_instruction(instruction, knowledge=get_knowledge_for_creation(config))
-            # Learn from this prompt: extract (span, canonical, domain) so interpretation improves (slang, multi-sense)
+            # Learn from this prompt: extract (span, canonical, domain) so linguistic registry improves (slang, multi-sense)
             if args.api_base:
                 try:
                     from src.interpretation.linguistic import extract_linguistic_mappings
@@ -371,6 +399,7 @@ def run() -> None:
                     collect_novel_for_sync=bool(args.api_base),
                     spec=spec,
                     extraction_focus=extraction_focus,
+                    static_focus=static_focus,
                 )
                 if any(added.values()):
                     metrics = growth_metrics(added)
@@ -392,6 +421,14 @@ def run() -> None:
                         post_dynamic_discoveries(args.api_base, novel_for_sync, job_id=job_id)
                         if narrative_novel and any(narrative_novel.values()):
                             post_narrative_discoveries(args.api_base, narrative_novel, job_id=job_id)
+                        # Temporal blend (window→pure) may have added static colors; sync them
+                        if novel_for_sync.get("static_colors"):
+                            post_static_discoveries(
+                                args.api_base,
+                                novel_for_sync.get("static_colors", []),
+                                novel_for_sync.get("static_sound") or [],
+                                job_id=job_id,
+                            )
                     else:
                         post_all_discoveries(
                             args.api_base,
@@ -402,9 +439,9 @@ def run() -> None:
                             job_id=job_id,
                         )
             except APIError as e:
-                logger.warning("Per-instance or narrative sync failed (status=%s): %s", e.status_code, e)
+                logger.warning("Missing discovery (job_id=%s): per-instance/narrative sync failed status=%s — %s", job_id, e.status_code, e)
             except Exception as e:
-                logger.warning("Per-instance or narrative growth/sync: %s", e)
+                logger.warning("Missing discovery (job_id=%s): growth/sync — %s", job_id, e)
 
             # Whole-video blends (learned_colors, learned_motion, learned_blends): only for window or all
             if extraction_focus in ("window", "all"):
@@ -412,9 +449,10 @@ def run() -> None:
                     from src.knowledge.remote_sync import grow_and_sync_to_api
                     grow_and_sync_to_api(analysis_dict, prompt=prompt, api_base=args.api_base, spec=spec, job_id=job_id)
                 except APIError as e:
-                    logger.warning("POST /api/knowledge/discoveries failed (status=%s): %s", e.status_code, e)
+                    logger.warning("Missing discovery (job_id=%s): grow_and_sync failed status=%s — %s", job_id, e.status_code, e)
                     print(f"  (discoveries sync: {e})")
                 except Exception as e:
+                    logger.warning("Missing discovery (job_id=%s): %s", job_id, e)
                     print(f"  (discoveries sync: {e})")
 
             # Guaranteed discovery run recording — ensures diagnostics show ✓ disc even when
@@ -422,22 +460,36 @@ def run() -> None:
             try:
                 from src.knowledge.remote_sync import post_discoveries
                 post_discoveries(args.api_base, {"job_id": job_id})
-            except Exception:
-                pass
+            except APIError as e:
+                logger.warning("Missing discovery (job_id=%s): post_discoveries failed status=%s — %s", job_id, e.status_code, e)
+            except Exception as e:
+                logger.warning("Missing discovery (job_id=%s): post_discoveries — %s", job_id, e)
 
             try:
-                api_request_with_retry(args.api_base, "POST", "/api/learning", data={
-                    "job_id": job_id,
-                    "prompt": prompt,
-                    "spec": {
-                        "palette_name": spec.palette_name,
-                        "motion_type": spec.motion_type,
-                        "intensity": spec.intensity,
+                # Explicit retries to reduce "missing learning" from transient 5xx/429/connection (audit §1.2)
+                api_request_with_retry(
+                    args.api_base,
+                    "POST",
+                    "/api/learning",
+                    data={
+                        "job_id": job_id,
+                        "prompt": prompt,
+                        "spec": {
+                            "palette_name": spec.palette_name,
+                            "motion_type": spec.motion_type,
+                            "intensity": spec.intensity,
+                        },
+                        "analysis": analysis_dict,
                     },
-                    "analysis": analysis_dict,
-                }, timeout=45)
+                    timeout=45,
+                    max_retries=5,
+                    backoff_seconds=2.0,
+                )
             except APIError as e:
-                logger.warning("POST /api/learning failed (status=%s, path=%s): %s — run still counts as success", e.status_code, e.path, e)
+                logger.warning("Missing learning (job_id=%s): POST /api/learning failed status=%s — %s", job_id, e.status_code, e)
+                print(f"  (learning log: {e})")
+            except Exception as e:
+                logger.warning("Missing learning (job_id=%s): %s", job_id, e)
                 print(f"  (learning log: {e})")
 
             if is_good_outcome(analysis_dict):

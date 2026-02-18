@@ -81,7 +81,7 @@ Every value in the file traces to one of these. Our registries map them to **sta
 - **Transition:** Cut, fade, dissolve, wipe (type + duration); stored in dynamic when present.
 - **Depth:** Parallax strength, layer count; stored in dynamic when present.
 
-Sub-aspects and categories match [REGISTRIES.md](REGISTRIES.md). Every category is present so the program is prepared for any prompt and new dynamic blends.
+Sub-aspects and categories match [WORKFLOWS_AND_REGISTRIES.md](WORKFLOWS_AND_REGISTRIES.md) (Part I). Every category is present so the program is prepared for any prompt and new dynamic blends.
 
 ---
 
@@ -110,7 +110,7 @@ Themes, plots, settings, genre, mood, scene type are **not physical** (not a sin
 | **Mood** | Emotional tone (e.g. calm, tense) | **Narrative** |
 | **Scene type** | Indoor, outdoor, abstract | **Narrative** |
 
-Same process: if value not in registry → add it; if unnamed → name-generator or existing public name. See [REGISTRIES.md](REGISTRIES.md).
+Same process: if value not in registry → add it; if unnamed → name-generator or existing public name. See [WORKFLOWS_AND_REGISTRIES.md](WORKFLOWS_AND_REGISTRIES.md) (Part I).
 
 ---
 
@@ -128,4 +128,4 @@ Same process: if value not in registry → add it; if unnamed → name-generator
 | **DYNAMIC** | `extract_dynamic_per_window()` + spec-derived audio_semantic; whole-video analysis for blends | `ensure_dynamic_*_in_registry` → local JSON + D1; blends via `grow_and_sync_to_api` | `grow_dynamic_from_video()` → `post_dynamic_discoveries()`; whole-video → `grow_and_sync_to_api()` |
 | **NARRATIVE** | `extract_narrative_from_spec(spec, instruction)` | `ensure_narrative_in_registry` → local JSON + D1 | `grow_narrative_from_spec()` → `post_narrative_discoveries()` |
 
-See also [REGISTRIES.md](REGISTRIES.md), [WORKFLOWS_AND_REGISTRIES.md](WORKFLOWS_AND_REGISTRIES.md).
+See also [WORKFLOWS_AND_REGISTRIES.md](WORKFLOWS_AND_REGISTRIES.md).

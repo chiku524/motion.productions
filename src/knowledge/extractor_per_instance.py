@@ -100,8 +100,9 @@ def _extract_audio_segments(
     num_frames: int,
 ) -> list[dict[str, Any]]:
     """
-    Extract per-frame audio (amplitude, tone) from the video's audio track.
-    One dict per frame: {"amplitude": float, "weight": float, "tone": str, "timbre": str}.
+    Extract pure sound per frame: any form of noise within a single instant (one frame).
+    One frame = one instant in time (e.g. 1/24 s at 24 fps), not a 1-second window.
+    Returns one dict per frame: {"amplitude", "weight", "tone", "timbre"}.
     Returns [] on failure or if no audio (so callers get empty sound for each frame).
     """
     if fps <= 0 or num_frames <= 0:
@@ -156,6 +157,25 @@ def _extract_audio_segments(
             tone = "silent" if amplitude < 0.01 else "mid"
         out.append({"amplitude": amplitude, "weight": weight, "tone": tone, "timbre": tone})
     return out
+
+
+def read_audio_segments_only(
+    audio_path: str | Path,
+    fps: float = 24.0,
+    duration_seconds: float | None = None,
+    num_frames: int | None = None,
+) -> list[dict[str, Any]]:
+    """
+    Extract pure sound per frame (one instant per frame) from an audio file (WAV or video).
+    Each segment = one frame = one instant of noise (amplitude, tone, timbre). Used by the
+    sound-only workflow to build the mesh of per-instant sounds. Either duration_seconds
+    or num_frames must be provided.
+    """
+    if duration_seconds is not None:
+        num_frames = int(duration_seconds * fps)
+    if num_frames is None or num_frames <= 0:
+        return []
+    return _extract_audio_segments(audio_path, fps, num_frames)
 
 
 def _extract_static_from_preloaded(
@@ -321,8 +341,27 @@ def _extract_dynamic_from_preloaded(
         if audio_segments:
             audio_semantic = _derive_audio_semantic_from_segments(audio_segments, start_i, end_i)
 
+        # Temporal blend (strict): mean of per-frame dominant colors in this window.
+        # Motion over the window "combines" pixels → this blend can be recorded as new pure (e.g. black+white→grey).
+        r_list, g_list, b_list = [], [], []
+        for fr in window_frames:
+            dom = dominant_colors(fr, n=1)
+            if dom:
+                r_list.append(float(dom[0][0]))
+                g_list.append(float(dom[0][1]))
+                b_list.append(float(dom[0][2]))
+        if r_list:
+            temporal_blend_rgb = (
+                sum(r_list) / len(r_list),
+                sum(g_list) / len(g_list),
+                sum(b_list) / len(b_list),
+            )
+        else:
+            temporal_blend_rgb = None
+
         yield {
             "window_index": w,
+            "temporal_blend_rgb": temporal_blend_rgb,
             "start_seconds": start_i / fps,
             "end_seconds": end_i / fps,
             "motion": {

@@ -79,6 +79,8 @@ class SceneSpec:
     # Pure-per-frame creation (§7): randomly place pure colors at random pixel locations → emergent blends
     pure_colors: list[tuple[int, int, int]] | None = None  # origin + discovered static RGBs
     creation_mode: str = "blended"    # "blended" | "pure_per_frame"
+    # Pure sounds from registry (per-instant mesh): multiple per frame can be combined in audio layer
+    pure_sounds: list[dict] | None = None  # e.g. [{"key", "tone", "timbre", "amplitude"}, ...]
 
 
 def parse_prompt_to_spec(prompt: str, *, seed: int | None = None) -> SceneSpec:

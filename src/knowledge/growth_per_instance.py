@@ -14,6 +14,7 @@ from .extractor_per_instance import (
     extract_static_per_frame,
     extract_dynamic_per_window,
     read_video_once,
+    read_audio_segments_only,
     _extract_static_from_preloaded,
     _extract_dynamic_from_preloaded,
 )
@@ -42,13 +43,16 @@ def _static_color_key(color: dict[str, Any], tolerance: int = 25, opacity_steps:
 
 
 def _static_sound_key(sound: dict[str, Any]) -> str:
+    """
+    Standard key for pure sound (one instant): amplitude_tone_timbre.
+    Per-frame discoveries use primitives (silence, rumble, tone, hiss); timbre defaults to tone when missing.
+    """
     if not sound:
         return ""
     amp = sound.get("amplitude") or sound.get("weight") or 0
-    tone = sound.get("tone") or "unknown"
-    timbre = sound.get("timbre") or ""
-    tempo = sound.get("tempo") or ""
-    return f"{round(float(amp), 2)}_{tone}_{timbre}_{tempo}".rstrip("_")
+    tone = (sound.get("tone") or "unknown").strip().lower()
+    timbre = (sound.get("timbre") or tone or "unknown").strip().lower()
+    return f"{round(float(amp), 2)}_{tone}_{timbre}"
 
 
 def derive_audio_semantic_from_spec(spec: Any) -> dict[str, Any]:
@@ -184,20 +188,21 @@ def ensure_static_color_in_registry(
     if not key:
         return None
     data = load_static_registry("color", config)
-    existing = _entries_keys(data)
+    entries = data.get("entries", [])
+    existing = {e.get("key", "") for e in entries if e.get("key")}
     if key in existing:
-        for e in data.get("entries", []):
-            if e.get("key") == key:
-                e["count"] = e.get("count", 0) + 1
-                if source_prompt and len(e.get("sources", [])) < 5:
-                    e.setdefault("sources", []).append(source_prompt[:80])
-                break
+        entries_by_key = {e.get("key"): e for e in entries if e.get("key")}
+        e = entries_by_key.get(key)
+        if e is not None:
+            e["count"] = e.get("count", 0) + 1
+            if source_prompt and len(e.get("sources", [])) < 5:
+                e.setdefault("sources", []).append(source_prompt[:80])
         save_static_registry("color", data, config)
         return None
-    r_val = float(color.get("r", 0))
-    g_val = float(color.get("g", 0))
-    b_val = float(color.get("b", 0))
-    opacity_val = float(color.get("opacity", 1.0))
+    r_val = max(0, min(255, float(color.get("r", 0))))
+    g_val = max(0, min(255, float(color.get("g", 0))))
+    b_val = max(0, min(255, float(color.get("b", 0))))
+    opacity_val = max(0.0, min(1.0, float(color.get("opacity", 1.0))))
     names = {e.get("name", "") for e in data.get("entries", []) if e.get("name")}
     name = generate_sensible_name("color", key, existing_names=names, rgb_hint=(r_val, g_val, b_val))
     # Depth breakdown required: origin color % and opacity level (per REGISTRY_FOUNDATION)
@@ -237,8 +242,9 @@ def ensure_static_color_in_registry(
 
 def ensure_static_primitives_seeded(config: dict[str, Any] | None = None) -> None:
     """
-    Ensure every primitive (origin) color and sound is in the static registry.
-    Idempotent: only adds entries whose key is missing. Call at start of grow_from_video.
+    Seed the static registries (color + sound mesh) with origin/primitive values.
+    Primitives are the base set; discovered blends are added by the loop. Idempotent.
+    Call at start of grow_from_video / grow_static_sound_from_audio_segments.
     """
     for color in STATIC_COLOR_PRIMITIVES:
         ensure_static_color_in_registry(color, config=config)
@@ -277,9 +283,11 @@ def ensure_static_sound_in_registry(
     out_novel: list[dict[str, Any]] | None = None,
 ) -> str | None:
     """
-    If this sound profile is not in the static registry, add it with a sensible name.
-    Returns the assigned name if added, else None. No-op if sound is empty (no audio extraction yet).
-    If out_novel is provided and the sound was added, appends the API payload to out_novel.
+    Record a pure sound (one instant/frame) in the mesh (static_sound registry).
+    The mesh holds origin/primitive values (seeded) plus discovered blends. This value
+    is stored as a blend of primitives (depth_breakdown = origin_noises). If novel,
+    add with a sensible name so the mesh grows. Returns the assigned name if added,
+    else None. No-op if sound is empty. If out_novel is set and added, appends payload.
     """
     if not sound:
         return None
@@ -287,17 +295,18 @@ def ensure_static_sound_in_registry(
     if not key:
         return None
     data = load_static_registry("sound", config)
-    existing = _entries_keys(data)
+    entries = data.get("entries", [])
+    existing = {e.get("key", "") for e in entries if e.get("key")}
     if key in existing:
-        for e in data.get("entries", []):
-            if e.get("key") == key:
-                e["count"] = e.get("count", 0) + 1
-                if source_prompt:
-                    e.setdefault("sources", []).append(source_prompt[:80])
-                break
+        entries_by_key = {e.get("key"): e for e in entries if e.get("key")}
+        e = entries_by_key.get(key)
+        if e is not None:
+            e["count"] = e.get("count", 0) + 1
+            if source_prompt:
+                e.setdefault("sources", []).append(source_prompt[:80])
         save_static_registry("sound", data, config)
         return None
-    names = {e.get("name", "") for e in data.get("entries", []) if e.get("name")}
+    names = {e.get("name", "") for e in entries if e.get("name")}
     name = generate_sensible_name("sound", key, existing_names=names)
     amp = float(sound.get("amplitude") or sound.get("weight") or 0)
     tone = (sound.get("tone") or "mid").strip()
@@ -333,6 +342,31 @@ def ensure_static_sound_in_registry(
             "name": name,
         })
     return name
+
+
+def grow_static_sound_from_audio_segments(
+    audio_segments: list[dict[str, Any]],
+    *,
+    prompt: str = "",
+    config: dict[str, Any] | None = None,
+    collect_novel_for_sync: bool = False,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """
+    Grow the pure-sound mesh (static_sound registry) from per-frame segments.
+    Origin/primitive values are already in the mesh; each segment = one instant of noise,
+    expressed as a blend of primitives (depth_breakdown). New discoveries are recorded
+    in the registry; mesh is synced to the API and used next run. Returns: (added counts, novel payloads).
+    """
+    added: dict[str, Any] = {"static_sound": 0}
+    novel_list: list[dict[str, Any]] = []
+    ensure_static_primitives_seeded(config)
+    out_novel = novel_list if collect_novel_for_sync else None
+    for sound in audio_segments:
+        if ensure_static_sound_in_registry(
+            sound, source_prompt=prompt, config=config, out_novel=out_novel
+        ):
+            added["static_sound"] += 1
+    return added, novel_list
 
 
 DYNAMIC_ASPECTS = (
@@ -825,6 +859,7 @@ def grow_all_from_video(
     collect_novel_for_sync: bool = False,
     spec: Any = None,
     extraction_focus: str = "all",
+    static_focus: str = "both",
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """
     Unified growth: single video read for both static and dynamic extraction.
@@ -834,6 +869,8 @@ def grow_all_from_video(
       - "frame": only per-frame extraction and static growth (pure/static registry); all new values get authentic names.
       - "window": only per-window extraction and dynamic growth (+ narrative from spec); blends only.
       - "all": both (current behaviour).
+    static_focus: "both" (default) | "color" | "sound"
+      - When doing frame extraction: "color" = grow only static_colors; "sound" = grow only static_sound; "both" = both.
     Returns: (added, novel_for_sync) with combined counts and payloads.
     """
     added: dict[str, Any] = {
@@ -887,19 +924,21 @@ def grow_all_from_video(
         logging.getLogger(__name__).warning("grow_all_from_video: could not read video: %s", e)
         return added, novel_for_sync
 
-    out_static_colors = novel_for_sync["static_colors"] if (collect_novel_for_sync and do_frame) else None
+    out_static_colors = novel_for_sync["static_colors"] if (collect_novel_for_sync and (do_frame or do_window)) else None
     out_sound = novel_for_sync["static_sound"] if (collect_novel_for_sync and do_frame) else None
 
+    do_static_color = do_frame and (static_focus in ("both", "color"))
+    do_static_sound = do_frame and (static_focus in ("both", "sound"))
     if do_frame:
         for frame in _extract_static_from_preloaded(frames, fps, audio_segments):
-            if ensure_static_color_in_registry(
+            if do_static_color and ensure_static_color_in_registry(
                 frame.get("color", {}),
                 source_prompt=prompt,
                 config=config,
                 out_novel=out_static_colors,
             ):
                 added["static_colors"] += 1
-            if ensure_static_sound_in_registry(
+            if do_static_sound and ensure_static_sound_in_registry(
                 frame.get("sound", {}), source_prompt=prompt, config=config, out_novel=out_sound
             ):
                 added["static_sound"] += 1
@@ -925,6 +964,16 @@ def grow_all_from_video(
             window_seconds=window_seconds,
             audio_segments=audio_segments,
         ):
+            # Strict: window temporal blend (pixels combined over 1s) → new pure value if novel (e.g. black+white→grey)
+            tb = window.get("temporal_blend_rgb")
+            if tb and len(tb) >= 3:
+                if ensure_static_color_in_registry(
+                    {"r": tb[0], "g": tb[1], "b": tb[2], "opacity": 1.0},
+                    source_prompt=prompt,
+                    config=config,
+                    out_novel=out_static_colors,
+                ):
+                    added["static_colors"] += 1
             if ensure_dynamic_motion_in_registry(window, source_prompt=prompt, config=config, out_novel=out_motion, registry_cache=registry_cache):
                 added["dynamic_motion"] += 1
             if ensure_dynamic_time_in_registry(window, source_prompt=prompt, config=config, out_novel=out_time, registry_cache=registry_cache):

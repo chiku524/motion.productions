@@ -1,17 +1,21 @@
 """
 Build output from extracted knowledge.
 Converts InterpretedInstruction (+ optional knowledge lookup) → SceneSpec for rendering.
-INTENDED_LOOP: Use strictly pure elements/blends from STATIC registry (and origins); no templates.
-When interpretation used defaults (no keyword matched), pick from registry (learned_gradient,
-learned_camera, learned_motion) so growth is prioritised and pure elements can blend across frames;
-only fall back to origin primitives when registry is empty.
+
+Parameterization (data-driven creation): Every decision is driven by registry/API data, not
+hardcoded defaults. Palette: when default/empty, pick from full PALETTES set (and learned
+color names in registry). Motion/gradient/camera: registry-first pools; 50% random vs
+deterministic for motion. Audio: learned_audio + static_sound; 35% pick random entry for
+variety. Pure colors: origin + static_colors + learned_colors. Pure sounds: sample from
+static_sound mesh (3–5 per run) for future audio mixing. No single fixed default that
+ignores the registry.
 """
 import logging
 from typing import Any
 
 from ..interpretation import InterpretedInstruction
 from ..procedural.parser import SceneSpec
-from ..random_utils import secure_choice
+from ..random_utils import secure_choice, weighted_choice_favor_underused, weighted_choice_favor_recent
 from ..knowledge.blend_depth import COLOR_ORIGIN_PRIMITIVES
 
 logger = logging.getLogger(__name__)
@@ -98,7 +102,12 @@ def _motion_from_registry(
         idx = idx if idx >= 0 else -idx
         _, motion = valid_profiles[idx]
         return motion
-    _, motion = secure_choice(valid_profiles)
+    # Bias toward underused (lower count) motion profiles
+    picked = weighted_choice_favor_underused(valid_profiles, lambda p: p[0].get("count", 0))
+    if picked is None:
+        _, motion = secure_choice(valid_profiles)
+    else:
+        _, motion = picked
     return motion
 
 
@@ -205,6 +214,18 @@ def build_spec_from_instruction(
     pure_colors = _build_pure_color_pool(knowledge, instruction, avoid_palette=avoid_palette)
     creation_mode = "pure_per_frame" if pure_colors else "blended"
 
+    # Pure sounds from registry: sample 3–5 per-instant sounds (bias toward underused)
+    pure_sounds: list[dict[str, Any]] | None = None
+    static_sound = (knowledge or {}).get("static_sound") or []
+    if static_sound:
+        n = min(5, max(3, len(static_sound)), len(static_sound))
+        pure_sounds = []
+        for _ in range(n):
+            s = weighted_choice_favor_underused(static_sound, lambda e: e.get("count", 0) if isinstance(e, dict) else 0)
+            if s is not None:
+                pure_sounds.append(dict(s) if isinstance(s, dict) else s)
+        pure_sounds = pure_sounds if pure_sounds else None
+
     spec = SceneSpec(
         palette_name=palette,
         motion_type=motion,
@@ -233,6 +254,7 @@ def build_spec_from_instruction(
         depth_parallax=depth_parallax,
         pure_colors=pure_colors,
         creation_mode=creation_mode,
+        pure_sounds=pure_sounds,
     )
 
     _validate_spec_against_instruction(spec, instruction)
@@ -246,8 +268,11 @@ def _build_pure_color_pool(
     avoid_palette: set[str] | None = None,
 ) -> list[tuple[int, int, int]]:
     """
-    Build pool of pure colors for pure-per-frame creation (§7).
-    Origin primitives (STATIC) + previously extracted/discovered colors (learned_colors).
+    Build full pool of pure colors for random-per-pixel creation.
+
+    Each pixel in each frame gets a random value from this pool; motion over a window
+    combines pixels (captured at extraction as temporal blend → new pure or dynamic).
+    Pool = origin primitives + static_colors (per-frame discovered) + learned_colors (whole-video).
     No fixed default list — only registry data so creation progresses as loop runs.
     """
     pool: list[tuple[int, int, int]] = []
@@ -260,7 +285,20 @@ def _build_pure_color_pool(
             seen.add(t)
             pool.append(t)
 
-    # 2. Learned/discovered colors from registry (authentic names = previously extracted)
+    # 2. Static (per-frame discovered) colors — pixel-level blends become new pure values
+    static = (knowledge or {}).get("static_colors") or {}
+    if isinstance(static, dict):
+        for _key, data in static.items():
+            if not isinstance(data, dict) or "r" not in data or "g" not in data or "b" not in data:
+                continue
+            r, g, b = int(round(float(data["r"]))), int(round(float(data["g"]))), int(round(float(data["b"])))
+            r, g, b = max(0, min(255, r)), max(0, min(255, g)), max(0, min(255, b))
+            t = (r, g, b)
+            if t not in seen:
+                seen.add(t)
+                pool.append(t)
+
+    # 3. Learned (whole-video) colors
     learned = (knowledge or {}).get("learned_colors") or {}
     if isinstance(learned, dict):
         for _key, data in learned.items():
@@ -332,11 +370,44 @@ def _build_palette_from_blending(
     else:
         hints = getattr(instruction, "palette_hints", []) or [fallback_palette_name]
         hints = [h for h in hints if h not in avoid]
+        # Registry-first: no single hardcoded default; when default/empty, pick 2–3 from full set (wider exploration)
         if not hints:
-            hints = [fallback_palette_name] if fallback_palette_name not in avoid else [k for k in PALETTES if k not in avoid][:1] or ["default"]
-        result = list(PALETTES.get(hints[0], PALETTES["default"]))
+            pool = [k for k in PALETTES if k not in avoid]
+            name_to_count: dict[str, int] = {k: 0 for k in pool}
+            if knowledge and (knowledge.get("learned_colors") or knowledge.get("static_colors")):
+                learned = knowledge.get("learned_colors") or {}
+                for _key, data in learned.items():
+                    if isinstance(data, dict):
+                        name = (data.get("name") or "").strip()
+                        if name and name in PALETTES and name not in avoid:
+                            if name not in pool:
+                                pool.append(name)
+                            name_to_count[name] = int(data.get("count", 0) or 0)
+                for _key, data in (knowledge.get("static_colors") or {}).items():
+                    if isinstance(data, dict):
+                        name = (data.get("name") or "").strip()
+                        if name and name in PALETTES and name not in avoid and name in name_to_count:
+                            name_to_count[name] = int(data.get("count", 0) or 0)
+            # Pick 2–3 distinct palette hints, biased toward underused
+            n_hints = min(3, max(2, len(pool))) if len(pool) >= 2 else 1
+            hints = []
+            pool_copy = list(pool)
+            for _ in range(n_hints):
+                if not pool_copy:
+                    break
+                chosen = weighted_choice_favor_underused(pool_copy, lambda n: name_to_count.get(n, 0))
+                if chosen is None:
+                    chosen = secure_choice(pool_copy)
+                if chosen is not None:
+                    hints.append(chosen)
+                    pool_copy = [x for x in pool_copy if x != chosen]
+            if not hints:
+                hints = [fallback_palette_name] if fallback_palette_name not in avoid else list(PALETTES.keys())[:1]
+            if not hints:
+                hints = ["default"]
+        result = list(PALETTES.get(hints[0], PALETTES.get("default", list(PALETTES.values())[0])))
         for name in hints[1:]:
-            other = PALETTES.get(name, PALETTES["default"])
+            other = PALETTES.get(name, PALETTES.get("default", list(PALETTES.values())[0]))
             result = blend_palettes(result, other, weight=0.5)
 
     # Optionally blend with learned color (novel from discoveries) — deterministic by prompt when avoid empty
@@ -366,7 +437,7 @@ def _build_palette_from_blending(
                         weight=0.15,
                     )
 
-    return result if result else list(PALETTES["default"])
+    return result if result else list(PALETTES.get("default", list(PALETTES.values())[0]))
 
 
 def _build_motion_from_blending(
@@ -403,8 +474,13 @@ def _build_motion_from_blending(
         if motion and motion in _MOTION_VALID and motion not in avoid:
             valid_learned.append((m, motion))
     if valid_learned:
-        idx = (hash(seed_hint or "") % len(valid_learned)) if seed_hint else 0
-        idx = idx if idx >= 0 else -idx
+        # Variety: 50% random from registry, 50% deterministic by seed so runs are unpredictable
+        from ..random_utils import secure_random
+        if seed_hint and secure_random() >= 0.5:
+            idx = hash(seed_hint) % len(valid_learned)
+            idx = idx if idx >= 0 else -idx
+        else:
+            idx = int(secure_random() * len(valid_learned)) % len(valid_learned)
         _, learned_motion = valid_learned[idx]
         result = blend_motion_params(result, learned_motion, weight=0.35)
 
@@ -502,11 +578,36 @@ def _refine_audio_from_knowledge(
     presence: str,
     knowledge: dict[str, Any],
 ) -> tuple[str, str, str]:
-    """Refine audio params from learned_audio discoveries so audio progresses with the loop."""
+    """Refine audio from learned_audio and static_sound; bias toward underused/recent."""
+    from ..random_utils import secure_choice, secure_random
+    # Pure sound mesh: discovered per-instant sounds can influence mood/tone (bias underused)
+    static_sound = knowledge.get("static_sound") or []
+    if static_sound and (mood == "neutral" or not mood):
+        entry = weighted_choice_favor_underused(static_sound, lambda e: e.get("count", 0) if isinstance(e, dict) else 0)
+        if entry is None:
+            entry = secure_choice(static_sound)
+        if isinstance(entry, dict):
+            tone = (entry.get("tone") or "").strip().lower()
+            tone_to_mood = {"low": "calm", "mid": "neutral", "high": "uplifting", "silent": "neutral", "silence": "neutral"}
+            if tone and tone_to_mood.get(tone):
+                mood = tone_to_mood[tone]
+    # Blended (learned_audio): 35% pick from registry (bias recent), else most_common
     learned = knowledge.get("learned_audio", [])
     if not learned:
         return tempo, mood, presence
-    # Use most recent discoveries to influence: pick most frequent values when we have defaults
+    use_random = secure_random() < 0.35
+    if use_random:
+        a = weighted_choice_favor_recent(learned, lambda x: x.get("created_at") if isinstance(x, dict) else None)
+        if a is None:
+            a = secure_choice(learned)
+        if isinstance(a, dict):
+            if tempo == "medium" or not a.get("tempo"):
+                tempo = (a.get("tempo") or "medium")
+            if mood == "neutral" or not a.get("mood"):
+                mood = (a.get("mood") or "neutral")
+            if presence == "ambient" or not a.get("presence"):
+                presence = (a.get("presence") or "ambient")
+        return tempo, mood, presence
     from collections import Counter
     tempos = Counter(a.get("tempo", "medium") for a in learned if isinstance(a.get("tempo"), str))
     moods = Counter(a.get("mood", "neutral") for a in learned if isinstance(a.get("mood"), str))

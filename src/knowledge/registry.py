@@ -152,7 +152,10 @@ def list_all_registry_values(config: dict[str, Any] | None = None) -> dict[str, 
 
 
 def _color_key(r: float, g: float, b: float, *, tolerance: int = 20) -> str:
-    """Quantize RGB to reduce near-duplicates."""
+    """Quantize RGB to reduce near-duplicates. Clamps to [0,255] for valid keys."""
+    r = max(0.0, min(255.0, float(r)))
+    g = max(0.0, min(255.0, float(g)))
+    b = max(0.0, min(255.0, float(b)))
     br = int(r // tolerance) * tolerance
     bg = int(g // tolerance) * tolerance
     bb = int(b // tolerance) * tolerance

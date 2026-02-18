@@ -718,6 +718,7 @@ function exportRegistries() {
       },
       semantic_narrative: lastRegistriesData.narrative,
       interpretation: lastRegistriesData.interpretation,
+      linguistic: lastRegistriesData.linguistic || [],
     },
     loop_progress: lastProgressData || null,
   };

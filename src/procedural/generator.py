@@ -90,6 +90,7 @@ class ProceduralVideoGenerator(VideoGenerator):
         instruction = interpret_user_prompt(prompt, default_duration=duration_seconds)
         knowledge = get_knowledge_for_creation(config)
         base_spec = build_spec_from_instruction(instruction, knowledge=knowledge)
+        self._last_spec = base_spec  # Pipeline uses this for audio (pure_sounds mixing)
         scene_script = build_scene_script_from_instruction(
             instruction,
             duration_seconds=duration_seconds,

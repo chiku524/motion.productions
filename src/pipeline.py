@@ -56,8 +56,9 @@ def generate_full_video(
             seed=seed,
             config=config,
         )
-        # Phase 6: mandatory audio (every mp4 has an audio track)
-        output_path = _add_audio(output_path, config, prompt)
+        # Phase 6: mandatory audio (every mp4 has an audio track); use spec.pure_sounds when available
+        spec = getattr(generator, "_last_spec", None)
+        output_path = _add_audio(output_path, config, prompt, spec=spec)
         return output_path
 
     # Long-form: segments with temporal continuation, then concat
@@ -98,7 +99,8 @@ def generate_full_video(
     concat_segments(segment_paths, output_path)
 
     # Phase 6: mandatory audio (every mp4 has an audio track)
-    output_path = _add_audio(output_path, config, effective_prompt)
+    spec = getattr(generator, "_last_spec", None)
+    output_path = _add_audio(output_path, config, effective_prompt, spec=spec)
 
     # Optional: remove segment files to save space (keep for debugging initially)
     # for p in segment_paths:
@@ -113,9 +115,10 @@ def _add_audio(
     prompt: str,
     *,
     instruction: Any = None,
+    spec: Any = None,
 ) -> Path:
-    """Always add procedural audio to the video. Uses audio origins: mood, tempo, presence.
-    Failures (missing pydub/ffmpeg or mix errors) are logged and re-raised; no silent skip."""
+    """Always add procedural audio to the video. When spec.pure_sounds is set, mixes multiple
+    pure sounds from the registry; else uses mood, tempo, presence (from instruction or prompt)."""
     import logging
     logger = logging.getLogger(__name__)
     try:
@@ -129,11 +132,14 @@ def _add_audio(
     mood = "neutral"
     tempo = "medium"
     presence = "ambient"
+    pure_sounds = getattr(spec, "pure_sounds", None) if spec else None
+    if spec is not None and instruction is None and hasattr(spec, "audio_mood"):
+        instruction = spec
     if instruction is not None:
         mood = getattr(instruction, "audio_mood", None) or "neutral"
         tempo = getattr(instruction, "audio_tempo", None) or "medium"
         presence = getattr(instruction, "audio_presence", None) or "ambient"
-    elif prompt:
+    elif prompt and not pure_sounds:
         try:
             from .interpretation import interpret_user_prompt
             inst = interpret_user_prompt(prompt, default_duration=6)
@@ -149,6 +155,7 @@ def _add_audio(
         out = mix_audio_to_video(
             output_path, output_path=output_path,
             mood=mood, tempo=tempo, presence=presence,
+            pure_sounds=pure_sounds,
         )
         out_path = Path(out)
         _verify_audio_track(out_path)

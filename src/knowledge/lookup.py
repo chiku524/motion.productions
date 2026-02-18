@@ -72,6 +72,8 @@ def get_knowledge_for_creation(
             knowledge["origin_camera"] = data.get("origin_camera", [])
             knowledge["origin_motion"] = data.get("origin_motion", [])
             knowledge["interpretation_prompts"] = data.get("interpretation_prompts", [])
+            knowledge["static_colors"] = data.get("static_colors", {})
+            knowledge["static_sound"] = data.get("static_sound", [])
         except Exception as e:
             from ..api_client import APIError
             if isinstance(e, APIError):
@@ -85,8 +87,11 @@ def get_knowledge_for_creation(
             knowledge["origin_camera"] = []
             knowledge["origin_motion"] = []
             knowledge["interpretation_prompts"] = []
+            knowledge["static_sound"] = []
     if "interpretation_prompts" not in knowledge:
         knowledge["interpretation_prompts"] = []
+    if "static_sound" not in knowledge:
+        knowledge["static_sound"] = []
     if not knowledge.get("learned_colors"):
         try:
             learned_colors = load_registry("learned_colors", config)
@@ -111,5 +116,18 @@ def get_knowledge_for_creation(
         knowledge["origin_camera"] = []
     if "origin_motion" not in knowledge:
         knowledge["origin_motion"] = []
+    if "static_colors" not in knowledge:
+        knowledge["static_colors"] = {}
+    if not knowledge.get("static_sound"):
+        try:
+            from .static_registry import load_static_registry
+            sound_data = load_static_registry("sound", config)
+            entries = sound_data.get("entries", [])
+            knowledge["static_sound"] = [
+                {"key": e.get("key"), "tone": e.get("tone"), "timbre": e.get("timbre"), "amplitude": e.get("amplitude"), "name": e.get("name")}
+                for e in entries if e.get("key")
+            ]
+        except Exception:
+            knowledge["static_sound"] = []
 
     return knowledge

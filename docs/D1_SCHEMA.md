@@ -61,4 +61,4 @@ This document lists every D1 table, its role, and which registry it serves. Ther
 - **Semantic (narrative_entries):** Categories (plot, setting, dialogue, genre, mood, …); elements are named entries with optional depth_breakdown.
 - **Interpretation:** Program deals with the unknown until user input; this table stores resolved interpretations for reuse.
 
-See [REGISTRY_FOUNDATION.md](REGISTRY_FOUNDATION.md) and [REGISTRIES.md](REGISTRIES.md).
+See [REGISTRY_FOUNDATION.md](REGISTRY_FOUNDATION.md) and [WORKFLOWS_AND_REGISTRIES.md](WORKFLOWS_AND_REGISTRIES.md) (Part I).

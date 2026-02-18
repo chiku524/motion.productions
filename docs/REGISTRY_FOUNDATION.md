@@ -84,4 +84,4 @@ This document is the **authoritative foundation** for all registries. Everything
 - [x] Name generator: semantic/meaningful only; precise algorithms for undiscovered elements.
 - [x] Interpretation: program deals with unknown until user input; registry prepares for everything.
 
-See also: [REGISTRIES.md](REGISTRIES.md), [MP4_ASPECTS.md](MP4_ASPECTS.md), [NAME_GENERATOR.md](NAME_GENERATOR.md).
+See also: [WORKFLOWS_AND_REGISTRIES.md](WORKFLOWS_AND_REGISTRIES.md) (Part I: registries), [MP4_ASPECTS.md](MP4_ASPECTS.md), [NAME_GENERATOR.md](NAME_GENERATOR.md).

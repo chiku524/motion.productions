@@ -79,8 +79,7 @@ Both loops are designed so that **accuracy** (what we store) and **precision** (
 
 ## 4. See also
 
-- [REGISTRIES.md](REGISTRIES.md) — Where values live; pure vs blended vs semantic.
+- [WORKFLOWS_AND_REGISTRIES.md](WORKFLOWS_AND_REGISTRIES.md) — Where values live (Part I); workflow steps and prompt selection (Part II).
 - [REGISTRY_FOUNDATION.md](REGISTRY_FOUNDATION.md) — Four registries, depth rules, naming.
-- [WORKFLOWS_AND_REGISTRIES.md](WORKFLOWS_AND_REGISTRIES.md) — Workflow steps and prompt selection.
 - `src/interpretation/language_standard.py` — Language standard (built-in linguistic, merge, variant type).
 - `src/knowledge/origins.py` — Primitives for MP4 aspects.

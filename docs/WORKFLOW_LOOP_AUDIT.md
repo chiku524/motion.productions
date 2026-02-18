@@ -1,6 +1,6 @@
 # Workflow loop — algorithm and function audit
 
-This document audits every algorithm and function in the workflow loop against the registries (REGISTRY_FOUNDATION, REGISTRIES). All must be on the same page: Pure = single frame/primitives; Blended = categories + elements with name + depth_breakdown; Semantic = same; Interpretation = resolved prompts.
+This document audits every algorithm and function in the workflow loop against the registries (REGISTRY_FOUNDATION, WORKFLOWS_AND_REGISTRIES Part I). All must be on the same page: Pure = single frame/primitives; Blended = categories + elements with name + depth_breakdown; Semantic = same; Interpretation = resolved prompts.
 
 ---
 

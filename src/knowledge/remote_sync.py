@@ -180,13 +180,16 @@ def grow_and_sync_to_api(
         "technical": [],
     }
 
-    # Color
+    # Color (with depth_breakdown vs 16 primitives for learned_colors — living plan Priority 1)
     dom = analysis.get("dominant_color_rgb")
     if dom and len(dom) >= 3:
-        r, g, b = float(dom[0]), float(dom[1]), float(dom[2])
+        r = max(0, min(255, float(dom[0])))
+        g = max(0, min(255, float(dom[1])))
+        b = max(0, min(255, float(dom[2])))
         key = _color_key(r, g, b, tolerance=25)
         color_name = generate_sensible_name("color", key, existing_names=used_names, rgb_hint=(r, g, b))
         used_names.add(color_name)
+        depth_breakdown = compute_color_depth(r, g, b)  # 16 primitives; Worker stores in learned_colors
         discoveries["colors"].append({
             "key": key,
             "r": r,
@@ -194,13 +197,14 @@ def grow_and_sync_to_api(
             "b": b,
             "name": color_name,
             "source_prompt": prompt[:80] if prompt else "",
+            "depth_breakdown": depth_breakdown,
         })
         discoveries["blends"].append({
             "name": color_name,
             "domain": "color",
             "inputs": {"key": key},
             "output": {"r": r, "g": g, "b": b},
-            "primitive_depths": compute_color_depth(r, g, b),
+            "primitive_depths": depth_breakdown,
             "source_prompt": prompt[:120] if prompt else "",
         })
 

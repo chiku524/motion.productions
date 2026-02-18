@@ -97,15 +97,15 @@ STATIC_COLOR_PRIMITIVES = [
 ]
 
 # -----------------------------------------------------------------------------
-# SOUND PRIMITIVES — actual sound noises (pure elements), not measurements.
-# Measurements (low/mid/high = frequency band; amplitude = level) are used for
-# depth_breakdown and keys; the pure elements we name are the noises themselves.
-# Kick, snare, melody, speech, etc. are Blended (temporal) elements, not here.
-#
-# Actual noise primitives: silence + low-band / mid-band / high-band noises
-# (rumble, tone, hiss). Each discovered sound gets a name + strength_pct (0-1).
+# SOUND: origin primitives + mesh (registry).
+# - Origin/primitive set = 4 types: silence, rumble, tone, hiss (used for depth %).
+# - Discovered pure sound *values* are blends of these primitives; depth % = how much
+#   each origin/primitive makes up the discovered value (always relevant for all discovered values).
+# - The mesh = static_sound registry = primitives + discovered blends. New discoveries
+#   are recorded with depth_breakdown = origin_noises (weights) so the mesh stays a
+#   playground of combinable values. Kick, snare, melody, speech, etc. are Blended (dynamic).
 # -----------------------------------------------------------------------------
-# Noise names (pure elements). Tone measurement "low"|"mid"|"high" maps to these.
+# Noise names (pure primitives). Tone "low"|"mid"|"high" maps to rumble|tone|hiss.
 STATIC_SOUND_NOISE_NAMES = ["silence", "rumble", "tone", "hiss"]
 
 
@@ -121,8 +121,9 @@ def _snd(noise: str, strength_pct: float, tone_measurement: str = "") -> dict[st
     }
 
 
-# Minimal primitive set: silence + one strength band per noise type (rumble/tone/hiss).
-# Full discovery may add more strength levels; each gets name + strength_pct recorded.
+# Minimal primitive set (origin values): silence + strength bands per noise (rumble/tone/hiss).
+# These are seeded into the mesh; discovered blends (primitives combined for one instant)
+# are added by the loop and recorded in the same registry.
 STATIC_SOUND_PRIMITIVES = [
     _snd("silence", 0.0, "silent"),
     _snd("rumble", 0.25, "low"),
@@ -145,7 +146,7 @@ STATIC_ASPECTS = [
     },
     {
         "id": "sound",
-        "description": "Pure sound = actual sound noises (named). low/mid/high are measurements; strength_pct is recorded per entry.",
+        "description": "Pure sound: origin/primitive values (silence, rumble, tone, hiss) plus mesh of discovered blends per instant. depth_breakdown = origin_noises (primitives blending together); new discoveries recorded in registry.",
         "sub_aspects": ["noise", "strength_pct", "amplitude", "tone", "timbre", "depth_breakdown"],
     },
 ]

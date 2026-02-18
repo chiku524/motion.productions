@@ -10,6 +10,9 @@ learning_log.jsonl
 # Automation state (local run count, prompts tried)
 data/automation_state.json
 
+# Local registry cache (recreated at runtime; D1 is source of truth when API is used)
+knowledge/
+
 # Python
 __pycache__/
 *.py[cod]

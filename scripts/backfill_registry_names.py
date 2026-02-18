@@ -35,7 +35,8 @@ def main() -> None:
     p = argparse.ArgumentParser(description="Backfill gibberish registry names with semantic ones")
     p.add_argument("--api-base", default=os.environ.get("API_BASE", "https://motion.productions"))
     p.add_argument("--dry-run", action="store_true", help="Preview only; no updates")
-    p.add_argument("--limit", type=int, default=20, help="Max rows per request (default 20)")
+    p.add_argument("--limit", type=int, default=100, help="Max rows per request (default 100; API allows up to 500)")
+    p.add_argument("--timeout", type=int, default=120, help="Request timeout seconds (default 120; use higher for learned_blends)")
     p.add_argument("--table", help="Process only this table (faster; use for large registries)")
     args = p.parse_args()
     base = args.api_base.rstrip("/")
@@ -48,11 +49,11 @@ def main() -> None:
         for tbl in tables:
             total = 0
             while True:
-                qs = [f"limit={min(args.limit, 200)}", f"table={tbl}"]
+                qs = [f"limit={min(args.limit, 500)}", f"table={tbl}"]
                 if args.dry_run:
                     qs.append("dry_run=1")
                 path = "/api/registries/backfill-names?" + "&".join(qs)
-                r = api_request_with_retry(base, "POST", path, data={}, timeout=60)
+                r = api_request_with_retry(base, "POST", path, data={}, timeout=args.timeout)
                 updated = r.get("updated", 0)
                 total += updated
                 grand_total += updated

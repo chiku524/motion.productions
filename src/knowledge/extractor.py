@@ -21,20 +21,35 @@ from ..analysis.metrics import (
 from .schema import BaseKnowledgeExtract
 
 
+def _palette_mean_cache() -> dict[str, tuple[float, float, float]]:
+    """Cached mean RGB per palette name (computed once)."""
+    cache = getattr(_palette_mean_cache, "_cache", None)
+    if cache is None:
+        from ..procedural.data.palettes import PALETTES
+        cache = {}
+        for name, colors in PALETTES.items():
+            n = len(colors)
+            if n:
+                cache[name] = (
+                    sum(c[0] for c in colors) / n,
+                    sum(c[1] for c in colors) / n,
+                    sum(c[2] for c in colors) / n,
+                )
+        _palette_mean_cache._cache = cache
+    return cache
+
+
 def _closest_palette(r: float, g: float, b: float) -> tuple[str, float]:
     """Find which of our palettes (by mean color) is closest to (r,g,b). Display/reference only; registry stores exact RGB."""
-    from ..procedural.data.palettes import PALETTES
     best_name = "default"
-    best_dist = 1e9
-    for name, colors in PALETTES.items():
-        mr = sum(c[0] for c in colors) / len(colors)
-        mg = sum(c[1] for c in colors) / len(colors)
-        mb = sum(c[2] for c in colors) / len(colors)
+    best_dist_sq = 1e18
+    r, g, b = float(r), float(g), float(b)
+    for name, (mr, mg, mb) in _palette_mean_cache().items():
         d = (r - mr) ** 2 + (g - mg) ** 2 + (b - mb) ** 2
-        if d < best_dist:
-            best_dist = d
+        if d < best_dist_sq:
+            best_dist_sq = d
             best_name = name
-    return best_name, float(best_dist ** 0.5)
+    return best_name, (best_dist_sq ** 0.5)
 
 
 def _motion_trend(per_frame_motion: list[float]) -> str:

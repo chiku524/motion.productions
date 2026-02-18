@@ -27,17 +27,16 @@ def color_histogram(frame: np.ndarray, bins: int = 16) -> dict[str, np.ndarray]:
 def dominant_colors(frame: np.ndarray, n: int = 3) -> list[tuple[float, float, float]]:
     """
     Approximate dominant colors by averaging in grid cells (spatial downscale then mean).
-    Returns list of (R, G, B) in 0–255.
+    Returns list of (R, G, B) clamped to 0–255.
     """
     h, w = frame.shape[:2]
     if frame.ndim != 3:
         return []
-    # Downsample then take mean per channel
     step = max(1, min(h, w) // 8)
-    r = frame[::step, ::step, 0].astype(np.float64).mean()
-    g = frame[::step, ::step, 1].astype(np.float64).mean()
-    b = frame[::step, ::step, 2].astype(np.float64).mean()
-    return [(float(r), float(g), float(b))]
+    r = float(np.clip(frame[::step, ::step, 0].astype(np.float64).mean(), 0, 255))
+    g = float(np.clip(frame[::step, ::step, 1].astype(np.float64).mean(), 0, 255))
+    b = float(np.clip(frame[::step, ::step, 2].astype(np.float64).mean(), 0, 255))
+    return [(r, g, b)]
 
 
 def frame_difference(frame_a: np.ndarray, frame_b: np.ndarray) -> float:
@@ -83,7 +82,10 @@ def saturation_and_hue(frame: np.ndarray) -> dict[str, float]:
     cmin = np.minimum(np.minimum(r, g), b)
     delta = cmax - cmin
     delta_safe = np.maximum(delta, 1e-9)  # avoid division by zero (np.where evaluates both branches)
-    sat = np.where(cmax > 1e-9, delta / cmax, 0.0)
+    # Divide only where cmax > 0 and finite to avoid RuntimeWarning (invalid value in divide)
+    valid = (cmax > 1e-9) & np.isfinite(cmax) & np.isfinite(delta)
+    sat = np.zeros_like(r)
+    np.divide(delta, cmax, out=sat, where=valid)
     hue = np.zeros_like(r)
     mask_r = (cmax == r) & (delta > 1e-9)
     mask_g = (cmax == g) & (delta > 1e-9)

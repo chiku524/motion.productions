@@ -5,7 +5,7 @@ This document audits **every** algorithm and function in the codebase for:
 1. **100% precision** — Logic is well-defined, deterministic where required, and correct for its scope.
 2. **Success within the workflow** — The function contributes correctly to the overall mission: continuous loop (interpret → create → render → extract → grow → sync), with all three registries (static, dynamic, narrative) evolving and creation using static elements + origins.
 
-**Mission:** Ready for any user prompt; interpret to pure/non-pure elements; create from instruction (100% precise); render (color + sound every frame); extract per-frame (static) and per-window (dynamic); grow all three registries with sensible names when unknown; sync to API. Pure/single-frame → static; non-pure/2+ frames → dynamic or narrative. For registry taxonomy and pure vs non-pure, see [REGISTRIES.md](REGISTRIES.md).
+**Mission:** Ready for any user prompt; interpret to pure/non-pure elements; create from instruction (100% precise); render (color + sound every frame); extract per-frame (static) and per-window (dynamic); grow all three registries with sensible names when unknown; sync to API. Pure/single-frame → static; non-pure/2+ frames → dynamic or narrative. For registry taxonomy and pure vs non-pure, see [WORKFLOWS_AND_REGISTRIES.md](WORKFLOWS_AND_REGISTRIES.md) (Part I).
 
 **Status legend:** ✅ Complete — precise and successful in workflow. ⚠️ Needs work — gap noted. 🔶 Legacy — correct for legacy path but superseded or parallel to current workflow.
 

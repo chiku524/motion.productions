@@ -54,10 +54,12 @@ def mix_audio_to_video(
     tempo: str = "medium",
     presence: str = "ambient",
     cut_times: list[float] | None = None,
+    pure_sounds: list[dict] | None = None,
 ) -> Path:
     """
     Add audio to a video. Phase 6.
     - If audio_path: mix that file.
+    - Else if pure_sounds (from registry mesh): mix multiple per-instant sounds into one track.
     - Else: generate procedural ambient from origins (tempo, mood, presence).
     - Always writes to a temp file first to avoid ffmpeg in-place corruption.
     Raises RuntimeError if pydub is missing or ffmpeg/ffprobe are not on PATH.
@@ -105,6 +107,12 @@ def mix_audio_to_video(
     if audio_path and audio_path.exists():
         audio = AudioSegment.from_file(str(audio_path))
         audio = audio[: int(duration * 1000)]
+    elif pure_sounds and len(pure_sounds) > 0:
+        # Mix multiple pure sounds from the registry (per-instant mesh)
+        audio = generate_audio_from_pure_sounds(
+            pure_sounds,
+            duration_ms=int(duration * 1000),
+        )
     else:
         # Procedural audio from origins: mood, tempo, presence
         audio = _generate_procedural_audio(
@@ -135,6 +143,67 @@ def mix_audio_to_video(
         shutil.move(str(output_path), str(final_output))
         return final_output
     return output_path
+
+
+def _tone_to_freq_db(tone: str, amplitude: float) -> tuple[float, float]:
+    """Map tone (low/mid/high/silent) and amplitude (0–1) to (frequency_hz, volume_db)."""
+    tone_lower = (tone or "").strip().lower()
+    if tone_lower in ("silent", "silence", "") or (amplitude or 0) < 0.01:
+        return 0.0, -60.0  # effectively silent
+    freq_map = {"low": 82.0, "mid": 220.0, "high": 880.0}
+    freq = freq_map.get(tone_lower, 220.0)
+    # Amplitude 0–1 → dB about -30 (quiet) to -18 (audible)
+    amp = max(0.0, min(1.0, float(amplitude or 0.5)))
+    db = -30.0 + amp * 12.0
+    return freq, db
+
+
+def generate_audio_from_pure_sounds(
+    pure_sounds: list[dict],
+    duration_ms: int,
+    *,
+    sample_rate: int = 44100,
+) -> "AudioSegment":
+    """
+    Mix multiple pure sounds (from the static_sound registry mesh) into one track.
+    Each entry can have tone (low/mid/high/silent), amplitude/weight, timbre.
+    Overlays all with reduced gain so they combine into a single evolving layer.
+    """
+    try:
+        from pydub import AudioSegment
+        from pydub.generators import Sine
+    except ImportError as e:
+        raise RuntimeError("pydub is required for audio. Install with: pip install pydub") from e
+
+    try:
+        from pydub.generators import Sine
+    except ImportError:
+        return AudioSegment.silent(duration=duration_ms, frame_rate=sample_rate)
+
+    frame_rate = sample_rate
+    base = AudioSegment.silent(duration=duration_ms, frame_rate=frame_rate)
+    n = max(1, len([e for e in pure_sounds if isinstance(e, dict)]))
+    # Per-layer gain reduction so combined level is reasonable
+    layer_db = -10.0 * (1.0 / n) ** 0.5  # softer when more layers
+
+    for i, entry in enumerate(pure_sounds):
+        if not isinstance(entry, dict):
+            continue
+        tone = (entry.get("tone") or entry.get("timbre") or "mid").strip() or "mid"
+        amp = float(entry.get("amplitude") or entry.get("weight") or 0.5)
+        freq, db = _tone_to_freq_db(tone, amp)
+        if freq <= 0:
+            continue
+        try:
+            tone_seg = Sine(freq).to_audio_segment(duration=duration_ms)
+            tone_seg = tone_seg + (db + layer_db)
+        except Exception:
+            continue
+        # Stagger start slightly so layers don't all align (more texture)
+        offset_ms = (i * 47) % max(1, duration_ms // 2)
+        base = base.overlay(tone_seg, position=offset_ms)
+
+    return base
 
 
 def _repeat_to_duration(segment, duration_ms: int):
@@ -198,3 +267,35 @@ def _generate_procedural_audio(
     # pydub AudioSegment has no .loop(); repeat segment to fill target duration
     looped = _repeat_to_duration(tone, duration_ms)
     return base.overlay(looped)
+
+
+def generate_audio_only(
+    duration_seconds: float,
+    output_path: Path,
+    *,
+    mood: str = "neutral",
+    tempo: str = "medium",
+    presence: str = "ambient",
+) -> Path:
+    """
+    Generate procedural audio to a WAV file (no video). Used by the sound-only
+    workflow to discover pure sound values without rendering video.
+    """
+    try:
+        from pydub import AudioSegment
+    except ImportError as e:
+        raise RuntimeError(
+            "pydub is required for audio. Install with: pip install pydub"
+        ) from e
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    duration_ms = int(duration_seconds * 1000)
+    audio = _generate_procedural_audio(
+        duration_ms=duration_ms,
+        mood=mood,
+        tempo=tempo,
+        presence=presence,
+    )
+    audio.export(str(output_path), format="wav")
+    return output_path

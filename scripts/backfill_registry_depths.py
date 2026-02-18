@@ -6,8 +6,12 @@ Use after depth calculation logic changes to refresh stored values.
 
 Usage:
   python scripts/backfill_registry_depths.py --api-base https://motion.productions
+  python scripts/backfill_registry_depths.py --table learned_colors --limit 30
   python scripts/backfill_registry_depths.py --table learned_motion --limit 30
   python scripts/backfill_registry_depths.py --dry-run
+
+If you get 400 Bad Request for table=learned_colors, deploy the Cloudflare Worker
+first (push to main or run deploy workflow) so the API includes learned_colors support.
 """
 import argparse
 import os
@@ -24,7 +28,7 @@ from src.knowledge.blend_depth import (
     compute_lighting_depth,
 )
 
-TABLES = ["static_colors", "learned_motion", "learned_lighting"]
+TABLES = ["static_colors", "learned_colors", "learned_motion", "learned_lighting"]
 
 
 def main() -> None:
@@ -53,6 +57,8 @@ def main() -> None:
             rows = r.get("rows") or []
         except Exception as e:
             print(f"  {tbl}: fetch failed — {e}")
+            if "400" in str(e) and tbl == "learned_colors":
+                print("  Hint: deploy the Cloudflare Worker (push to main or Actions → Deploy) so backfill-rows accepts learned_colors.")
             continue
         updates = []
         for row in rows:
@@ -61,6 +67,10 @@ def main() -> None:
                 continue
             depth: dict[str, float] = {}
             if tbl == "static_colors":
+                depth = compute_color_depth(
+                    float(row.get("r", 0)), float(row.get("g", 0)), float(row.get("b", 0))
+                )
+            elif tbl == "learned_colors":
                 depth = compute_color_depth(
                     float(row.get("r", 0)), float(row.get("g", 0)), float(row.get("b", 0))
                 )

@@ -2,7 +2,28 @@
 
 **Based on:** `json registry exports/motion-registries-2026-02-15.json` and full codebase review.
 
-**Mission:** Acquire all possible data from MP4 (video) files and from user prompts; interpret prompts in a standard of English (including dialects/slang); achieve 100% precision in algorithms/functions and 100% accuracy in what we record.
+**Living plan:** This document is the central plan. Update it with implemented changes, findings, and next steps. See also **MISSION_AND_STRATEGIC_OPTIMIZATIONS.md**, **CODEBASE_AUDIT_MISSION_ALIGNMENT.md**, and **PRECISION_VERIFICATION_CHECKLIST.md** for mission alignment and operator verification. (An earlier **Registry & Loop Workflow Audit** from 2026-02-11 is superseded by this plan; its recommendations are reflected in §6 Prioritized plan.)
+
+---
+
+## Refined mission: 100% precision for comprehensive data & robust interpretation
+
+**Core objective:** Achieve **100% precision** in all workflow algorithms and functions and **100% accurate** results.
+
+1. **Comprehensive data acquisition:** Systematically acquire and record *every possible combination* of origin/primitive values across all video-related aspects (sound, color, motion, theme, plot, etc.). Each discovered value receives an **authentic, semantically meaningful name** in its registry.
+2. **Robust prompt interpretation:** Build a **complete, granular knowledge base** in the Pure (Static), Blended (Dynamic), Semantic (Narrative), and Interpretation registries so the prompt interpretator can understand user prompts (including slang and multi-sense) and generate corresponding videos with high accuracy.
+
+**Five key areas** (with implementation and verification pointers):
+
+| Area | Focus | Implementation / docs | Verification |
+|------|--------|------------------------|--------------|
+| **1. Registry completeness** | LOOP_EXTRACTION_FOCUS enforcement; no data loss; backfill propagation; sparse categories | §9 below; automate_loop.py; backfill cascade (cloudflare); CODEBASE_AUDIT §1 | PRECISION_VERIFICATION_CHECKLIST §1–2 |
+| **2. Creation phase** | Pure-per-frame; data-driven only; wider pools; underused/recent bias; audio variety | builder.py; renderer.py; §9 rows 6–8; CODEBASE_AUDIT §2 | Audit doc §2; tests in tests/test_builder_and_sync.py |
+| **3. Sound discovery** | sound_loop.py deployed; static_sound in for-creation and creation | sound_loop.py; for-creation API; lookup.py; builder | PRECISION_VERIFICATION_CHECKLIST §3 |
+| **4. Interpretation & linguistic** | Interpret worker logs; meaningful prompts; linguistic registry growth | interpret_loop.py; prompt_gen.py; MISSION_AND_STRATEGIC_OPTIMIZATIONS §3 | PRECISION_VERIFICATION_CHECKLIST §4 |
+| **5. Code quality** | Contracts, tests, REGISTRY FOUNDATION alignment; no recursion risk | CODEBASE_AUDIT §5; tests/; REGISTRY_FOUNDATION.md | pytest tests/; audit §5.1–5.2 |
+
+**Configuration:** Use **`LOOP_EXTRACTION_FOCUS`** (not `LCXP_EXTRACTION_FOCUS`) on Railway: `frame` for Explorer/Exploiter, `window` for Balanced. See **RAILWAY_CONFIG.md**. **Logging:** Use `Growth [frame]`, `Growth [window]`, `Missing learning (job_id=...)`, and `Missing discovery (job_id=...)` as primary indicators.
 
 ---
 
@@ -30,7 +51,7 @@
 - `learned_camera` → `dynamic.camera`
 - `learned_blends` (domain `audio`) + optionally `learned_audio_semantic` → `dynamic.sound`
 
-so that per-window and per-run discoveries show up in the export.
+**Implemented:** GET /api/registries now merges `learned_gradient` and `learned_camera` into `dynamic.gradient` and `dynamic.camera` (deduped by key), and appends `learned_audio_semantic` rows to `dynamic.sound`. Per-window discoveries thus appear in the export.
 
 ---
 
@@ -116,6 +137,7 @@ So: **themes, plots, settings, genre, mood, style, scene_type** in the export ar
 ### 5.1 Where learning and discovery are called
 
 - **automate_loop.py:** After each run: `post_all_discoveries(..., job_id=job_id)`, then `grow_and_sync_to_api(..., job_id=job_id)`, then a guaranteed `post_discoveries(api_base, {"job_id": job_id})` so discovery run is recorded even if growth failed, then `POST /api/learning` with job_id.
+- **Env:** Use **`LOOP_EXTRACTION_FOCUS`** (exact name; **not** `LCXP_EXTRACTION_FOCUS`) to set `frame` or `window` per worker. See **MISSION_AND_STRATEGIC_OPTIMIZATIONS.md** for the full mission and monitoring actions. Monitor logs for `Growth [frame]` or `Growth [window]` and for `Missing discovery (job_id=...)` / `Missing learning (job_id=...)` when POSTs fail. Full verification steps: **RAILWAY_CONFIG.md** §8.1 (env config, runtime logs, registry output).
 - **generate_bridge.py (--learn):** After upload: growth + `post_*_discoveries` + `grow_and_sync_to_api` + `POST /api/learning`. If **--learn** is not passed, learning is **not** logged.
 - Jobs completed **without** going through automate_loop or generate_bridge --learn (e.g. manual upload, or a different worker path) will have no learning_run and possibly no discovery_run.
 
@@ -132,21 +154,26 @@ So: **themes, plots, settings, genre, mood, style, scene_type** in the export ar
 
 ### Priority 1 — Critical (precision of core pipelines)
 
-1. **Depth for learned colors (single concept, vs pure static)**  
-   - In Python: when sending `body.colors` to discoveries, attach **depth_breakdown** from `compute_color_depth(r,g,b)` (16 primitives).  
-   - Worker: add `depth_breakdown_json` to **learned_colors** (migration); store and return it in GET /api/registries.  
-   - UI/export: single “Depth (vs pure static)” column; drop duplicate “Depth %” vs “Depth towards primitives” for learned colors.
+1. **Depth for learned colors (single concept, vs pure static)** — **Done.**  
+   - Python: `grow_and_sync_to_api()` attaches **depth_breakdown** from `compute_color_depth(r,g,b)` (16 primitives) to each color in `body.colors`.  
+   - Worker: migration **0017_learned_colors_depth.sql** adds `depth_breakdown_json`; POST stores it; GET /api/registries uses it for dynamic.colors.  
+   - UI/export: single “Depth (vs pure static)” column using returned depth_breakdown.
 
-2. **Registries API: merge gradient/camera/sound discoveries**  
-   - GET /api/registries: for `dynamic.gradient`, merge rows from **learned_gradient** (and optionally dedupe with learned_blends domain=gradient).  
-   - Same for **learned_camera** → `dynamic.camera`.  
-   - For `dynamic.sound`, merge **learned_blends** (domain=audio) and optionally **learned_audio_semantic** so Blended — Sound shows discoveries.  
-   - Ensures per-window and per-run discoveries appear in the export and UI.
+2. **Registries API: merge gradient/camera/sound discoveries** — **Done.**  
+   - GET /api/registries: `dynamic.gradient` = learned_blends (domain=gradient) + **learned_gradient** (deduped by key).  
+   - `dynamic.camera` = learned_blends (domain=camera) + **learned_camera** (deduped).  
+   - `dynamic.sound` = learned_blends (domain=audio) + **learned_audio_semantic**.  
+   - Per-window and per-run discoveries now appear in the export and UI.
 
 3. **Learning and discovery diagnostics**  
    - Ensure every completion path that should be counted calls POST /api/learning and POST /api/knowledge/discoveries with **job_id**.  
    - Document which paths are “learning” paths (e.g. automate_loop, generate_bridge --learn).  
    - Optional backfill script for learning_runs/discovery_runs for already-completed jobs.
+
+**Operational steps (after Priority 1):**
+
+- **Run migration 0017** so `learned_colors.depth_breakdown_json` exists in D1: from repo root run `python scripts/run_d1_migrations.py` (remote) or `python scripts/run_d1_migrations.py --local` (dev). Deploy workflow may run migrations automatically; if not, run once after deploy.
+- **Optional backfill** of existing learned_colors with depth_breakdown: `python scripts/backfill_registry_depths.py --table learned_colors --api-base https://motion.productions` (use `--dry-run` to preview, `--limit N` to cap rows). The Worker supports `learned_colors` in GET `/api/registries/backfill-rows` and POST `/api/registries/backfill-depths`.
 
 ### Priority 2 — High (accuracy and clarity)
 
@@ -260,3 +287,23 @@ So: **themes, plots, settings, genre, mood, style, scene_type** in the export ar
 | Creation progression | One palette/motion/sound per video | §7: pure-per-frame creation; origin + learned only; random pure placement → emergent blends. |
 
 This plan prioritizes correctness of existing workflows and registries first, then fills gaps (sound extraction, narrative-from-video, interpretation volume) and **creation-phase behaviour** (§7) so that videos progress and become more unpredictable over time while always using origin + learned data and producing extractable blends.
+
+---
+
+## 9. Implementation status — "every combination" and extraction workflows
+
+Implementations aligned with the actionable steps (verify extraction workflows, sound discovery, interpretation, pure-per-frame creation, diagnostics):
+
+| Step | Implementation |
+|------|----------------|
+| **1. Verify extraction workflows** | Correct env is **`LOOP_EXTRACTION_FOCUS`** (frame \| window). Logs show `Growth [frame]` or `Growth [window]`. Frame workers post only static; window worker posts only dynamic + narrative. |
+| **2. Sound discovery → creation** | **GET /api/knowledge/for-creation** now returns **static_sound** (pure sound mesh). **lookup.py** parses it; fallback to local static registry when API omits it. **builder.py** `_refine_audio_from_knowledge` uses static_sound (tone → mood) and learned_audio so creation uses discovered pure and blended sound. |
+| **3. Creation uses all registry data** | **automate_loop** calls `get_knowledge_for_creation(config, api_base=args.api_base)` so API data (static_colors, static_sound, learned_*) is used. Builder already uses learned_* and origin_* for gradient, camera, motion, palette; audio refined from learned_audio + static_sound. **Prompt gen** `_build_slot_pools` and `_expand_from_knowledge` now include static_sound (mood/tone/name) and learned_audio (mood/tempo) so prompts explore more combinations. |
+| **4. Diagnostics (missing learning/discovery)** | On failure, logs now include **job_id**: `Missing discovery (job_id=...)` when post_discoveries or grow_and_sync fail; `Missing learning (job_id=...)` when POST /api/learning fails. Enables tracing which jobs contributed to "missing learning" / "missing discovery" in diagnostics. |
+| **5. Prompt gen — semantic/registry** | Slot pools and extra modifiers now use **static_sound** (names, tone) and **learned_audio** (mood, tempo) so procedural and instructive prompts pull from the full mesh and blended audio, improving combination exploration. |
+| **6. Parameterization (data-driven creation)** | **builder.py**: No single hardcoded default palette — when hints empty/default, pool = all PALETTES (+ learned color names in registry), then secure_choice. Motion: 50% random vs deterministic from learned_motion. Audio: 35% pick random from learned_audio (else most_common). **pure_sounds**: spec field + builder samples 3–5 from static_sound mesh per run. See builder docstring and §7 / Creation progression. |
+| **7. Audio mixing from pure_sounds** | **Generator** stores `_last_spec` after building spec. **Pipeline** passes `spec` into `_add_audio`. **mix_audio_to_video** accepts `pure_sounds`; when set, **generate_audio_from_pure_sounds** mixes multiple per-instant sounds (tone → frequency, amplitude → gain, staggered overlay) into the track instead of mood/tempo/presence-only procedural audio. |
+| **8. Bias toward underused/recent** | **GET /api/knowledge/for-creation** returns **count** and **created_at** for static_colors, static_sound, and learned_audio. **random_utils**: `weighted_choice_favor_underused(items, get_count)` and `weighted_choice_favor_recent(items, get_created_at)`. **builder**: pure_sounds, motion, and audio refinement use these so lower-count and more recent entries are chosen more often. |
+| **9. Wider selection pools** | **builder.py** when palette_hints empty: picks **2–3** distinct palette names from pool (PALETTES + learned/static color names) with **weighted_choice_favor_underused** by count, then blends those palettes. Maximizes exploration. |
+| **10. Learning POST retries** | **automate_loop.py** calls **api_request_with_retry**(..., max_retries=5, backoff_seconds=2.0) for POST /api/learning to reduce "missing learning" from transient 5xx/429/connection. |
+| **11. Verification checklist** | **PRECISION_VERIFICATION_CHECKLIST.md** — operator checklist for workflow enforcement, data loss, backfill, sparse categories, sound workflow, interpretation, creation, and code quality. Update this plan when you implement further changes or find new issues. |

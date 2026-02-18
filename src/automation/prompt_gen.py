@@ -183,6 +183,15 @@ def _build_slot_pools(knowledge: dict[str, Any] | None) -> dict[str, list[str]]:
             v = item if isinstance(item, str) else (item.get("camera_motion") or item.get("motion_type"))
             if v and str(v).strip() and v not in camera:
                 camera.append(str(v).strip())
+        # Pure sound mesh: discovered per-instant sounds — use tone/name for mood slot (drives combination exploration)
+        for s in (knowledge.get("static_sound") or [])[:30]:
+            if isinstance(s, dict):
+                name = (s.get("name") or "").strip()
+                tone = (s.get("tone") or "").strip().lower()
+                if name and len(name) >= 2 and is_semantic_name(name):
+                    mood.append(name)
+                if tone and tone not in ("silent", "silence") and tone not in mood:
+                    mood.append(tone)
 
     return {
         "color": [c for c in color if c],
@@ -231,6 +240,24 @@ def _expand_from_knowledge(knowledge: dict[str, Any] | None) -> tuple[list[str],
             if level and float(level) > 5:
                 extra_modifiers.append("dynamic movement")
 
+    # Learned audio (blended): mood/tempo/presence phrases for richer prompts
+    for a in (knowledge.get("learned_audio") or [])[:20]:
+        if isinstance(a, dict):
+            m = (a.get("mood") or "").strip()
+            t = (a.get("tempo") or "").strip()
+            if m and m not in extra_modifiers:
+                extra_modifiers.append(f"{m} mood")
+            if t and t != "medium" and f"{t} tempo" not in extra_modifiers:
+                extra_modifiers.append(f"{t} tempo")
+
+    # Pure sound mesh: discovered sound names/tone as modifiers
+    for s in (knowledge.get("static_sound") or [])[:15]:
+        if isinstance(s, dict):
+            name = (s.get("name") or "").strip()
+            if name and len(name) >= 2 and is_semantic_name(name):
+                extra_modifiers.append(f"{name} sound")
+                extra_modifiers.append(f"{name} tones")
+
     # Proven keywords from learning stats — only semantic (skip gibberish)
     by_keyword = knowledge.get("by_keyword") or {}
     for kw, stats in list(by_keyword.items())[:50]:
@@ -244,6 +271,24 @@ def _expand_from_knowledge(knowledge: dict[str, Any] | None) -> tuple[list[str],
         if isinstance(stats, dict) and stats.get("count", 0) >= 1:
             if pal and isinstance(pal, str) and is_semantic_name(pal):
                 extra_modifiers.append(f"{pal} style")
+
+    # Interpretation registry: reuse short natural-language phrases (linguistic growth)
+    for item in (knowledge.get("interpretation_prompts") or [])[:25]:
+        if not isinstance(item, dict):
+            continue
+        prompt = (item.get("prompt") or "").strip()
+        if not prompt or len(prompt) < 10 or len(prompt) > 45:
+            continue
+        words = prompt.split()
+        if len(words) < 2 or len(words) > 6:
+            continue
+        # Skip imperative starts (full-sentence prompts); keep phrase-like fragments
+        low = prompt.lower()
+        if low.startswith(("create ", "show ", "make ", "give ", "render ", "i want ")):
+            continue
+        if any(len(w) > 12 and not is_semantic_name(w) for w in words if w.isalpha()):
+            continue
+        extra_modifiers.append(prompt)
 
     # Dedupe
     extra_subjects = list(dict.fromkeys(s for s in extra_subjects if s))

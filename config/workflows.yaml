@@ -4,9 +4,11 @@
 # Two dimensions:
 #   1. Prompt choice: explorer (100% explore) | exploiter (100% exploit) | balanced (UI ratio).
 #   2. Extraction focus: frame (per-frame / pure static only) | window (per-window blends only).
+#   3. Optional: LOOP_STATIC_FOCUS = color | sound | both (when frame: grow only colors, only sounds, or both).
 # Set LOOP_EXTRACTION_FOCUS so that 2 workers do frame and 1 does window.
 #
 # Recommended: Explorer + Exploiter = frame (2 frame workers). Balanced = window (1 window worker).
+# For a pure-colors frame worker set LOOP_STATIC_FOCUS=color; pure sounds also have the dedicated sound workflow.
 
 workflows:
   explorer:
@@ -38,3 +40,13 @@ workflows:
     env:
       API_BASE: https://motion.productions
       INTERPRET_DELAY_SECONDS: "10"
+
+  # Pure sound discovery: no video. Generates procedural audio → extract → grow static_sound → sync.
+  sound:
+    description: "Sound-only — no create/render; pure sound extraction + growth; fills static_sound registry"
+    start_command: "python scripts/sound_loop.py"
+    env:
+      API_BASE: https://motion.productions
+      SOUND_LOOP_DELAY_SECONDS: "15"
+      SOUND_LOOP_DURATION_SECONDS: "2.5"
+      HEALTH_PORT: "8080"

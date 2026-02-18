@@ -92,12 +92,18 @@ def _build_slot_pools_interpretation(knowledge: dict[str, Any] | None) -> dict[s
     mood = list(dict.fromkeys(list(KEYWORD_TO_AUDIO_MOOD.keys()) + list(KEYWORD_TO_GENRE.keys())[:8]))
 
     if knowledge:
-        for _key, data in (knowledge.get("learned_colors") or {}).items():
-            if isinstance(data, dict):
-                name = (data.get("name") or "").strip()
-                if name and len(name) >= 2 and is_semantic_name(name):
-                    color.append(name)
-        for m in (knowledge.get("learned_motion") or [])[:40]:
+        # Prefer underused: sort by count ascending so lower-count entries get into the pool (mesh as playground).
+        lc_items = [
+            (d.get("name", "").strip(), d.get("count", 0))
+            for _, d in (knowledge.get("learned_colors") or {}).items()
+            if isinstance(d, dict) and (d.get("name") or "").strip()
+        ]
+        for name, _ in sorted(lc_items, key=lambda x: x[1]):  # ascending count
+            if len(name) >= 2 and is_semantic_name(name):
+                color.append(name)
+        motion_list = knowledge.get("learned_motion") or []
+        motion_list = sorted(motion_list, key=lambda m: m.get("count", 0) if isinstance(m, dict) else 0)
+        for m in motion_list[:40]:
             if isinstance(m, dict):
                 name = (m.get("name") or "").strip()
                 if name and len(name) >= 2 and is_semantic_name(name):

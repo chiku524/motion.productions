@@ -1,12 +1,13 @@
 """
 Blend depth: compute how far down each side of a blend is with respect to origins.
 primitive_depths = {primitive_name: weight} — how much each origin contributed.
-Aligned with REGISTRY_FOUNDATION: Pure color depth uses origin primitives (black, white, red, green, blue).
+Aligned with REGISTRY_FOUNDATION: Pure color depth uses origin primitives (16); pure sound uses 4 (silence, rumble, tone, hiss).
 """
 from typing import Any
 
 # Pure registry origin colors for depth_breakdown (REGISTRY_FOUNDATION: full 16-color set)
-# Must match static primitives in Worker / static_registry
+# Must match static primitives in Worker / static_registry. Audit: any depth_breakdown for static colors must use only these names.
+NUM_COLOR_PRIMITIVES = 16
 COLOR_ORIGIN_PRIMITIVES: list[tuple[str, tuple[float, float, float]]] = [
     ("black", (0.0, 0.0, 0.0)),
     ("white", (255.0, 255.0, 255.0)),
@@ -25,26 +26,26 @@ COLOR_ORIGIN_PRIMITIVES: list[tuple[str, tuple[float, float, float]]] = [
     ("olive", (128.0, 128.0, 0.0)),
     ("teal", (0.0, 128.0, 128.0)),
 ]
+assert len(COLOR_ORIGIN_PRIMITIVES) == NUM_COLOR_PRIMITIVES, "COLOR_ORIGIN_PRIMITIVES length must match NUM_COLOR_PRIMITIVES"
 
 
 def compute_color_depth(r: float, g: float, b: float) -> dict[str, float]:
     """
     Compute primitive depths for an extracted color vs Pure registry origin primitives.
-    Returns weights of origin colors (black, white, red, green, blue) that compose this RGB.
+    Returns weights of the two closest origin colors (from 16 primitives) that compose this RGB.
     Used for static color depth_breakdown (REGISTRY_FOUNDATION).
     """
-    rgb = (float(r), float(g), float(b))
+    rgb = (max(0, min(255, float(r))), max(0, min(255, float(g))), max(0, min(255, float(b))))
     best: list[tuple[str, float]] = []
     for name, prim in COLOR_ORIGIN_PRIMITIVES:
-        dist = (rgb[0] - prim[0]) ** 2 + (rgb[1] - prim[1]) ** 2 + (rgb[2] - prim[2]) ** 2
-        best.append((name, dist ** 0.5))
+        d0, d1, d2 = rgb[0] - prim[0], rgb[1] - prim[1], rgb[2] - prim[2]
+        dist_sq = d0 * d0 + d1 * d1 + d2 * d2
+        best.append((name, dist_sq ** 0.5))
     best.sort(key=lambda x: x[1])
     if len(best) < 2:
         return {best[0][0]: 1.0} if best else {}
     p1, d1 = best[0]
     p2, d2 = best[1]
-    m1 = next(prim for n, prim in COLOR_ORIGIN_PRIMITIVES if n == p1)
-    m2 = next(prim for n, prim in COLOR_ORIGIN_PRIMITIVES if n == p2)
     total = d1 + d2
     if total <= 0:
         return {p1: 0.5, p2: 0.5}
@@ -53,22 +54,32 @@ def compute_color_depth(r: float, g: float, b: float) -> dict[str, float]:
     return {p1: round(w1, 3), p2: round(w2, 3)}
 
 
-# Map frequency-band measurement (low/mid/high) to actual noise primitive names (static_registry).
+# Sound: exactly 4 origin primitives. Mesh discovers new sound values (blends) derived from these with depth %.
+SOUND_ORIGIN_PRIMITIVES = ("silence", "rumble", "tone", "hiss")
+# Map frequency-band measurement (low/mid/high) to primitive names.
 _TONE_TO_NOISE = {"silent": "silence", "silence": "silence", "low": "rumble", "mid": "tone", "high": "hiss"}
 
 
 def compute_sound_depth(amplitude: float, tone: str) -> dict[str, Any]:
     """
-    Depth for pure sound: weights of **actual sound noises** (silence, rumble, tone, hiss).
-    'tone' is a measurement (low/mid/high), not the name of the primitive; we map it to noise names.
-    Returns origin_noises (weights), amplitude (strength_pct 0-1). Used for static sound depth_breakdown.
+    Depth for pure sound: **blend of origin (primitive) noises** — silence, rumble, tone, hiss.
+    The four primitives are the origin set (like 16 for color). Discovered **pure sound values**
+    are blends of these; depth % measures how much each origin/primitive makes up that value.
+    Returns origin_noises (weights summing to 1), amplitude, strength_pct. Used for depth_breakdown.
     """
     tone_lower = (tone or "").strip().lower()
     strength = round(min(1.0, max(0.0, float(amplitude))), 2)
     if amplitude < 0.01 or tone_lower in ("silent", "silence", ""):
         return {"origin_noises": {"silence": 1.0}, "amplitude": strength, "strength_pct": strength}
     noise_name = _TONE_TO_NOISE.get(tone_lower, "tone")
-    return {"origin_noises": {noise_name: 1.0}, "amplitude": strength, "strength_pct": strength}
+    # Blend: silence + dominant noise (primitives blending together for this instant)
+    s_silence = round(1.0 - strength, 2)
+    s_noise = round(strength, 2)
+    if s_silence <= 0:
+        origin_noises = {noise_name: 1.0}
+    else:
+        origin_noises = {"silence": s_silence, noise_name: s_noise}
+    return {"origin_noises": origin_noises, "amplitude": strength, "strength_pct": strength}
 
 
 def compute_motion_depth(motion_level: float, motion_trend: str) -> dict[str, float]:
