@@ -837,11 +837,12 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           if (existing) {
             await env.DB.prepare("UPDATE narrative_entries SET count = count + 1 WHERE aspect = ? AND entry_key = ?").bind(aspect, key).run();
           } else {
-            const name = (item.name && item.name.trim()) ? item.name : await generateUniqueName(env);
-            if (!item.name || !item.name.trim()) await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+            const valueStr = (item.value ?? item.key ?? key).slice(0, 200);
+            const name = (item.name && item.name.trim()) ? item.name.trim() : (valueStr || (await generateUniqueName(env)));
+            if (!(item.name && item.name.trim())) await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
             await env.DB.prepare(
               "INSERT INTO narrative_entries (id, aspect, entry_key, value, count, sources_json, name) VALUES (?, ?, ?, ?, 1, ?, ?)"
-            ).bind(uuid(), aspect, key, (item.value ?? item.key ?? "").slice(0, 200), item.source_prompt ? JSON.stringify([item.source_prompt.slice(0, 80)]) : null, name).run();
+            ).bind(uuid(), aspect, key, valueStr, item.source_prompt ? JSON.stringify([item.source_prompt.slice(0, 80)]) : null, name).run();
           }
           results.narrative++;
         }
@@ -1405,6 +1406,91 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       return json({ updated, dry_run: dryRun });
     }
 
+    // GET /api/registries/coverage — counts and coverage % per registry for completion targeting (§2.1, §2.8)
+    if (path === "/api/registries/coverage" && request.method === "GET") {
+      const STATIC_COLOR_ESTIMATED_CELLS = 27951;
+      const NARRATIVE_ORIGIN_SIZES: Record<string, number> = {
+        genre: 7, mood: 7, style: 5, plots: 4, settings: 8, themes: 8, scene_type: 8,
+      };
+      const narrativeAspects = ["genre", "mood", "themes", "plots", "settings", "style", "scene_type"];
+
+      let staticColorsCount = 0;
+      let staticSoundCount = 0;
+      let learnedColorsCount = 0;
+      const soundPrimitives = new Set<string>();
+
+      try {
+        const sc = await env.DB.prepare("SELECT COUNT(*) as c FROM static_colors").first<{ c: number }>();
+        staticColorsCount = sc?.c ?? 0;
+      } catch { /* table may not exist */ }
+      try {
+        const ss = await env.DB.prepare("SELECT COUNT(*) as c FROM static_sound").first<{ c: number }>();
+        staticSoundCount = ss?.c ?? 0;
+      } catch { /* table may not exist */ }
+      try {
+        const rows = await env.DB.prepare("SELECT depth_breakdown_json FROM static_sound LIMIT 500")
+          .all<{ depth_breakdown_json: string | null }>();
+        for (const r of rows.results || []) {
+          if (!r.depth_breakdown_json) continue;
+          try {
+            const d = JSON.parse(r.depth_breakdown_json) as Record<string, unknown>;
+            const oc = d.origin_noises as Record<string, unknown> | undefined;
+            if (oc && typeof oc === "object") {
+              for (const k of Object.keys(oc)) soundPrimitives.add(k.toLowerCase());
+            }
+            for (const k of Object.keys(d)) {
+              if (k !== "origin_noises" && typeof d[k] === "number") soundPrimitives.add(k.toLowerCase());
+            }
+          } catch { /* ignore */ }
+        }
+      } catch { /* ignore */ }
+      try {
+        const lc = await env.DB.prepare("SELECT COUNT(*) as c FROM learned_colors").first<{ c: number }>();
+        learnedColorsCount = lc?.c ?? 0;
+      } catch { /* ignore */ }
+
+      const staticColorsCoveragePct = STATIC_COLOR_ESTIMATED_CELLS > 0
+        ? Math.min(100, Math.round((100 * staticColorsCount) / STATIC_COLOR_ESTIMATED_CELLS * 100) / 100)
+        : 0;
+      const narrative: Record<string, { count: number; origin_size: number; coverage_pct: number; entry_keys: string[] }> = {};
+      for (const aspect of narrativeAspects) {
+        const originSize = NARRATIVE_ORIGIN_SIZES[aspect] ?? 0;
+        try {
+          const r = await env.DB.prepare(
+            "SELECT entry_key FROM narrative_entries WHERE aspect = ?"
+          ).bind(aspect).all<{ entry_key: string }>();
+          const entryKeys = [...new Set((r.results || []).map((x) => x.entry_key))];
+          const count = entryKeys.length;
+          narrative[aspect] = {
+            count,
+            origin_size: originSize,
+            coverage_pct: originSize > 0 ? Math.min(100, Math.round((100 * count) / originSize * 100) / 100) : 0,
+            entry_keys: entryKeys,
+          };
+        } catch {
+          narrative[aspect] = { count: 0, origin_size: originSize, coverage_pct: 0, entry_keys: [] };
+        }
+      }
+
+      const coverage = {
+        static_colors_count: staticColorsCount,
+        static_colors_estimated_cells: STATIC_COLOR_ESTIMATED_CELLS,
+        static_colors_coverage_pct: staticColorsCoveragePct,
+        static_sound_count: staticSoundCount,
+        static_sound_has_silence: soundPrimitives.has("silence"),
+        static_sound_has_rumble: soundPrimitives.has("rumble"),
+        static_sound_has_tone: soundPrimitives.has("tone"),
+        static_sound_has_hiss: soundPrimitives.has("hiss"),
+        static_sound_all_primitives: soundPrimitives.has("silence") && soundPrimitives.has("rumble") && soundPrimitives.has("tone") && soundPrimitives.has("hiss"),
+        learned_colors_count: learnedColorsCount,
+        narrative,
+        narrative_min_coverage_pct: narrativeAspects.length
+          ? Math.min(...narrativeAspects.map((a) => narrative[a]?.coverage_pct ?? 0))
+          : 0,
+      };
+      return json(coverage);
+    }
+
     // GET /api/registries — pure (STATIC) vs non-pure (DYNAMIC + NARRATIVE); depth % vs primitives always
     // Pure = single frame/pixel (static). Non-pure = multi-frame blends (gradient, motion, camera → dynamic).
     if (path === "/api/registries" && request.method === "GET") {
@@ -1438,6 +1524,33 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         motion: ["static", "slow", "medium", "fast", "steady", "pulsing", "wave", "random"],
         sound: ["tempo: slow", "tempo: medium", "tempo: fast", "mood: neutral", "mood: calm", "mood: tense", "mood: uplifting", "mood: dark", "presence: silence", "presence: ambient", "presence: music", "presence: sfx", "presence: full"],
       };
+      // Canonical color key: always "r,g,b" (strip optional _opacity suffix from static keys for consistent export)
+      const normalizeColorKey = (key: string): string => {
+        const i = key.indexOf("_");
+        return i > 0 ? key.slice(0, i) : key;
+      };
+      // Color primitives only (depth_breakdown must reference these; theme/preset names go to theme_breakdown; opacity to opacity_pct)
+      const COLOR_PRIMITIVES = new Set([
+        "black", "white", "red", "green", "blue", "yellow", "cyan", "magenta", "orange", "purple",
+        "pink", "brown", "navy", "gray", "olive", "teal",
+      ]);
+      type DepthSplit = { depth_breakdown: Record<string, number>; opacity_pct?: number; theme_breakdown?: Record<string, number> };
+      const splitDepthBreakdown = (raw: Record<string, number> | null): DepthSplit => {
+        const depth_breakdown: Record<string, number> = {};
+        let opacity_pct: number | undefined;
+        const theme_breakdown: Record<string, number> = {};
+        if (!raw || typeof raw !== "object") return { depth_breakdown };
+        for (const [k, v] of Object.entries(raw)) {
+          const num = typeof v === "number" ? (v <= 1 ? Math.round(v * 100) : Math.round(v)) : 0;
+          if (k === "opacity") opacity_pct = num;
+          else if (COLOR_PRIMITIVES.has(k)) depth_breakdown[k] = num;
+          else theme_breakdown[k] = num;
+        }
+        const out: DepthSplit = { depth_breakdown };
+        if (opacity_pct != null) out.opacity_pct = opacity_pct;
+        if (Object.keys(theme_breakdown).length > 0) out.theme_breakdown = theme_breakdown;
+        return out;
+      };
       // Depth vs black/white for a single RGB (e.g. grey = 50% white + 50% black)
       const colorDepthVsPrimitives = (r: number, g: number, b: number): { depth_pct: number; depth_breakdown: Record<string, number> } => {
         const L = Math.max(0, Math.min(1, (r + g + b) / (3 * 255)));
@@ -1449,6 +1562,23 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         const depth_pct = Math.max(black, white) * 100;
         return { depth_pct, depth_breakdown };
       };
+      // Make display names unique by appending " (key)" for duplicates
+      const ensureUniqueColorNames = <T extends { name: string; key: string }>(items: T[]): T[] => {
+        const seen = new Map<string, number>();
+        return items.map((item) => {
+          const name = item.name || item.key;
+          const n = (seen.get(name) ?? 0) + 1;
+          seen.set(name, n);
+          const displayName = n > 1 ? `${name} (${item.key})` : name;
+          return { ...item, name: displayName };
+        });
+      };
+      // Correct known typos in narrative/semantic names (prefix + suffix)
+      const NARRATIVE_NAME_TYPOS: Record<string, string> = {
+        genre_starer: "genre_star", genre_starow: "genre_star",
+        mood_amace: "mood_amber", mood_lumera: "mood_lumina", mood_luneber: "mood_lunar", mood_glowish: "mood_glow", mood_starwood: "mood_star",
+      };
+      const fixNarrativeName = (name: string): string => NARRATIVE_NAME_TYPOS[name] ?? name;
       const staticColors = await env.DB.prepare(
         "SELECT color_key, r, g, b, name, count, depth_breakdown_json FROM static_colors ORDER BY count DESC LIMIT ?"
       ).bind(regLimit).all<{ color_key: string; r: number; g: number; b: number; name: string; count: number; depth_breakdown_json: string | null }>();
@@ -1482,16 +1612,21 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       }
       const narrativeAspects = ["genre", "mood", "themes", "plots", "settings", "style", "scene_type"];
       const narrative: Record<string, Array<{ entry_key: string; value: string; name: string; count: number }>> = {};
+      const NARRATIVE_LOW_COUNT_THRESHOLD = 5;
       for (const aspect of narrativeAspects) {
         const rows = await env.DB.prepare(
           "SELECT entry_key, value, name, count FROM narrative_entries WHERE aspect = ? ORDER BY count DESC LIMIT ?"
         ).bind(aspect, regLimit).all<{ entry_key: string; value: string | null; name: string; count: number }>();
-        narrative[aspect] = (rows.results || []).map((r) => ({
-          entry_key: r.entry_key,
-          value: r.value || r.entry_key,
-          name: r.name,
-          count: r.count,
-        }));
+        narrative[aspect] = (rows.results || []).map((r) => {
+          const value = r.value || r.entry_key;
+          const displayName = r.count < NARRATIVE_LOW_COUNT_THRESHOLD ? value : fixNarrativeName(r.name);
+          return {
+            entry_key: r.entry_key,
+            value,
+            name: displayName,
+            count: r.count,
+          };
+        });
       }
       const interpretationRows = await env.DB.prepare(
         "SELECT id, prompt, instruction_json, updated_at FROM interpretations WHERE status = 'done' AND instruction_json IS NOT NULL ORDER BY updated_at DESC LIMIT ?"
@@ -1590,25 +1725,30 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         static_primitives: staticPrimitives,
         dynamic_canonical: dynamicCanonical,
         static: {
-          colors: (staticColors.results || []).map((r) => {
+          colors: ensureUniqueColorNames((staticColors.results || []).map((r) => {
             let depth_pct: number;
             let depth_breakdown: Record<string, number>;
+            let opacity_pct: number | undefined;
+            let theme_breakdown: Record<string, number> | undefined;
             if (r.depth_breakdown_json) {
               try {
                 const stored = JSON.parse(r.depth_breakdown_json) as Record<string, unknown>;
-                depth_breakdown = {};
-                // Flatten origin_colors (Python growth) or direct numeric keys
+                const raw: Record<string, number> = {};
                 const oc = stored.origin_colors as Record<string, number> | undefined;
                 if (oc && typeof oc === "object") {
                   for (const [k, v] of Object.entries(oc)) {
-                    depth_breakdown[k] = typeof v === "number" ? (v <= 1 ? Math.round(v * 100) : Math.round(v)) : 0;
+                    raw[k] = typeof v === "number" ? (v <= 1 ? Math.round(v * 100) : Math.round(v)) : 0;
                   }
                 }
                 for (const [k, v] of Object.entries(stored)) {
                   if (k === "origin_colors") continue;
-                  if (typeof v === "number") depth_breakdown[k] = v <= 1 && k === "opacity" ? Math.round(v * 100) : (v <= 1 ? Math.round(v * 100) : Math.round(v));
+                  if (typeof v === "number") raw[k] = k === "opacity" ? Math.round(v * 100) : (v <= 1 ? Math.round(v * 100) : Math.round(v));
                 }
-                depth_pct = Object.keys(depth_breakdown).length ? 100 : 0;
+                const split = splitDepthBreakdown(raw);
+                depth_breakdown = split.depth_breakdown;
+                opacity_pct = split.opacity_pct;
+                theme_breakdown = split.theme_breakdown;
+                depth_pct = Object.keys(depth_breakdown).length || Object.keys(theme_breakdown || {}).length ? 100 : 0;
               } catch {
                 const comp = colorDepthVsPrimitives(r.r, r.g, r.b);
                 depth_pct = comp.depth_pct;
@@ -1619,26 +1759,36 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
               depth_pct = comp.depth_pct;
               depth_breakdown = comp.depth_breakdown;
             }
-            return { key: r.color_key, r: r.r, g: r.g, b: r.b, name: r.name, count: r.count, depth_pct, depth_breakdown };
-          }),
+            const key = normalizeColorKey(r.color_key);
+            const out: Record<string, unknown> = { key, r: r.r, g: r.g, b: r.b, name: r.name, count: r.count, depth_pct, depth_breakdown };
+            if (opacity_pct != null) out.opacity_pct = opacity_pct;
+            if (theme_breakdown && Object.keys(theme_breakdown).length > 0) out.theme_breakdown = theme_breakdown;
+            return out as { key: string; r: number; g: number; b: number; name: string; count: number; depth_pct: number; depth_breakdown: Record<string, number>; opacity_pct?: number; theme_breakdown?: Record<string, number> };
+          })),
           sound: (staticSound.results || []).map((r) => {
             const depth_breakdown = r.depth_breakdown_json ? (JSON.parse(r.depth_breakdown_json) as Record<string, unknown>) : undefined;
             return { key: r.sound_key, name: r.name, count: r.count, strength_pct: r.strength_pct ?? undefined, depth_breakdown };
           }),
         },
         dynamic: {
-          colors: (learnedColors.results || []).map((r) => {
+          colors: ensureUniqueColorNames((learnedColors.results || []).map((r) => {
             let depth_pct: number;
             let depth_breakdown: Record<string, number>;
+            let opacity_pct: number | undefined;
+            let theme_breakdown: Record<string, number> | undefined;
             if (r.depth_breakdown_json) {
               try {
                 const stored = JSON.parse(r.depth_breakdown_json) as Record<string, number>;
-                depth_breakdown = {};
+                const raw: Record<string, number> = {};
                 for (const [k, v] of Object.entries(stored)) {
-                  depth_breakdown[k] = typeof v === "number" ? (v <= 1 ? Math.round(v * 100) : Math.round(v)) : 0;
+                  raw[k] = typeof v === "number" ? (v <= 1 ? Math.round(v * 100) : Math.round(v)) : 0;
                 }
+                const split = splitDepthBreakdown(raw);
+                depth_breakdown = split.depth_breakdown;
+                opacity_pct = split.opacity_pct;
+                theme_breakdown = split.theme_breakdown;
                 const vals = Object.values(depth_breakdown);
-                depth_pct = vals.length ? Math.max(...vals) : 0;
+                depth_pct = vals.length ? Math.max(...vals) : (theme_breakdown && Object.keys(theme_breakdown).length ? 100 : 0);
               } catch {
                 const comp = colorDepthVsPrimitives(r.r, r.g, r.b);
                 depth_pct = comp.depth_pct;
@@ -1649,8 +1799,12 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
               depth_pct = comp.depth_pct;
               depth_breakdown = comp.depth_breakdown;
             }
-            return { key: r.color_key, name: r.name, count: r.count, depth_pct, depth_breakdown };
-          }),
+            const key = normalizeColorKey(r.color_key);
+            const out: Record<string, unknown> = { key, name: r.name, count: r.count, depth_pct, depth_breakdown };
+            if (opacity_pct != null) out.opacity_pct = opacity_pct;
+            if (theme_breakdown && Object.keys(theme_breakdown).length > 0) out.theme_breakdown = theme_breakdown;
+            return out as { key: string; name: string; count: number; depth_pct: number; depth_breakdown: Record<string, number>; opacity_pct?: number; theme_breakdown?: Record<string, number> };
+          })),
           motion: (learnedMotion.results || []).map((r) => ({ key: r.profile_key, name: r.name || r.profile_key, trend: r.motion_trend, count: r.count })),
           gradient: gradientBlends,
           camera: cameraBlends,
@@ -1710,6 +1864,29 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         /* learned_motion may not exist */
       }
 
+      // Lightweight coverage snapshot for UI and export (avoids separate /api/registries/coverage call)
+      let coverage_snapshot: { static_colors_coverage_pct?: number; narrative_min_coverage_pct?: number } | null = null;
+      try {
+        const sc = await env.DB.prepare("SELECT COUNT(*) as c FROM static_colors").first<{ c: number }>();
+        const staticCount = sc?.c ?? 0;
+        const staticCells = 27951;
+        const staticPct = staticCells > 0 ? Math.round((100 * staticCount) / staticCells * 100) / 100 : 0;
+        const narrativeSizes: Record<string, number> = { genre: 7, mood: 7, style: 5, plots: 4, settings: 8, themes: 8, scene_type: 8 };
+        const aspects = Object.keys(narrativeSizes);
+        let minNarrativePct = 100;
+        for (const aspect of aspects) {
+          const r = await env.DB.prepare("SELECT COUNT(DISTINCT entry_key) as c FROM narrative_entries WHERE aspect = ?").bind(aspect).first<{ c: number }>();
+          const count = r?.c ?? 0;
+          const size = narrativeSizes[aspect] ?? 1;
+          const pct = size > 0 ? (100 * count) / size : 100;
+          if (pct < minNarrativePct) minNarrativePct = pct;
+        }
+        minNarrativePct = Math.round(minNarrativePct * 100) / 100;
+        coverage_snapshot = { static_colors_coverage_pct: staticPct, narrative_min_coverage_pct: minNarrativePct };
+      } catch {
+        /* optional */
+      }
+
       return json({
         last_n: last,
         total_runs: totalRuns,
@@ -1719,6 +1896,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         runs_with_discovery: withDiscovery,
         discovery_rate_pct: discoveryRate,
         repetition_score: repetitionScore,
+        coverage_snapshot: coverage_snapshot ?? undefined,
       });
     }
 

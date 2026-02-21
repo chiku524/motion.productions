@@ -23,9 +23,14 @@ video:
 # Learning (registry population)
 # Short videos (e.g. 1s) are more efficient for the loop: fewer frames per run, one window per video,
 # and more distinct prompts per hour → more diverse static/dynamic/narrative discoveries.
+# See docs/WORKFLOW_EFFICIENCY_AND_REGISTRY_COMPLETION.md for completion targets and extraction tuning.
 learning:
   # Duration (seconds) per video in the loop. 1s = learning-optimized (more prompts/hour, one window per video).
   duration_seconds: 1
+  # Max frames to read per video for extraction (null = no limit). Caps CPU/decode for long clips.
+  max_frames: 120
+  # sample_every: 1 = every frame, 2 = every 2nd. Use 1 for short duration to maximize discovery per run.
+  sample_every: 2
 
 # Prompt (optional enrichment; can be disabled)
 prompt:

@@ -60,29 +60,42 @@ def pick_prompt(
     state: dict,
     exploit_ratio: float = DEFAULT_EXPLOIT_RATIO,
     knowledge: dict | None = None,
+    coverage: dict | None = None,
 ) -> str:
-    """Exploit (good prompts) vs explore (new) based on exploit_ratio. Uses knowledge for dynamic exploration.
-    When exploring, may pick from interpretation_prompts (user-prompt registry) so creation has more prompts."""
+    """Exploit (good prompts) vs explore (new) based on exploit_ratio. Uses knowledge and coverage (§2.1, §2.4)."""
     from src.automation import generate_procedural_prompt
+    from src.automation.prompt_gen import generate_targeted_narrative_prompt
 
     good = state.get("good_prompts", [])
-    recent = set(state.get("recent_prompts", [])[-150:])  # Wider window for variety when exploiting
+    recent = set(state.get("recent_prompts", [])[-150:])
     interpretation_prompts = (knowledge or {}).get("interpretation_prompts", [])
 
     if secure_random() < exploit_ratio and good:
-        # Exclude recently used for variety even when exploiting
         candidates = [p for p in good if p not in recent]
         return secure_choice(candidates) if candidates else secure_choice(good)
-    # When exploring: prefer pre-interpreted user prompts (often instructive) or instructive procedural prompts
+    # When exploring: 20% use targeted narrative prompt to fill missing genre/mood/themes (§2.4)
+    if coverage and secure_random() < 0.20:
+        targeted = generate_targeted_narrative_prompt(coverage, avoid=recent)
+        if targeted:
+            logger.info("Targeted narrative prompt (fill gaps): %s", targeted[:60] + ("..." if len(targeted) > 60 else ""))
+            return targeted
     if interpretation_prompts and secure_random() < 0.45:
         candidates = [p for p in interpretation_prompts if isinstance(p, dict) and p.get("prompt") and p["prompt"] not in recent]
         if candidates:
             return secure_choice(candidates)["prompt"]
-    # Prefer instructive phrasing (Create/Show/Make) so the loop tests interpretation → video
     return (
-        generate_procedural_prompt(avoid=recent, knowledge=knowledge, instructive_ratio=0.65)
-        or (secure_choice(good) if good else generate_procedural_prompt(knowledge=knowledge, instructive_ratio=0.65))
+        generate_procedural_prompt(avoid=recent, knowledge=knowledge, coverage=coverage, instructive_ratio=0.65)
+        or (secure_choice(good) if good else generate_procedural_prompt(knowledge=knowledge, coverage=coverage, instructive_ratio=0.65))
     )
+
+
+def _load_coverage(api_base: str) -> dict | None:
+    """Load registry coverage from API for completion targeting (§2.1). Returns None on failure."""
+    try:
+        return api_request_with_retry(api_base, "GET", "/api/registries/coverage", timeout=15)
+    except Exception as e:
+        logger.debug("GET /api/registries/coverage failed: %s — continuing without coverage", e)
+        return None
 
 
 def _load_state(api_base: str) -> dict:
@@ -135,15 +148,25 @@ def _get_discovery_adjusted_exploit_ratio(
     base_ratio: float,
     progress: dict,
     override_active: bool,
+    coverage: dict | None = None,
 ) -> float:
-    """When discovery_rate_pct is low or repetition_score high, reduce exploit to boost exploration.
-    Exploiter (override=1): soft cap when discovery < 20% so we inject exploration.
-    Balanced: cap at 0.4 when discovery < 10%."""
+    """When discovery_rate_pct is low, repetition high, or registry coverage low, reduce exploit (§2.2)."""
     rate = progress.get("discovery_rate_pct")
     total_runs = progress.get("total_runs", 0)
-    repetition = progress.get("repetition_score")  # 0–1; high = few entries dominate count
+    repetition = progress.get("repetition_score")
 
-    # High repetition (e.g. top 20 entries hold >35% of total count) → reduce exploit
+    # Coverage-based caps (§2.2): when registries are far from complete, bias toward exploration
+    if coverage and total_runs >= 3:
+        static_pct = coverage.get("static_colors_coverage_pct")
+        narrative_min = coverage.get("narrative_min_coverage_pct")
+        if static_pct is not None and static_pct < 10 and not override_active:
+            base_ratio = min(base_ratio, 0.3)
+        elif static_pct is not None and static_pct < 5 and override_active:
+            base_ratio = min(base_ratio, 0.5)
+        if narrative_min is not None and narrative_min < 50 and not override_active:
+            base_ratio = min(base_ratio, 0.5)
+
+    # High repetition → reduce exploit
     if repetition is not None and repetition > 0.35 and total_runs >= 5:
         cap = 0.7 if override_active else 0.5
         return min(base_ratio, cap)
@@ -152,14 +175,12 @@ def _get_discovery_adjusted_exploit_ratio(
         return base_ratio
 
     if override_active:
-        # Exploiter: soft cap when discovery rate is low (inject 10–20% exploration)
         if rate is not None and rate < 10:
             return min(base_ratio, 0.80)
         if rate is not None and rate < 20:
             return min(base_ratio, 0.90)
         return base_ratio
 
-    # Balanced: stronger cap when discovery is very low
     if rate is not None and rate < 10:
         return min(base_ratio, 0.4)
     return base_ratio
@@ -258,7 +279,16 @@ def run() -> None:
         exploit_ratio = float(override) if override_active else loop_config.get("exploit_ratio", DEFAULT_EXPLOIT_RATIO)
         exploit_ratio = max(0.0, min(1.0, exploit_ratio))
         progress = _load_progress(args.api_base)
-        exploit_ratio = _get_discovery_adjusted_exploit_ratio(exploit_ratio, progress, override_active)
+        coverage = _load_coverage(args.api_base) if args.api_base else None
+        prior_exploit = exploit_ratio
+        exploit_ratio = _get_discovery_adjusted_exploit_ratio(exploit_ratio, progress, override_active, coverage=coverage)
+        if coverage and exploit_ratio < prior_exploit:
+            logger.info(
+                "Exploit capped by coverage: %.2f -> %.2f (static_colors %.1f%%, narrative_min %.1f%%)",
+                prior_exploit, exploit_ratio,
+                coverage.get("static_colors_coverage_pct") or 0,
+                coverage.get("narrative_min_coverage_pct") or 0,
+            )
         # workflow_type for site: explorer | exploiter | main (prompt choice)
         workflow_type = os.environ.get("LOOP_WORKFLOW_TYPE") or ("explorer" if override == "0" else "exploiter" if override == "1" else "main")
         # extraction_focus: frame (per-frame / pure static only) | window (per-window blends only) | unset = all
@@ -283,7 +313,9 @@ def run() -> None:
         except Exception as e:
             logger.warning("Knowledge fetch failed (non-API): %s — using empty knowledge", e)
 
-        prompt = pick_prompt(state, exploit_ratio=exploit_ratio, knowledge=knowledge)
+        if coverage is None and args.api_base:
+            coverage = _load_coverage(args.api_base)
+        prompt = pick_prompt(state, exploit_ratio=exploit_ratio, knowledge=knowledge, coverage=coverage)
         if not prompt:
             state["recent_prompts"] = []
             continue
@@ -389,12 +421,18 @@ def run() -> None:
                     post_narrative_discoveries,
                     growth_metrics,
                 )
+                # §2.3: configurable max_frames; adaptive sample_every (1 for short clips → more discovery)
+                learning_cfg = config.get("learning") or {}
+                max_frames = learning_cfg.get("max_frames")
+                sample_every = learning_cfg.get("sample_every", 2)
+                if duration is not None and duration < 15 and sample_every > 1:
+                    sample_every = 1  # maximize frames per run for short videos
                 added, novel_for_sync = grow_all_from_video(
                     path,
                     prompt=prompt,
                     config=config,
-                    max_frames=None,
-                    sample_every=2,
+                    max_frames=max_frames,
+                    sample_every=sample_every,
                     window_seconds=1.0,
                     collect_novel_for_sync=bool(args.api_base),
                     spec=spec,

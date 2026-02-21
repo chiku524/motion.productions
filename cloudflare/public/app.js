@@ -466,10 +466,16 @@ function registriesTable(headers, rows) {
   return `<table class="registries-table"><thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table>`;
 }
 
-function depthBreakdownStr(d) {
+function depthBreakdownStr(d, opts) {
   if (!d || typeof d !== 'object') return '—';
   const parts = Object.entries(d).map(([k, v]) => `${k}: ${Number(v).toFixed(0)}%`).filter(Boolean);
-  return parts.length ? parts.join(', ') : '—';
+  let s = parts.length ? parts.join(', ') : '—';
+  if (opts && opts.opacity_pct != null) s = (s !== '—' ? s + '; ' : '') + `opacity: ${Number(opts.opacity_pct).toFixed(0)}%`;
+  if (opts && opts.theme_breakdown && typeof opts.theme_breakdown === 'object' && Object.keys(opts.theme_breakdown).length) {
+    const t = Object.entries(opts.theme_breakdown).map(([k, v]) => `${k}: ${Number(v).toFixed(0)}%`).join(', ');
+    s = (s !== '—' ? s + '; ' : '') + 'theme: ' + t;
+  }
+  return s || '—';
 }
 
 function renderRegistries(data) {
@@ -499,10 +505,10 @@ function renderRegistries(data) {
       <p class="registries-primitives">${escapeHtml(colorPrimaries)}</p>
       <h3 class="registries-pane-title">Pure — Colors (per-frame discoveries)</h3>
       ${static_.colors && static_.colors.length
-        ? registriesTable(['Key', 'Name', 'Count', 'RGB', 'Depth %', 'Depth (B/W)'], static_.colors.map((c) => [
+        ? registriesTable(['Key', 'Name', 'Count', 'RGB', 'Depth %', 'Depth (primaries + theme/opacity)'], static_.colors.map((c) => [
             c.key, c.name, c.count, `(${c.r},${c.g},${c.b})`,
             c.depth_pct != null ? c.depth_pct.toFixed(1) + '%' : '—',
-            depthBreakdownStr(c.depth_breakdown),
+            depthBreakdownStr(c.depth_breakdown, { opacity_pct: c.opacity_pct, theme_breakdown: c.theme_breakdown }),
           ]))
         : '<p class="registries-empty">No static colors yet.</p>'}
       <h3 class="registries-pane-title">Pure — Sound primitives (origin noises)</h3>
@@ -543,7 +549,7 @@ function renderRegistries(data) {
         : '<p class="registries-empty">No sound discoveries yet.</p>'}
       <h3 class="registries-pane-title">Blended — Colors (learned)</h3>
       ${dynamic.colors && dynamic.colors.length
-        ? registriesTable(['Key', 'Name', 'Count', 'Depth %', 'Depths towards primitives'], dynamic.colors.map((c) => [c.key, c.name, c.count, (c.depth_pct != null ? c.depth_pct.toFixed(1) : '') + '%', depthBreakdownStr(c.depth_breakdown)]))
+        ? registriesTable(['Key', 'Name', 'Count', 'Depth %', 'Depths towards primitives'], dynamic.colors.map((c) => [c.key, c.name, c.count, (c.depth_pct != null ? c.depth_pct.toFixed(1) : '') + '%', depthBreakdownStr(c.depth_breakdown, { opacity_pct: c.opacity_pct, theme_breakdown: c.theme_breakdown })]))
         : '<p class="registries-empty">No learned colors yet.</p>'}
       <h3 class="registries-pane-title">Blended — Blends (other)</h3>
       ${dynamic.blends && dynamic.blends.length
@@ -634,6 +640,13 @@ async function loadRegistries() {
         const discoveryRate = typeof prog.discovery_rate_pct === 'number' ? prog.discovery_rate_pct : null;
         let text = `Precision: ${pct}% (target ${target}%)`;
         if (discoveryRate != null) text += ` · Discovery: ${discoveryRate}%`;
+        const cov = prog.coverage_snapshot;
+        if (cov && (typeof cov.static_colors_coverage_pct === 'number' || typeof cov.narrative_min_coverage_pct === 'number')) {
+          const parts = [];
+          if (typeof cov.static_colors_coverage_pct === 'number') parts.push(`color ${cov.static_colors_coverage_pct}%`);
+          if (typeof cov.narrative_min_coverage_pct === 'number') parts.push(`narrative ${cov.narrative_min_coverage_pct}%`);
+          if (parts.length) text += ` · Registry: ${parts.join(', ')}`;
+        }
         registriesPrecision.textContent = text;
         registriesPrecision.className = 'registries-precision ' + (pct >= target ? 'on-target' : 'below-target');
       } catch { registriesPrecision.textContent = 'Precision: —'; }
@@ -707,6 +720,7 @@ function exportRegistries() {
   if (!lastRegistriesData) return;
   const payload = {
     exported_at: new Date().toISOString(),
+    exported_schema_version: 2,
     registries: {
       pure_static: {
         primitives: lastRegistriesData.static_primitives,
@@ -721,6 +735,7 @@ function exportRegistries() {
       linguistic: lastRegistriesData.linguistic || [],
     },
     loop_progress: lastProgressData || null,
+    ...(lastProgressData?.coverage_snapshot ? { coverage_snapshot: lastProgressData.coverage_snapshot } : {}),
   };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');

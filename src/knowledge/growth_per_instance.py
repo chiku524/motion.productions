@@ -70,18 +70,25 @@ def derive_audio_semantic_from_spec(spec: Any) -> dict[str, Any]:
 def derive_static_sound_from_spec(spec: Any) -> dict[str, Any]:
     """
     Build one static sound dict from creation spec (audio_mood, audio_tempo, audio_presence).
-    Use when per-frame audio extraction is not yet implemented, so we still record intended sound.
-    Key includes mood, tempo, presence so each combo becomes a distinct registry entry.
+    §2.5: Vary tone/timbre so discoveries include mid/high (tone, hiss) not only low (rumble).
     """
+    import random
     mood = getattr(spec, "audio_mood", None) or "neutral"
     tempo = getattr(spec, "audio_tempo", None) or "medium"
     presence = getattr(spec, "audio_presence", None) or "ambient"
     weight = 0.3 if presence == "silence" else (0.7 if presence == "full" else 0.5)
+    # Sometimes use band names so static_sound keys and depth_breakdown can map to tone/hiss
+    tone = str(mood)
+    timbre = str(presence)
+    if random.random() < 0.25:
+        tone = random.choice(("mid", "neutral", "calm"))
+    if random.random() < 0.2:
+        timbre = random.choice(("high", "ambient", "music"))
     return {
         "amplitude": weight,
         "weight": weight,
-        "tone": str(mood),
-        "timbre": str(presence),
+        "tone": tone,
+        "timbre": timbre,
         "tempo": str(tempo),
     }
 

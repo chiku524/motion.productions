@@ -5,6 +5,7 @@ Requires: pydub, ffmpeg and ffprobe on PATH.
 """
 import logging
 import os
+import random
 import shutil
 import tempfile
 from pathlib import Path
@@ -264,9 +265,22 @@ def _generate_procedural_audio(
     # music/sfx: treat like ambient for now (future: add rhythm or SFX)
 
     tone = Sine(freq).to_audio_segment(duration=tone_dur) + db
-    # pydub AudioSegment has no .loop(); repeat segment to fill target duration
     looped = _repeat_to_duration(tone, duration_ms)
-    return base.overlay(looped)
+    result = base.overlay(looped)
+
+    # §2.5: Add mid (tone) and high (hiss) layers so static_sound discoveries cover all four primitives
+    add_mid = mood in ("uplifting", "calm", "neutral") or random.random() < 0.35
+    add_high = mood in ("uplifting", "bright") or random.random() < 0.25
+    mid_freq, high_freq = 330, 1200  # Hz: tone band, hiss band
+    if add_mid:
+        mid_tone = Sine(mid_freq).to_audio_segment(duration=min(1500, duration_ms)) + (db - 8)
+        mid_looped = _repeat_to_duration(mid_tone, duration_ms)
+        result = result.overlay(mid_looped)
+    if add_high:
+        high_tone = Sine(high_freq).to_audio_segment(duration=min(800, duration_ms)) + (db - 12)
+        high_looped = _repeat_to_duration(high_tone, duration_ms)
+        result = result.overlay(high_looped)
+    return result
 
 
 def generate_audio_only(

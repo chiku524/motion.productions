@@ -1,6 +1,7 @@
 """
 Procedural prompt generator. Uses keyword data + learned discoveries for dynamic exploration.
 Produces diverse prompts for automated knowledge-building.
+Coverage-aware: can bias toward missing narrative origins (§2.1, §2.4).
 """
 import random
 from typing import Any, Iterator
@@ -313,26 +314,95 @@ def _is_near_duplicate(prompt: str, avoid: set[str], threshold: float = 0.8) -> 
     return False
 
 
+# API narrative aspect -> NARRATIVE_ORIGINS key (tone->mood, tension_curve->plots)
+_NARRATIVE_ASPECT_TO_ORIGIN: dict[str, str] = {
+    "genre": "genre",
+    "mood": "tone",
+    "themes": "themes",
+    "plots": "tension_curve",
+    "settings": "settings",
+    "style": "style",
+    "scene_type": "scene_type",
+}
+
+
+def generate_targeted_narrative_prompt(
+    coverage: dict[str, Any],
+    *,
+    avoid: set[str] | None = None,
+) -> str | None:
+    """
+    Generate a prompt that explicitly targets missing or low-count narrative origins (§2.4).
+    Uses coverage["narrative"][aspect]["entry_keys"] and NARRATIVE_ORIGINS to find gaps.
+    Returns e.g. "Create a thriller scene with energetic mood and hope theme" or None if no gaps.
+    """
+    from ..knowledge.origins import NARRATIVE_ORIGINS
+
+    avoid = avoid or set()
+    narrative = coverage.get("narrative") or {}
+    missing_per: dict[str, list[str]] = {}
+    for api_aspect, origin_key in _NARRATIVE_ASPECT_TO_ORIGIN.items():
+        origins = NARRATIVE_ORIGINS.get(origin_key)
+        if not origins:
+            continue
+        entry_keys = set()
+        if isinstance(narrative.get(api_aspect), dict):
+            for k in (narrative[api_aspect].get("entry_keys") or []):
+                entry_keys.add(str(k).strip().lower())
+        origins_lower = {str(v).strip().lower(): v for v in origins}
+        missing = [origins_lower[k] for k in origins_lower if k not in entry_keys]
+        if missing:
+            missing_per[api_aspect] = missing
+
+    if not missing_per:
+        return None
+
+    # Build prompt: "Create a [genre] scene with [mood] mood" / "with [theme] theme" / "in [setting] setting"
+    genre = random.choice(missing_per["genre"]) if missing_per.get("genre") else None
+    mood = random.choice(missing_per["mood"]) if missing_per.get("mood") else None
+    theme = random.choice(missing_per["themes"]) if missing_per.get("themes") else None
+    setting = random.choice(missing_per["settings"]) if missing_per.get("settings") else None
+
+    if genre:
+        prompt = f"Create a {genre} scene"
+    else:
+        prompt = "Create a scene"
+    if mood:
+        prompt += f" with {mood} mood"
+    elif theme:
+        prompt += f" with {theme} theme"
+    elif setting:
+        prompt += f" in {setting} setting"
+
+    prompt = prompt.strip()
+    if not prompt or prompt in avoid:
+        return None
+    if _prompt_overlaps_avoid(prompt, avoid):
+        return None
+    return prompt
+
+
 def generate_procedural_prompt(
     *,
     subjects: list[str] | None = None,
     modifiers: list[str] | None = None,
     knowledge: dict[str, Any] | None = None,
+    coverage: dict[str, Any] | None = None,
     seed: int | None = None,
     avoid: set[str] | None = None,
     instructive_ratio: float = 0.0,
 ) -> str | None:
     """
     Generate one prompt by combining subject + modifier(s) from keyword data and learned discoveries.
-    When knowledge is provided, uses learned colors, motion profiles, and proven keywords.
-    When instructive_ratio > 0, that fraction of attempts use instructive templates (e.g. "Create a
-    calm ocean scene with gentle waves") so the loop tests interpretation → video.
-    Returns None if no new combination found (avoid set exhausted).
+    When coverage is provided and static color coverage is low (§2.7), bias toward lighting/gradient
+    modifiers to increase color diversity.
     """
     if seed is not None:
         random.seed(seed)
 
     avoid = avoid or set()
+    static_color_coverage = (coverage or {}).get("static_colors_coverage_pct")
+    bias_palette_diversity = static_color_coverage is not None and static_color_coverage < 25
 
     # Build subject and modifier pools (static + dynamic from knowledge)
     if subjects is not None and modifiers is not None:
@@ -348,13 +418,18 @@ def generate_procedural_prompt(
     if not sub_pool or not mod_pool:
         return None
 
-    # Prefer modifiers that map to different palettes/motion (wider interpretation spread)
-    def _pick_diverse_mods(n: int, bias_audio: bool = False) -> list[str]:
+    # §2.7: When static color coverage is low, prefer lighting/gradient mods to widen color discovery
+    def _pick_diverse_mods(n: int, bias_audio: bool = False, bias_lighting: bool = False) -> list[str]:
         chosen: list[str] = []
         pool = list(mod_pool)
         if bias_audio and _MODS_AUDIO:
             first = secure_choice(_MODS_AUDIO)
             if first not in chosen:
+                chosen.append(first)
+        if bias_lighting and _MODS_LIGHTING:
+            lighting_candidates = [m for m in _MODS_LIGHTING if m in pool and m not in chosen]
+            if lighting_candidates:
+                first = secure_choice(lighting_candidates)
                 chosen.append(first)
         for _ in range(n - len(chosen)):
             if not pool:
@@ -401,7 +476,8 @@ def generate_procedural_prompt(
             return None
 
     max_attempts = 200
-    bias_audio = secure_random() < 0.18  # 18% of runs: ensure at least one audio modifier
+    bias_audio = secure_random() < 0.18
+    bias_lighting = bias_palette_diversity and secure_random() < 0.4  # §2.7: more lighting mods when color coverage low
     use_instructive = instructive_ratio > 0 and secure_random() < instructive_ratio
     slot_pools = _build_slot_pools(knowledge) if use_instructive else None
     use_slot_based = (
@@ -413,7 +489,7 @@ def generate_procedural_prompt(
 
     for _ in range(max_attempts):
         sub = secure_choice(sub_pool)
-        mods = _pick_diverse_mods(3, bias_audio=bias_audio)
+        mods = _pick_diverse_mods(3, bias_audio=bias_audio, bias_lighting=bias_lighting)
         mod1 = mods[0] if mods else secure_choice(mod_pool)
         mod2 = mods[1] if len(mods) > 1 else mod1
         mod3 = mods[2] if len(mods) > 2 else mod2
