@@ -504,8 +504,9 @@ function renderRegistries(data) {
       <h3 class="registries-pane-title">Pure — Color primitives (origin)</h3>
       <p class="registries-primitives">${escapeHtml(colorPrimaries)}</p>
       <h3 class="registries-pane-title">Pure — Colors (per-frame discoveries)</h3>
+      <p class="registries-hint">Depth = consistency vs primitives; one concept: breakdown shows primaries + theme/opacity; Depth % is a summary.</p>
       ${static_.colors && static_.colors.length
-        ? registriesTable(['Key', 'Name', 'Count', 'RGB', 'Depth %', 'Depth (primaries + theme/opacity)'], static_.colors.map((c) => [
+        ? registriesTable(['Key', 'Name', 'Count', 'RGB', 'Depth %', 'Depth vs primitives'], static_.colors.map((c) => [
             c.key, c.name, c.count, `(${c.r},${c.g},${c.b})`,
             c.depth_pct != null ? c.depth_pct.toFixed(1) + '%' : '—',
             depthBreakdownStr(c.depth_breakdown, { opacity_pct: c.opacity_pct, theme_breakdown: c.theme_breakdown }),
@@ -514,6 +515,7 @@ function renderRegistries(data) {
       <h3 class="registries-pane-title">Pure — Sound primitives (origin noises)</h3>
       <p class="registries-primitives">${escapeHtml(soundPrimaries)}</p>
       <h3 class="registries-pane-title">Pure — Sound (per-frame discoveries)</h3>
+      <p class="registries-hint">Strength % = amplitude/weight of the sound in that instant (0–100%). Origin primitives: silence, rumble, tone, hiss.</p>
       ${static_.sound && static_.sound.length
         ? registriesTable(staticSoundHeaders, staticSoundRows)
         : '<p class="registries-empty">No static sound yet.</p>'}
@@ -551,7 +553,20 @@ function renderRegistries(data) {
       ${dynamic.colors && dynamic.colors.length
         ? registriesTable(['Key', 'Name', 'Count', 'Depth %', 'Depths towards primitives'], dynamic.colors.map((c) => [c.key, c.name, c.count, (c.depth_pct != null ? c.depth_pct.toFixed(1) : '') + '%', depthBreakdownStr(c.depth_breakdown, { opacity_pct: c.opacity_pct, theme_breakdown: c.theme_breakdown })]))
         : '<p class="registries-empty">No learned colors yet.</p>'}
+      ${(dynamic.colors_from_blends && dynamic.colors_from_blends.length) ? `<h3 class="registries-pane-title">Blended — Colors (from blends)</h3>
+      ${registriesTable(['Name', 'Key', 'Depth %', 'Depths towards primitives'], dynamic.colors_from_blends.map((b) => [b.name, (b.key || '').slice(0, 40), (b.depth_pct != null ? b.depth_pct.toFixed(1) : '') + '%', depthBreakdownStr(b.depth_breakdown)]))}` : ''}
+      ${(dynamic.lighting && dynamic.lighting.length) ? `<h3 class="registries-pane-title">Blended — Lighting</h3>
+      ${registriesTable(['Name', 'Key', 'Depth %', 'Depths towards primitives'], dynamic.lighting.map((b) => [b.name, (b.key || '').slice(0, 40), (b.depth_pct != null ? b.depth_pct.toFixed(1) : '') + '%', depthBreakdownStr(b.depth_breakdown)]))}` : ''}
+      ${(dynamic.composition && dynamic.composition.length) ? `<h3 class="registries-pane-title">Blended — Composition</h3>
+      ${registriesTable(['Name', 'Key', 'Depth %', 'Depths towards primitives'], dynamic.composition.map((b) => [b.name, (b.key || '').slice(0, 40), (b.depth_pct != null ? b.depth_pct.toFixed(1) : '') + '%', depthBreakdownStr(b.depth_breakdown)]))}` : ''}
+      ${(dynamic.graphics && dynamic.graphics.length) ? `<h3 class="registries-pane-title">Blended — Graphics</h3>
+      ${registriesTable(['Name', 'Key', 'Depth %', 'Depths towards primitives'], dynamic.graphics.map((b) => [b.name, (b.key || '').slice(0, 40), (b.depth_pct != null ? b.depth_pct.toFixed(1) : '') + '%', depthBreakdownStr(b.depth_breakdown)]))}` : ''}
+      ${(dynamic.temporal && dynamic.temporal.length) ? `<h3 class="registries-pane-title">Blended — Temporal</h3>
+      ${registriesTable(['Name', 'Key', 'Depth %', 'Depths towards primitives'], dynamic.temporal.map((b) => [b.name, (b.key || '').slice(0, 40), (b.depth_pct != null ? b.depth_pct.toFixed(1) : '') + '%', depthBreakdownStr(b.depth_breakdown)]))}` : ''}
+      ${(dynamic.technical && dynamic.technical.length) ? `<h3 class="registries-pane-title">Blended — Technical</h3>
+      ${registriesTable(['Name', 'Key', 'Depth %', 'Depths towards primitives'], dynamic.technical.map((b) => [b.name, (b.key || '').slice(0, 40), (b.depth_pct != null ? b.depth_pct.toFixed(1) : '') + '%', depthBreakdownStr(b.depth_breakdown)]))}` : ''}
       <h3 class="registries-pane-title">Blended — Blends (other)</h3>
+      <p class="registries-hint">Fallback only: values that could not be labeled under a single category (e.g. full_blend, narrative).</p>
       ${dynamic.blends && dynamic.blends.length
         ? registriesTable(['Name', 'Domain', 'Key', 'Depth %', 'Depths towards primitives'], dynamic.blends.map((b) => [b.name, b.domain || '—', (b.key || '').slice(0, 40), (b.depth_pct != null ? b.depth_pct.toFixed(1) : '') + '%', depthBreakdownStr(b.depth_breakdown)]))
         : '<p class="registries-empty">No other blends yet.</p>'}
@@ -560,6 +575,7 @@ function renderRegistries(data) {
   const narrativeHtml = `
     <div class="registries-pane" data-pane="narrative">
       <p class="registries-primitives-desc">Semantic: blends in categories (plot, setting, dialogue, genre, mood, style). Elements are named entries with depth where applicable.</p>
+      <p class="registries-hint">Entry key = canonical id (e.g. cinematic); Value = same or display form. Count = how often that value was recorded.</p>
       ${Object.keys(narrative).map((aspect) => {
         const entries = narrative[aspect] || [];
         return `
@@ -585,7 +601,8 @@ function renderRegistries(data) {
   };
   const interpretationHtml = `
     <div class="registries-pane" data-pane="interpretation">
-      <p class="registries-primitives-desc">Interpretation: resolved user prompts (prompt → instruction). The system prepares for everything until the user sends input; this registry stores what was interpreted.</p>
+      <p class="registries-primitives-desc">Interpretation (Linguistics): resolved user prompts (prompt → instruction). The system prepares at current state and learns from every loop when new prompts are interpreted.</p>
+      <p class="registries-hint">Instruction summary = first 6 keys of the instruction object (palette, motion, gradient, camera, mood, tempo, etc.).</p>
       <h3 class="registries-pane-title">Interpretation — Resolved prompts</h3>
       ${interpretation && interpretation.length
         ? registriesTable(['Prompt', 'Instruction summary', 'Updated'], interpretation.map((i) => [

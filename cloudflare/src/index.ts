@@ -1573,6 +1573,69 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           return { ...item, name: displayName };
         });
       };
+      // Cross-registry: prefix names that appear in more than one section (Pure vs Blended) so they are globally unique
+      const SECTION_LABELS: Record<string, string> = {
+        static_colors: "Pure — Color",
+        static_sound: "Pure — Sound",
+        dynamic_colors: "Blended — Color",
+        dynamic_gradient: "Blended — Gradient",
+        dynamic_camera: "Blended — Camera",
+        dynamic_motion: "Blended — Motion",
+        dynamic_sound: "Blended — Sound",
+        dynamic_lighting: "Blended — Lighting",
+        dynamic_composition: "Blended — Composition",
+        dynamic_graphics: "Blended — Graphics",
+        dynamic_temporal: "Blended — Temporal",
+        dynamic_technical: "Blended — Technical",
+        dynamic_colors_from_blends: "Blended — Color (blends)",
+        dynamic_blends: "Blended — Other",
+      };
+      const normalizeName = (n: string | null | undefined): string => (n && typeof n === "string" ? n.trim().toLowerCase() : "") || "";
+      const prefixDuplicateNamesAcrossSections = (
+        staticObj: { colors: Array<{ name?: string; [k: string]: unknown }>; sound: Array<{ name?: string; [k: string]: unknown }> },
+        dynamicObj: Record<string, Array<{ name?: string; [k: string]: unknown }>>,
+      ): void => {
+        const nameToSections = new Map<string, Set<string>>();
+        const add = (norm: string, section: string) => {
+          if (!norm) return;
+          if (!nameToSections.has(norm)) nameToSections.set(norm, new Set());
+          nameToSections.get(norm)!.add(section);
+        };
+        for (const item of staticObj.colors) add(normalizeName(item.name), "static_colors");
+        for (const item of staticObj.sound) add(normalizeName(item.name), "static_sound");
+        for (const item of dynamicObj.colors || []) add(normalizeName(item.name), "dynamic_colors");
+        for (const item of dynamicObj.gradient || []) add(normalizeName(item.name), "dynamic_gradient");
+        for (const item of dynamicObj.camera || []) add(normalizeName(item.name), "dynamic_camera");
+        for (const item of dynamicObj.motion || []) add(normalizeName(item.name), "dynamic_motion");
+        for (const item of dynamicObj.sound || []) add(normalizeName(item.name), "dynamic_sound");
+        for (const item of dynamicObj.lighting || []) add(normalizeName(item.name), "dynamic_lighting");
+        for (const item of dynamicObj.composition || []) add(normalizeName(item.name), "dynamic_composition");
+        for (const item of dynamicObj.graphics || []) add(normalizeName(item.name), "dynamic_graphics");
+        for (const item of dynamicObj.temporal || []) add(normalizeName(item.name), "dynamic_temporal");
+        for (const item of dynamicObj.technical || []) add(normalizeName(item.name), "dynamic_technical");
+        for (const item of dynamicObj.colors_from_blends || []) add(normalizeName(item.name), "dynamic_colors_from_blends");
+        for (const item of dynamicObj.blends || []) add(normalizeName(item.name), "dynamic_blends");
+        const duplicateNorms = new Set<string>();
+        for (const [norm, set] of nameToSections) if (set.size > 1) duplicateNorms.add(norm);
+        const prefix = (item: { name?: string; [k: string]: unknown }, section: string) => {
+          const norm = normalizeName(item.name);
+          if (duplicateNorms.has(norm) && item.name != null) item.name = `${SECTION_LABELS[section] ?? section}: ${item.name}`;
+        };
+        for (const item of staticObj.colors) prefix(item, "static_colors");
+        for (const item of staticObj.sound) prefix(item, "static_sound");
+        for (const item of dynamicObj.colors || []) prefix(item, "dynamic_colors");
+        for (const item of dynamicObj.gradient || []) prefix(item, "dynamic_gradient");
+        for (const item of dynamicObj.camera || []) prefix(item, "dynamic_camera");
+        for (const item of dynamicObj.motion || []) prefix(item, "dynamic_motion");
+        for (const item of dynamicObj.sound || []) prefix(item, "dynamic_sound");
+        for (const item of dynamicObj.lighting || []) prefix(item, "dynamic_lighting");
+        for (const item of dynamicObj.composition || []) prefix(item, "dynamic_composition");
+        for (const item of dynamicObj.graphics || []) prefix(item, "dynamic_graphics");
+        for (const item of dynamicObj.temporal || []) prefix(item, "dynamic_temporal");
+        for (const item of dynamicObj.technical || []) prefix(item, "dynamic_technical");
+        for (const item of dynamicObj.colors_from_blends || []) prefix(item, "dynamic_colors_from_blends");
+        for (const item of dynamicObj.blends || []) prefix(item, "dynamic_blends");
+      };
       // Correct known typos in narrative/semantic names (prefix + suffix)
       const NARRATIVE_NAME_TYPOS: Record<string, string> = {
         genre_starer: "genre_star", genre_starow: "genre_star",
@@ -1683,6 +1746,12 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           gradientBlends.push(g);
         }
       }
+      for (const canonical of dynamicCanonical.gradient_type) {
+        if (!gradientKeys.has(canonical)) {
+          gradientKeys.add(canonical);
+          gradientBlends.push({ name: canonical, key: canonical, depth_pct: 0, depth_breakdown: {} as Record<string, number> });
+        }
+      }
       const cameraFromBlends = (blends.results || []).filter((b) => b.domain === "camera").map((b) => {
         const out = JSON.parse(b.output_json) as Record<string, unknown>;
         const depths = b.primitive_depths_json ? (JSON.parse(b.primitive_depths_json) as Record<string, unknown>) : null;
@@ -1702,6 +1771,12 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           cameraBlends.push(c);
         }
       }
+      for (const canonical of dynamicCanonical.camera_motion) {
+        if (!cameraKeys.has(canonical)) {
+          cameraKeys.add(canonical);
+          cameraBlends.push({ name: canonical, key: canonical, depth_pct: 0, depth_breakdown: {} as Record<string, number> });
+        }
+      }
       const audioFromBlends = (blends.results || []).filter((b) => b.domain === "audio").map((b) => {
         const out = JSON.parse(b.output_json) as Record<string, unknown>;
         const depths = b.primitive_depths_json ? (JSON.parse(b.primitive_depths_json) as Record<string, unknown>) : null;
@@ -1716,16 +1791,37 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         depth_breakdown: {} as Record<string, number>,
       }));
       const audioBlends = [...audioFromBlends, ...audioFromSemantic];
-      const otherBlends = (blends.results || []).filter((b) => b.domain !== "gradient" && b.domain !== "camera" && b.domain !== "audio").map((b) => {
+      const DEDICATED_BLEND_DOMAINS = ["color", "motion", "lighting", "composition", "graphics", "temporal", "technical"];
+      const toBlendRow = (b: { name: string; domain: string; output_json: string; primitive_depths_json: string | null }) => {
         const depths = b.primitive_depths_json ? (JSON.parse(b.primitive_depths_json) as Record<string, unknown>) : null;
         const { depth_pct, depth_breakdown } = depthFromBlendDepths(depths);
         return { name: b.name, domain: b.domain, key: b.output_json.slice(0, 80), depth_pct, depth_breakdown };
-      });
-      return json({
-        static_primitives: staticPrimitives,
-        dynamic_canonical: dynamicCanonical,
-        static: {
-          colors: ensureUniqueColorNames((staticColors.results || []).map((r) => {
+      };
+      const nonGca = (blends.results || []).filter((b) => b.domain !== "gradient" && b.domain !== "camera" && b.domain !== "audio");
+      const blendsByDomain: Record<string, typeof nonGca> = {};
+      for (const d of DEDICATED_BLEND_DOMAINS) blendsByDomain[d] = nonGca.filter((b) => b.domain === d);
+      const otherBlends = nonGca
+        .filter((b) => !DEDICATED_BLEND_DOMAINS.includes(b.domain))
+        .map(toBlendRow);
+      const lightingBlends = blendsByDomain.lighting.map(toBlendRow);
+      const compositionBlends = blendsByDomain.composition.map(toBlendRow);
+      const graphicsBlends = blendsByDomain.graphics.map(toBlendRow);
+      const temporalBlends = blendsByDomain.temporal.map(toBlendRow);
+      const technicalBlends = blendsByDomain.technical.map(toBlendRow);
+      const colorBlendsFromBlends = blendsByDomain.color.map(toBlendRow);
+      const motionBlendsFromBlends = blendsByDomain.motion.map(toBlendRow);
+      const motionFromLearned = (learnedMotion.results || []).map((r) => ({ key: r.profile_key, name: r.name || r.profile_key, trend: r.motion_trend, count: r.count }));
+      const motionFromBlends = motionBlendsFromBlends.map((b) => ({ key: b.key, name: b.name, trend: "—" as const, count: 0 }));
+      const motionKeysPresent = new Set([...motionFromLearned.map((m) => m.key), ...motionFromBlends.map((b) => b.key)]);
+      const motionWithCanonical = [...motionFromLearned, ...motionFromBlends];
+      for (const canonical of dynamicCanonical.motion) {
+        if (!motionKeysPresent.has(canonical)) {
+          motionKeysPresent.add(canonical);
+          motionWithCanonical.push({ key: canonical, name: canonical, trend: "—", count: 0 });
+        }
+      }
+      const staticPayload = {
+        colors: ensureUniqueColorNames((staticColors.results || []).map((r) => {
             let depth_pct: number;
             let depth_breakdown: Record<string, number>;
             let opacity_pct: number | undefined;
@@ -1765,12 +1861,28 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
             if (theme_breakdown && Object.keys(theme_breakdown).length > 0) out.theme_breakdown = theme_breakdown;
             return out as { key: string; r: number; g: number; b: number; name: string; count: number; depth_pct: number; depth_breakdown: Record<string, number>; opacity_pct?: number; theme_breakdown?: Record<string, number> };
           })),
-          sound: (staticSound.results || []).map((r) => {
-            const depth_breakdown = r.depth_breakdown_json ? (JSON.parse(r.depth_breakdown_json) as Record<string, unknown>) : undefined;
-            return { key: r.sound_key, name: r.name, count: r.count, strength_pct: r.strength_pct ?? undefined, depth_breakdown };
-          }),
-        },
-        dynamic: {
+          sound: (() => {
+            const SOUND_PRIMITIVES = ["silence", "rumble", "tone", "hiss"];
+            const stripSoundPrefix = (name: string | null): string => {
+              if (!name || typeof name !== "string") return name ?? "";
+              const n = name.trim();
+              return n.toLowerCase().startsWith("sound_") ? n.slice(6).trim() || n : n;
+            };
+            const fromDb = (staticSound.results || []).map((r) => {
+              const depth_breakdown = r.depth_breakdown_json ? (JSON.parse(r.depth_breakdown_json) as Record<string, unknown>) : undefined;
+              return { key: r.sound_key, name: stripSoundPrefix(r.name), count: r.count, strength_pct: r.strength_pct ?? undefined, depth_breakdown };
+            });
+            const keysPresent = new Set(fromDb.map((s) => s.key));
+            for (const key of SOUND_PRIMITIVES) {
+              if (!keysPresent.has(key)) {
+                keysPresent.add(key);
+                fromDb.push({ key, name: key, count: 0, strength_pct: undefined, depth_breakdown: undefined });
+              }
+            }
+            return fromDb;
+          })(),
+      };
+      const dynamicPayload = {
           colors: ensureUniqueColorNames((learnedColors.results || []).map((r) => {
             let depth_pct: number;
             let depth_breakdown: Record<string, number>;
@@ -1805,12 +1917,24 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
             if (theme_breakdown && Object.keys(theme_breakdown).length > 0) out.theme_breakdown = theme_breakdown;
             return out as { key: string; name: string; count: number; depth_pct: number; depth_breakdown: Record<string, number>; opacity_pct?: number; theme_breakdown?: Record<string, number> };
           })),
-          motion: (learnedMotion.results || []).map((r) => ({ key: r.profile_key, name: r.name || r.profile_key, trend: r.motion_trend, count: r.count })),
+          motion: motionWithCanonical,
           gradient: gradientBlends,
           camera: cameraBlends,
           sound: audioBlends,
+          colors_from_blends: colorBlendsFromBlends,
+          lighting: lightingBlends,
+          composition: compositionBlends,
+          graphics: graphicsBlends,
+          temporal: temporalBlends,
+          technical: technicalBlends,
           blends: otherBlends,
-        },
+      };
+      prefixDuplicateNamesAcrossSections(staticPayload, dynamicPayload);
+      return json({
+        static_primitives: staticPrimitives,
+        dynamic_canonical: dynamicCanonical,
+        static: staticPayload,
+        dynamic: dynamicPayload,
         narrative,
         interpretation,
         linguistic,

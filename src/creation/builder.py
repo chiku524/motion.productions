@@ -44,14 +44,26 @@ def _pool_from_knowledge(
     *,
     exclude: set[str] | None = None,
 ) -> list[str]:
-    """Registry-first pool: learned_* if non-empty (filtered to valid, excluding avoid list), else origin_* from API."""
+    """Merged pool: origin + learned (deduped), so creation always has both primitives and discoveries; selection is randomized."""
     exclude = exclude or set()
-    learned = (knowledge or {}).get(learned_key) or []
-    pool = [v for v in learned if isinstance(v, str) and v.strip() and v in valid_set and v not in exclude]
-    if pool:
-        return pool
     origin = (knowledge or {}).get(origin_key) or []
-    return [v for v in origin if isinstance(v, str) and v.strip() and v in valid_set and v not in exclude]
+    origin_str = [v for v in origin if isinstance(v, str) and v.strip() and v in valid_set and v not in exclude]
+    learned = (knowledge or {}).get(learned_key) or []
+    learned_str: list[str] = []
+    for v in learned:
+        if isinstance(v, str) and v.strip() and v in valid_set and v not in exclude:
+            learned_str.append(v)
+        elif isinstance(v, dict) and v.get("key"):
+            w = (v.get("key") or v.get("gradient_type") or v.get("camera_motion") or v.get("motion_type")) or ""
+            if isinstance(w, str) and w.strip() and w in valid_set and w not in exclude:
+                learned_str.append(w)
+    seen: set[str] = set()
+    pool: list[str] = []
+    for v in origin_str + learned_str:
+        if v not in seen:
+            seen.add(v)
+            pool.append(v)
+    return pool
 
 
 def _profile_key_to_motion_type(profile: dict[str, Any] | str) -> str | None:

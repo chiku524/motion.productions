@@ -409,6 +409,12 @@ def run() -> None:
             ext = extract_from_video(path)
             analysis_dict = ext.to_dict()
 
+            # Extraction → growth → sync (required order for precision):
+            # 1. grow_all_from_video extracts per-frame (static) and per-window (dynamic) from the same video.
+            # 2. post_static_discoveries / post_dynamic_discoveries / post_narrative_discoveries send novel values to API.
+            # 3. grow_and_sync_to_api posts whole-video aggregates (learned_colors, learned_blends).
+            # 4. post_discoveries(api_base, {"job_id": job_id}) records the discovery run for diagnostics.
+            # Creation uses get_knowledge_for_creation → build_spec with a merged pool (origin + learned) so gradient/camera/motion selection is randomized across primitives and discoveries.
             # Growth + sync: gated by extraction_focus (frame | window | all)
             try:
                 from src.knowledge.growth_per_instance import grow_all_from_video
