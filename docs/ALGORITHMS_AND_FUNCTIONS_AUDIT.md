@@ -11,7 +11,24 @@ This document audits **every** algorithm and function in the codebase for:
 
 ---
 
-## 1. Interpretation
+## Part I — Workflow loop: entry points, extraction, keys, depth, growth, sync
+
+Aligned with REGISTRY_FOUNDATION and WORKFLOWS_AND_REGISTRIES: Pure = single frame/primitives; Blended = categories + elements with name + depth_breakdown; Semantic = same; Interpretation = resolved prompts.
+
+| Entry point | What runs | Registries touched |
+|-------------|-----------|--------------------|
+| **automate_loop.py** | pick_prompt → create job → wait → analysis → grow_from_video, grow_narrative_from_spec → POST discoveries | Static, Dynamic, Narrative; uses for-creation (Interpretation) |
+| **generate_bridge.py** | Single run + growth (grow_from_video, grow_narrative_from_spec) | Static, Narrative |
+| **Worker POST /api/knowledge/discoveries** | Receives static_colors, static_sound, narrative, colors, motion, …; writes to D1 | All four (D1 tables) |
+| **Worker GET /api/knowledge/for-creation** | Returns static, dynamic, narrative, interpretation_prompts for creation/pick_prompt | Read-only |
+
+**Extraction (per-instance):** extract_static_per_frame, extract_dynamic_per_window, _extract_audio_segments (extractor_per_instance.py) — Pure = single frame; Blended = multi-frame. **Keys:** _static_color_key (rgb_opacity), _static_sound_key (amplitude_tone_timbre), _motion_key, _audio_semantic_key, etc. **Depth:** compute_color_depth (COLOR_ORIGIN_PRIMITIVES), compute_sound_depth (origin_noises + strength_pct), compute_*_depth per domain. **Growth:** ensure_static_color_in_registry, ensure_static_sound_in_registry, ensure_dynamic_*_in_registry, ensure_narrative_in_registry; all use generate_sensible_name and depth_breakdown. **Sync:** post_discoveries / POST /api/knowledge/discoveries; Worker persists depth_breakdown_json, strength_pct.
+
+---
+
+## Part II — Interpretation, creation, renderer, pipeline
+
+### 1. Interpretation
 
 **Role in workflow:** Map prompt → instruction (pure or non-pure elements). Must support any user input; output 100% precise for creation.
 
@@ -36,7 +53,7 @@ This document audits **every** algorithm and function in the codebase for:
 
 ---
 
-## 2. Creation
+### 2. Creation
 
 **Role in workflow:** Instruction → spec (blueprint). Use only static elements (and origins); include audio/sound; follow instruction 100% precisely.
 
@@ -54,7 +71,7 @@ This document audits **every** algorithm and function in the codebase for:
 
 ---
 
-## 3. Renderer and pipeline
+### 3. Renderer and pipeline
 
 **Role in workflow:** Spec → frames (color per frame); pipeline adds sound and assembles MP4.
 
@@ -71,7 +88,7 @@ This document audits **every** algorithm and function in the codebase for:
 
 ---
 
-## 4. Extraction
+### 4. Extraction
 
 **Role in workflow:** Per-frame static (color, sound) and per-window dynamic (2+ frames) for growth; full-video aggregate for analysis/API.
 
@@ -88,7 +105,7 @@ This document audits **every** algorithm and function in the codebase for:
 
 ---
 
-## 5. Growth (all three registries)
+### 5. Growth (all three registries)
 
 **Role in workflow:** Compare extracted values to registries; if novel, add with sensible name. Pure/single-frame → static; non-pure/2+ frames → dynamic; narrative from spec → narrative.
 
@@ -108,7 +125,7 @@ This document audits **every** algorithm and function in the codebase for:
 
 ---
 
-## 6. Registries (persistence and structure)
+### 6. Registries (persistence and structure)
 
 **Role in workflow:** Store and load static, dynamic, narrative registries; keys and values 100% accurate.
 
@@ -130,7 +147,7 @@ This document audits **every** algorithm and function in the codebase for:
 
 ---
 
-## 7. Blending and blend depth
+### 7. Blending and blend depth
 
 **Role in workflow:** Combine origin + static registry values (pure only); result that is single value can become new static entry. Blend depth = pure (static) elements vs origin primitives.
 
@@ -148,7 +165,7 @@ This document audits **every** algorithm and function in the codebase for:
 
 ---
 
-## 8. Name generator
+### 8. Name generator
 
 **Role in workflow:** Sensible, short name when element/blend is unknown — for every registry.
 
@@ -164,7 +181,7 @@ This document audits **every** algorithm and function in the codebase for:
 
 ---
 
-## 9. Lookup and sync
+### 9. Lookup and sync
 
 **Role in workflow:** Creation gets latest static (and origins) from API or local; discoveries POST to API.
 
@@ -181,7 +198,7 @@ This document audits **every** algorithm and function in the codebase for:
 
 ---
 
-## 10. Analysis metrics (per-frame algorithms)
+### 10. Analysis metrics (per-frame algorithms)
 
 **Role in workflow:** Extraction and renderer depend on these; must be precise.
 
@@ -199,7 +216,7 @@ This document audits **every** algorithm and function in the codebase for:
 
 ---
 
-## 11. Pipeline and automation (loop)
+### 11. Pipeline and automation (loop)
 
 **Role in workflow:** Run full cycle: pick prompt → interpret → create → render → extract → grow (static + dynamic + narrative) → sync.
 
@@ -216,7 +233,7 @@ This document audits **every** algorithm and function in the codebase for:
 
 ---
 
-## 12. Config, API client, procedural parser
+### 12. Config, API client, procedural parser
 
 | Function | Purpose | Precision | Workflow success | Status |
 |----------|---------|-----------|------------------|--------|
@@ -227,13 +244,13 @@ This document audits **every** algorithm and function in the codebase for:
 
 ---
 
-## 13. Legacy registry (registry.py add_learned_*)
+### 13. Legacy registry (registry.py add_learned_*)
 
 **Role:** Legacy single-registry and D1-style APIs still use add_learned_color, add_learned_motion_profile, etc., and name_reserve.take(). These are **precise** for their contract. The **workflow** for “every instance” and three registries is served by growth_per_instance (grow_from_video, grow_dynamic_from_video) and narrative_registry; the Cloudflare API accepts both static_* and dynamic discovery payloads. So legacy add_learned_* are 🔶 Legacy — complete for legacy path; primary growth is per-instance + narrative.
 
 ---
 
-## 14. Cloudflare Worker (API)
+### 14. Cloudflare Worker (API)
 
 **Role:** Persist state (KV), config (KV), learning runs (D1), discoveries (D1), jobs (D1), R2 uploads. No KV delete (optimized for free tier).
 
@@ -250,7 +267,7 @@ This document audits **every** algorithm and function in the codebase for:
 
 ---
 
-## 15. Gaps and recommendations
+### 15. Gaps and recommendations
 
 | Gap | Recommendation |
 |-----|-----------------|
@@ -260,7 +277,7 @@ This document audits **every** algorithm and function in the codebase for:
 
 ---
 
-## 16. Summary table
+### 16. Summary table
 
 | Stage | Key functions | Precision | Workflow |
 |-------|----------------|-----------|----------|

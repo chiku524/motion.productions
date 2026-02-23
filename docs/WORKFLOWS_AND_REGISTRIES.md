@@ -276,14 +276,13 @@ The **audio icon is enabled** in the browser when the source has a track; the `<
 
 ---
 
-## 13. Static sound extraction (learning from audio) — not yet
+## 13. Static sound extraction (learning from audio)
 
-We **add** audio to every video. We do **not yet extract** per-frame or per-segment sound from the generated file to fill the **static sound registry**:
+We **add** audio to every video. Per-frame sound extraction **is implemented**:
 
-- **`extract_static_per_frame()`** returns `"sound": {}` as a placeholder.
-- **`extract_dynamic_per_window()`** returns `"audio_semantic": {}` as a placeholder.
-
-Learning from **spec/intended** audio (mood, tempo, presence) is already recorded via remote_sync and narrative; learning from **actual** decoded audio is future work.
+- **`_extract_audio_segments(video_path, fps, num_frames)`** (in `extractor_per_instance.py`) decodes the audio track with pydub, slices one segment per frame, and returns a list of dicts with **amplitude**, **weight**, **tone** (low/mid/high/silent), and **timbre**. Used by **`read_video_once()`**, which passes **audio_segments** into **`_extract_static_from_preloaded()`**; each frame’s **sound** is then passed to **`ensure_static_sound_in_registry()`** in **`grow_all_from_video()`**.
+- When the file has **no audio track** or decode fails, **audio_segments** is empty and each frame gets **sound: {}**; **`ensure_static_sound_in_registry`** then does nothing for that frame. To still grow the static sound registry in that case, **`grow_all_from_video()`** uses a **spec-derived fallback**: when there is a **spec** and decoded sound is empty (or no segments), it adds one **spec-derived** static sound via **`derive_static_sound_from_spec(spec)`** so at least one static_sound entry is recorded per run.
+- **`extract_dynamic_per_window()`** fills **audio_semantic** from spec when present; per-window decoded audio_semantic can be extended later.
 
 ---
 

@@ -292,7 +292,7 @@ def run() -> None:
         # workflow_type for site: explorer | exploiter | main (prompt choice)
         workflow_type = os.environ.get("LOOP_WORKFLOW_TYPE") or ("explorer" if override == "0" else "exploiter" if override == "1" else "main")
         # extraction_focus: frame (per-frame / pure static only) | window (per-window blends only) | unset = all
-        # Use LOOP_EXTRACTION_FOCUS (not LCXP_EXTRACTION_FOCUS). See RAILWAY_CONFIG.md §8 and MISSION_AND_STRATEGIC_OPTIMIZATIONS.md.
+        # Use LOOP_EXTRACTION_FOCUS (not LCXP_EXTRACTION_FOCUS). See RAILWAY_CONFIG.md §8 and docs/MISSION_AND_OPERATIONS.md.
         extraction_focus = (os.environ.get("LOOP_EXTRACTION_FOCUS") or "").strip().lower() or "all"
         if extraction_focus not in ("frame", "window", "all"):
             extraction_focus = "all"

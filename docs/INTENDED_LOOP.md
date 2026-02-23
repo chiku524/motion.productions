@@ -194,7 +194,7 @@ So: **good** = reuse a prompt that worked well; **procedural** = generate a new 
 | **API retries + failure handling** | Loop survives transient API errors; state and discoveries are not lost. |
 | **Knowledge fetch before each run** | Creation and prompt picking use latest learned static/narrative from D1 so each generation benefits from prior runs. |
 
-See [ENHANCEMENTS_AND_OPTIMIZATIONS.md](ENHANCEMENTS_AND_OPTIMIZATIONS.md) for the enhancement checklist and [WORKFLOWS_AND_REGISTRIES.md](WORKFLOWS_AND_REGISTRIES.md) (Part I) for what lives in static vs dynamic vs narrative.
+See [BACKLOG_AND_ENHANCEMENTS.md](BACKLOG_AND_ENHANCEMENTS.md) for the enhancement checklist and [WORKFLOWS_AND_REGISTRIES.md](WORKFLOWS_AND_REGISTRIES.md) (Part I) for what lives in static vs dynamic vs narrative.
 
 ---
 

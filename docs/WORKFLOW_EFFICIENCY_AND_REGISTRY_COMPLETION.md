@@ -2,7 +2,7 @@
 
 **Goal:** Improve the efficiency of every workflow so each registry moves toward **completion** — i.e. recording every possible combination of true primitive/origin values.
 
-**Audience:** Operators and developers. Complements [WORKFLOWS_AND_REGISTRIES.md](WORKFLOWS_AND_REGISTRIES.md), [REGISTRY_REVIEW_AND_IMPROVEMENT_PLAN.md](REGISTRY_REVIEW_AND_IMPROVEMENT_PLAN.md), and [MISSION_AND_STRATEGIC_OPTIMIZATIONS.md](MISSION_AND_STRATEGIC_OPTIMIZATIONS.md).
+**Audience:** Operators and developers. Complements [WORKFLOWS_AND_REGISTRIES.md](WORKFLOWS_AND_REGISTRIES.md), [REGISTRY_REVIEW_AND_IMPROVEMENT_PLAN.md](REGISTRY_REVIEW_AND_IMPROVEMENT_PLAN.md), and [MISSION_AND_OPERATIONS.md](MISSION_AND_OPERATIONS.md).
 
 ---
 
@@ -81,7 +81,7 @@ So completion is **bounded and well-defined** for narrative (finite origin lists
 
 ### 2.5 Static sound: all four primitives (tone, hiss) represented
 
-**Current:** Many static_sound discoveries map only to **rumble** and **silence**; **tone** and **hiss** are under-represented (see REGISTRY_EXPORT_REVIEW_2026-02-18 and REGISTRY_REVIEW_AND_IMPROVEMENT_PLAN).
+**Current:** Many static_sound discoveries map only to **rumble** and **silence**; **tone** and **hiss** are under-represented (see REGISTRY_REVIEW_AND_IMPROVEMENT_PLAN).
 
 - **Implementation:**
   - In **procedural audio** (e.g. `_generate_procedural_audio` or equivalent), ensure **mid** (tone) and **high** (hiss) frequency components are sometimes present (e.g. by mood or random layer), so extraction can produce keys that map to tone/hiss in **depth_breakdown**.

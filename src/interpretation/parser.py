@@ -247,19 +247,21 @@ def _resolve_shape(words: list[str]) -> str:
     return "none"
 
 
-def _resolve_shot(words: list[str]) -> str:
-    """Resolve shot type from keywords."""
+def _resolve_shot(words: list[str], linguistic_registry: dict[str, dict[str, str]] | None = None) -> str:
+    """Resolve shot type from keywords (supports linguistic registry for synonym expansion)."""
+    lookup = _merge_linguistic("shot", KEYWORD_TO_SHOT, linguistic_registry)
     for w in words:
-        if w in KEYWORD_TO_SHOT:
-            return KEYWORD_TO_SHOT[w]
+        if w in lookup:
+            return lookup[w]
     return DEFAULT_SHOT
 
 
-def _resolve_transition(words: list[str]) -> str:
-    """Resolve transition from keywords."""
+def _resolve_transition(words: list[str], linguistic_registry: dict[str, dict[str, str]] | None = None) -> str:
+    """Resolve transition from keywords (supports linguistic registry for synonym expansion)."""
+    lookup = _merge_linguistic("transition", KEYWORD_TO_TRANSITION, linguistic_registry)
     for w in words:
-        if w in KEYWORD_TO_TRANSITION:
-            return KEYWORD_TO_TRANSITION[w]
+        if w in lookup:
+            return lookup[w]
     return DEFAULT_TRANSITION
 
 
@@ -286,26 +288,28 @@ def _resolve_lighting_hints(words: list[str], linguistic_registry: dict[str, dic
     return hints if hints else [DEFAULT_LIGHTING]
 
 
-def _resolve_composition_balance_hints(words: list[str]) -> list[str]:
-    """Resolve all composition balance hints from keywords (for primitive blending)."""
+def _resolve_composition_balance_hints(words: list[str], linguistic_registry: dict[str, dict[str, str]] | None = None) -> list[str]:
+    """Resolve all composition balance hints from keywords (supports linguistic registry)."""
+    lookup = _merge_linguistic("composition_balance", KEYWORD_TO_COMPOSITION_BALANCE, linguistic_registry)
     hints: list[str] = []
     seen: set[str] = set()
     for w in words:
-        if w in KEYWORD_TO_COMPOSITION_BALANCE:
-            p = KEYWORD_TO_COMPOSITION_BALANCE[w]
+        if w in lookup:
+            p = lookup[w]
             if p not in seen:
                 hints.append(p)
                 seen.add(p)
     return hints if hints else [DEFAULT_COMPOSITION_BALANCE]
 
 
-def _resolve_composition_symmetry_hints(words: list[str]) -> list[str]:
-    """Resolve all composition symmetry hints from keywords (for primitive blending)."""
+def _resolve_composition_symmetry_hints(words: list[str], linguistic_registry: dict[str, dict[str, str]] | None = None) -> list[str]:
+    """Resolve all composition symmetry hints from keywords (supports linguistic registry)."""
+    lookup = _merge_linguistic("composition_symmetry", KEYWORD_TO_COMPOSITION_SYMMETRY, linguistic_registry)
     hints: list[str] = []
     seen: set[str] = set()
     for w in words:
-        if w in KEYWORD_TO_COMPOSITION_SYMMETRY:
-            p = KEYWORD_TO_COMPOSITION_SYMMETRY[w]
+        if w in lookup:
+            p = lookup[w]
             if p not in seen:
                 hints.append(p)
                 seen.add(p)
@@ -321,19 +325,21 @@ def _resolve_genre(words: list[str], linguistic_registry: dict[str, dict[str, st
     return DEFAULT_GENRE
 
 
-def _resolve_composition_balance(words: list[str]) -> str:
-    """Resolve composition balance from keywords. Domain: Composition."""
+def _resolve_composition_balance(words: list[str], linguistic_registry: dict[str, dict[str, str]] | None = None) -> str:
+    """Resolve composition balance from keywords (supports linguistic registry)."""
+    lookup = _merge_linguistic("composition_balance", KEYWORD_TO_COMPOSITION_BALANCE, linguistic_registry)
     for w in words:
-        if w in KEYWORD_TO_COMPOSITION_BALANCE:
-            return KEYWORD_TO_COMPOSITION_BALANCE[w]
+        if w in lookup:
+            return lookup[w]
     return DEFAULT_COMPOSITION_BALANCE
 
 
-def _resolve_composition_symmetry(words: list[str]) -> str:
-    """Resolve composition symmetry from keywords. Domain: Composition."""
+def _resolve_composition_symmetry(words: list[str], linguistic_registry: dict[str, dict[str, str]] | None = None) -> str:
+    """Resolve composition symmetry from keywords (supports linguistic registry)."""
+    lookup = _merge_linguistic("composition_symmetry", KEYWORD_TO_COMPOSITION_SYMMETRY, linguistic_registry)
     for w in words:
-        if w in KEYWORD_TO_COMPOSITION_SYMMETRY:
-            return KEYWORD_TO_COMPOSITION_SYMMETRY[w]
+        if w in lookup:
+            return lookup[w]
     return DEFAULT_COMPOSITION_SYMMETRY
 
 
@@ -361,11 +367,12 @@ def _resolve_audio_tempo(words: list[str]) -> str:
     return DEFAULT_AUDIO_TEMPO
 
 
-def _resolve_audio_mood(words: list[str]) -> str:
-    """Resolve audio mood from keywords. Domain: Audio."""
+def _resolve_audio_mood(words: list[str], linguistic_registry: dict[str, dict[str, str]] | None = None) -> str:
+    """Resolve audio mood from keywords (supports linguistic registry for synonym expansion)."""
+    lookup = _merge_linguistic("audio_mood", KEYWORD_TO_AUDIO_MOOD, linguistic_registry)
     for w in words:
-        if w in KEYWORD_TO_AUDIO_MOOD:
-            return KEYWORD_TO_AUDIO_MOOD[w]
+        if w in lookup:
+            return lookup[w]
     return DEFAULT_AUDIO_MOOD
 
 
@@ -477,22 +484,22 @@ def interpret_user_prompt(
     palette_hints = _resolve_palette_hints(words, avoid_palette, tone=tone, linguistic_registry=linguistic_registry)
     motion_hints = _resolve_motion_hints(words, avoid_motion, tone=tone, linguistic_registry=linguistic_registry)
     lighting_hints = _resolve_lighting_hints(words, linguistic_registry)
-    composition_balance_hints = _resolve_composition_balance_hints(words)
-    composition_symmetry_hints = _resolve_composition_symmetry_hints(words)
+    composition_balance_hints = _resolve_composition_balance_hints(words, linguistic_registry)
+    composition_symmetry_hints = _resolve_composition_symmetry_hints(words, linguistic_registry)
     intensity = _resolve_intensity(words, tone=tone)
     gradient = _resolve_gradient(words, linguistic_registry)
     camera = _resolve_camera(words, linguistic_registry)
     shape = _resolve_shape(words)
-    shot = _resolve_shot(words)
-    transition = _resolve_transition(words)
+    shot = _resolve_shot(words, linguistic_registry)
+    transition = _resolve_transition(words, linguistic_registry)
     lighting = _resolve_lighting(words, linguistic_registry)
     genre_resolved = _resolve_genre(words, linguistic_registry)
-    composition_balance = _resolve_composition_balance(words)
-    composition_symmetry = _resolve_composition_symmetry(words)
+    composition_balance = _resolve_composition_balance(words, linguistic_registry)
+    composition_symmetry = _resolve_composition_symmetry(words, linguistic_registry)
     pacing_factor = _resolve_pacing_factor(words)
     tension_curve = _resolve_tension_curve(words)
     audio_tempo = _resolve_audio_tempo(words)
-    audio_mood = _resolve_audio_mood(words)
+    audio_mood = _resolve_audio_mood(words, linguistic_registry)
     audio_presence = _resolve_audio_presence(words)
     text_overlay, text_position, educational_template = _resolve_text_overlay(prompt)
     depth_parallax = _resolve_depth_parallax(words)

@@ -1,5 +1,5 @@
 """
-Unit tests for critical registry-affecting paths (CODEBASE_AUDIT_MISSION_ALIGNMENT §5.1).
+Unit tests for critical registry-affecting paths (MISSION_AND_OPERATIONS §2.7).
 Run from project root: python -m pytest tests/ -v
 Or: python -m unittest discover -s tests -p "test_*.py" -v
 """

@@ -32,6 +32,14 @@ from ..procedural.data.keywords import (
 # Base subjects (palette-suggesting keywords)
 SUBJECTS_BASE = sorted(set(KEYWORD_TO_PALETTE.keys()))
 
+# Manus AI §4 Priority 5: when color coverage is low, bias toward warm/green to balance cool-tone skew
+WARM_GREEN_SUBJECTS = [s for s in SUBJECTS_BASE if s in (
+    "forest", "green", "fire", "flame", "red", "orange", "sunset", "sun", "dreamy", "dream",
+    "lavender", "pink", "purple",
+)]
+if not WARM_GREEN_SUBJECTS:
+    WARM_GREEN_SUBJECTS = ["forest", "green", "fire", "sunset", "red", "orange", "dreamy"]
+
 # All modifier categories — every domain from INTENDED_LOOP represented
 _MODS_MOTION = [k for k in KEYWORD_TO_MOTION.keys() if k not in SUBJECTS_BASE]
 _MODS_INTENSITY = [k for k in KEYWORD_TO_INTENSITY.keys() if k not in SUBJECTS_BASE]
@@ -478,6 +486,8 @@ def generate_procedural_prompt(
     max_attempts = 200
     bias_audio = secure_random() < 0.18
     bias_lighting = bias_palette_diversity and secure_random() < 0.4  # §2.7: more lighting mods when color coverage low
+    # Manus AI Priority 5: when color coverage low, bias subject toward warm/green to reduce cool-tone skew
+    bias_warm_green = bias_palette_diversity and WARM_GREEN_SUBJECTS and secure_random() < 0.35
     use_instructive = instructive_ratio > 0 and secure_random() < instructive_ratio
     slot_pools = _build_slot_pools(knowledge) if use_instructive else None
     use_slot_based = (
@@ -488,7 +498,7 @@ def generate_procedural_prompt(
     )
 
     for _ in range(max_attempts):
-        sub = secure_choice(sub_pool)
+        sub = secure_choice(WARM_GREEN_SUBJECTS) if bias_warm_green else secure_choice(sub_pool)
         mods = _pick_diverse_mods(3, bias_audio=bias_audio, bias_lighting=bias_lighting)
         mod1 = mods[0] if mods else secure_choice(mod_pool)
         mod2 = mods[1] if len(mods) > 1 else mod1

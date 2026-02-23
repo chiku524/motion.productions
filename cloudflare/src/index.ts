@@ -1573,69 +1573,6 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           return { ...item, name: displayName };
         });
       };
-      // Cross-registry: prefix names that appear in more than one section (Pure vs Blended) so they are globally unique
-      const SECTION_LABELS: Record<string, string> = {
-        static_colors: "Pure — Color",
-        static_sound: "Pure — Sound",
-        dynamic_colors: "Blended — Color",
-        dynamic_gradient: "Blended — Gradient",
-        dynamic_camera: "Blended — Camera",
-        dynamic_motion: "Blended — Motion",
-        dynamic_sound: "Blended — Sound",
-        dynamic_lighting: "Blended — Lighting",
-        dynamic_composition: "Blended — Composition",
-        dynamic_graphics: "Blended — Graphics",
-        dynamic_temporal: "Blended — Temporal",
-        dynamic_technical: "Blended — Technical",
-        dynamic_colors_from_blends: "Blended — Color (blends)",
-        dynamic_blends: "Blended — Other",
-      };
-      const normalizeName = (n: string | null | undefined): string => (n && typeof n === "string" ? n.trim().toLowerCase() : "") || "";
-      const prefixDuplicateNamesAcrossSections = (
-        staticObj: { colors: Array<{ name?: string; [k: string]: unknown }>; sound: Array<{ name?: string; [k: string]: unknown }> },
-        dynamicObj: Record<string, Array<{ name?: string; [k: string]: unknown }>>,
-      ): void => {
-        const nameToSections = new Map<string, Set<string>>();
-        const add = (norm: string, section: string) => {
-          if (!norm) return;
-          if (!nameToSections.has(norm)) nameToSections.set(norm, new Set());
-          nameToSections.get(norm)!.add(section);
-        };
-        for (const item of staticObj.colors) add(normalizeName(item.name), "static_colors");
-        for (const item of staticObj.sound) add(normalizeName(item.name), "static_sound");
-        for (const item of dynamicObj.colors || []) add(normalizeName(item.name), "dynamic_colors");
-        for (const item of dynamicObj.gradient || []) add(normalizeName(item.name), "dynamic_gradient");
-        for (const item of dynamicObj.camera || []) add(normalizeName(item.name), "dynamic_camera");
-        for (const item of dynamicObj.motion || []) add(normalizeName(item.name), "dynamic_motion");
-        for (const item of dynamicObj.sound || []) add(normalizeName(item.name), "dynamic_sound");
-        for (const item of dynamicObj.lighting || []) add(normalizeName(item.name), "dynamic_lighting");
-        for (const item of dynamicObj.composition || []) add(normalizeName(item.name), "dynamic_composition");
-        for (const item of dynamicObj.graphics || []) add(normalizeName(item.name), "dynamic_graphics");
-        for (const item of dynamicObj.temporal || []) add(normalizeName(item.name), "dynamic_temporal");
-        for (const item of dynamicObj.technical || []) add(normalizeName(item.name), "dynamic_technical");
-        for (const item of dynamicObj.colors_from_blends || []) add(normalizeName(item.name), "dynamic_colors_from_blends");
-        for (const item of dynamicObj.blends || []) add(normalizeName(item.name), "dynamic_blends");
-        const duplicateNorms = new Set<string>();
-        for (const [norm, set] of nameToSections) if (set.size > 1) duplicateNorms.add(norm);
-        const prefix = (item: { name?: string; [k: string]: unknown }, section: string) => {
-          const norm = normalizeName(item.name);
-          if (duplicateNorms.has(norm) && item.name != null) item.name = `${SECTION_LABELS[section] ?? section}: ${item.name}`;
-        };
-        for (const item of staticObj.colors) prefix(item, "static_colors");
-        for (const item of staticObj.sound) prefix(item, "static_sound");
-        for (const item of dynamicObj.colors || []) prefix(item, "dynamic_colors");
-        for (const item of dynamicObj.gradient || []) prefix(item, "dynamic_gradient");
-        for (const item of dynamicObj.camera || []) prefix(item, "dynamic_camera");
-        for (const item of dynamicObj.motion || []) prefix(item, "dynamic_motion");
-        for (const item of dynamicObj.sound || []) prefix(item, "dynamic_sound");
-        for (const item of dynamicObj.lighting || []) prefix(item, "dynamic_lighting");
-        for (const item of dynamicObj.composition || []) prefix(item, "dynamic_composition");
-        for (const item of dynamicObj.graphics || []) prefix(item, "dynamic_graphics");
-        for (const item of dynamicObj.temporal || []) prefix(item, "dynamic_temporal");
-        for (const item of dynamicObj.technical || []) prefix(item, "dynamic_technical");
-        for (const item of dynamicObj.colors_from_blends || []) prefix(item, "dynamic_colors_from_blends");
-        for (const item of dynamicObj.blends || []) prefix(item, "dynamic_blends");
-      };
       // Correct known typos in narrative/semantic names (prefix + suffix)
       const NARRATIVE_NAME_TYPOS: Record<string, string> = {
         genre_starer: "genre_star", genre_starow: "genre_star",
@@ -1797,17 +1734,98 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         const { depth_pct, depth_breakdown } = depthFromBlendDepths(depths);
         return { name: b.name, domain: b.domain, key: b.output_json.slice(0, 80), depth_pct, depth_breakdown };
       };
+      type LearnedRow = { name: string; key: string; depth_pct: number; depth_breakdown: Record<string, number> };
+      const mergeTableIntoBlends = (fromBlends: LearnedRow[], fromTable: LearnedRow[]): LearnedRow[] => {
+        const keysPresent = new Set(fromBlends.map((b) => b.key));
+        const out = [...fromBlends];
+        for (const r of fromTable) {
+          if (!keysPresent.has(r.key)) {
+            keysPresent.add(r.key);
+            out.push(r);
+          }
+        }
+        return out;
+      };
+      let learnedLightingRows: LearnedRow[] = [];
+      let learnedCompositionRows: LearnedRow[] = [];
+      let learnedGraphicsRows: LearnedRow[] = [];
+      let learnedTemporalRows: LearnedRow[] = [];
+      let learnedTechnicalRows: LearnedRow[] = [];
+      try {
+        const l = await env.DB.prepare(
+          "SELECT profile_key, name, depth_breakdown_json FROM learned_lighting ORDER BY count DESC LIMIT ?"
+        ).bind(regLimit).all<{ profile_key: string; name: string; depth_breakdown_json: string | null }>();
+        learnedLightingRows = (l.results || []).map((r) => {
+          const depths = r.depth_breakdown_json ? (JSON.parse(r.depth_breakdown_json) as Record<string, unknown>) : null;
+          const { depth_pct, depth_breakdown } = depthFromBlendDepths(depths);
+          return { name: r.name || r.profile_key, key: r.profile_key, depth_pct, depth_breakdown };
+        });
+      } catch {
+        // table may not exist
+      }
+      try {
+        const c = await env.DB.prepare(
+          "SELECT profile_key, name FROM learned_composition ORDER BY count DESC LIMIT ?"
+        ).bind(regLimit).all<{ profile_key: string; name: string }>();
+        learnedCompositionRows = (c.results || []).map((r) => ({
+          name: r.name || r.profile_key,
+          key: r.profile_key,
+          depth_pct: 0,
+          depth_breakdown: {} as Record<string, number>,
+        }));
+      } catch {
+        // table may not exist
+      }
+      try {
+        const g = await env.DB.prepare(
+          "SELECT profile_key, name FROM learned_graphics ORDER BY count DESC LIMIT ?"
+        ).bind(regLimit).all<{ profile_key: string; name: string }>();
+        learnedGraphicsRows = (g.results || []).map((r) => ({
+          name: r.name || r.profile_key,
+          key: r.profile_key,
+          depth_pct: 0,
+          depth_breakdown: {} as Record<string, number>,
+        }));
+      } catch {
+        // table may not exist
+      }
+      try {
+        const t = await env.DB.prepare(
+          "SELECT profile_key, name FROM learned_temporal ORDER BY count DESC LIMIT ?"
+        ).bind(regLimit).all<{ profile_key: string; name: string }>();
+        learnedTemporalRows = (t.results || []).map((r) => ({
+          name: r.name || r.profile_key,
+          key: r.profile_key,
+          depth_pct: 0,
+          depth_breakdown: {} as Record<string, number>,
+        }));
+      } catch {
+        // table may not exist
+      }
+      try {
+        const tech = await env.DB.prepare(
+          "SELECT profile_key, name FROM learned_technical ORDER BY count DESC LIMIT ?"
+        ).bind(regLimit).all<{ profile_key: string; name: string }>();
+        learnedTechnicalRows = (tech.results || []).map((r) => ({
+          name: r.name || r.profile_key,
+          key: r.profile_key,
+          depth_pct: 0,
+          depth_breakdown: {} as Record<string, number>,
+        }));
+      } catch {
+        // table may not exist
+      }
       const nonGca = (blends.results || []).filter((b) => b.domain !== "gradient" && b.domain !== "camera" && b.domain !== "audio");
       const blendsByDomain: Record<string, typeof nonGca> = {};
       for (const d of DEDICATED_BLEND_DOMAINS) blendsByDomain[d] = nonGca.filter((b) => b.domain === d);
       const otherBlends = nonGca
         .filter((b) => !DEDICATED_BLEND_DOMAINS.includes(b.domain))
         .map(toBlendRow);
-      const lightingBlends = blendsByDomain.lighting.map(toBlendRow);
-      const compositionBlends = blendsByDomain.composition.map(toBlendRow);
-      const graphicsBlends = blendsByDomain.graphics.map(toBlendRow);
-      const temporalBlends = blendsByDomain.temporal.map(toBlendRow);
-      const technicalBlends = blendsByDomain.technical.map(toBlendRow);
+      const lightingBlends = mergeTableIntoBlends(blendsByDomain.lighting.map(toBlendRow), learnedLightingRows);
+      const compositionBlends = mergeTableIntoBlends(blendsByDomain.composition.map(toBlendRow), learnedCompositionRows);
+      const graphicsBlends = mergeTableIntoBlends(blendsByDomain.graphics.map(toBlendRow), learnedGraphicsRows);
+      const temporalBlends = mergeTableIntoBlends(blendsByDomain.temporal.map(toBlendRow), learnedTemporalRows);
+      const technicalBlends = mergeTableIntoBlends(blendsByDomain.technical.map(toBlendRow), learnedTechnicalRows);
       const colorBlendsFromBlends = blendsByDomain.color.map(toBlendRow);
       const motionBlendsFromBlends = blendsByDomain.motion.map(toBlendRow);
       const motionFromLearned = (learnedMotion.results || []).map((r) => ({ key: r.profile_key, name: r.name || r.profile_key, trend: r.motion_trend, count: r.count }));
@@ -1929,7 +1947,6 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           technical: technicalBlends,
           blends: otherBlends,
       };
-      prefixDuplicateNamesAcrossSections(staticPayload, dynamicPayload);
       return json({
         static_primitives: staticPrimitives,
         dynamic_canonical: dynamicCanonical,

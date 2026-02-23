@@ -949,6 +949,13 @@ def grow_all_from_video(
                 frame.get("sound", {}), source_prompt=prompt, config=config, out_novel=out_sound
             ):
                 added["static_sound"] += 1
+        # When decoded audio was empty (or no segments), still grow static_sound from spec so the registry gets entries
+        if do_static_sound and spec and added["static_sound"] == 0:
+            spec_sound = derive_static_sound_from_spec(spec)
+            if spec_sound and ensure_static_sound_in_registry(
+                spec_sound, source_prompt=prompt, config=config, out_novel=out_sound
+            ):
+                added["static_sound"] += 1
 
     out_motion = novel_for_sync["motion"] if (collect_novel_for_sync and do_window) else None
     out_time = novel_for_sync["time"] if (collect_novel_for_sync and do_window) else None

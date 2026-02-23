@@ -1,5 +1,5 @@
 """
-Crypto-quality random for growth and creation (Step 6: ENHANCEMENTS_AND_OPTIMIZATIONS).
+Crypto-quality random for growth and creation (BACKLOG_AND_ENHANCEMENTS).
 Uses secrets module to avoid bias in domain value selection.
 """
 import secrets

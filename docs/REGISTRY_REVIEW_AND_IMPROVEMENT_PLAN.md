@@ -2,7 +2,7 @@
 
 **Based on:** `json registry exports/motion-registries-2026-02-15.json` and full codebase review.
 
-**Living plan:** This document is the central plan. Update it with implemented changes, findings, and next steps. See also **MISSION_AND_STRATEGIC_OPTIMIZATIONS.md**, **CODEBASE_AUDIT_MISSION_ALIGNMENT.md**, and **PRECISION_VERIFICATION_CHECKLIST.md** for mission alignment and operator verification. (An earlier **Registry & Loop Workflow Audit** from 2026-02-11 is superseded by this plan; its recommendations are reflected in §6 Prioritized plan.)
+**Living plan:** This document is the central plan. Update it with implemented changes, findings, and next steps. See also **MISSION_AND_OPERATIONS.md** and **PRECISION_VERIFICATION_CHECKLIST.md** for mission alignment and operator verification. (An earlier **Registry & Loop Workflow Audit** from 2026-02-11 is superseded by this plan; its recommendations are reflected in §6 Prioritized plan.)
 
 ---
 
@@ -17,13 +17,15 @@
 
 | Area | Focus | Implementation / docs | Verification |
 |------|--------|------------------------|--------------|
-| **1. Registry completeness** | LOOP_EXTRACTION_FOCUS enforcement; no data loss; backfill propagation; sparse categories | §9 below; automate_loop.py; backfill cascade (cloudflare); CODEBASE_AUDIT §1 | PRECISION_VERIFICATION_CHECKLIST §1–2 |
-| **2. Creation phase** | Pure-per-frame; data-driven only; wider pools; underused/recent bias; audio variety | builder.py; renderer.py; §9 rows 6–8; CODEBASE_AUDIT §2 | Audit doc §2; tests in tests/test_builder_and_sync.py |
+| **1. Registry completeness** | LOOP_EXTRACTION_FOCUS enforcement; no data loss; backfill propagation; sparse categories | §9 below; automate_loop.py; backfill cascade (cloudflare); MISSION_AND_OPERATIONS §2.1–2.3 | PRECISION_VERIFICATION_CHECKLIST §1–2 |
+| **2. Creation phase** | Pure-per-frame; data-driven only; wider pools; underused/recent bias; audio variety | builder.py; renderer.py; §9 rows 6–8; MISSION_AND_OPERATIONS §2.4 | Audit doc §2; tests in tests/test_builder_and_sync.py |
 | **3. Sound discovery** | sound_loop.py deployed; static_sound in for-creation and creation | sound_loop.py; for-creation API; lookup.py; builder | PRECISION_VERIFICATION_CHECKLIST §3 |
-| **4. Interpretation & linguistic** | Interpret worker logs; meaningful prompts; linguistic registry growth | interpret_loop.py; prompt_gen.py; MISSION_AND_STRATEGIC_OPTIMIZATIONS §3 | PRECISION_VERIFICATION_CHECKLIST §4 |
-| **5. Code quality** | Contracts, tests, REGISTRY FOUNDATION alignment; no recursion risk | CODEBASE_AUDIT §5; tests/; REGISTRY_FOUNDATION.md | pytest tests/; audit §5.1–5.2 |
+| **4. Interpretation & linguistic** | Interpret worker logs; meaningful prompts; linguistic registry growth | interpret_loop.py; prompt_gen.py; MISSION_AND_OPERATIONS §1.3 | PRECISION_VERIFICATION_CHECKLIST §4 |
+| **5. Code quality** | Contracts, tests, REGISTRY FOUNDATION alignment; no recursion risk | MISSION_AND_OPERATIONS §2.7; tests/; REGISTRY_FOUNDATION.md | pytest tests/; ALGORITHMS_AND_FUNCTIONS_AUDIT.md |
 
 **Configuration:** Use **`LOOP_EXTRACTION_FOCUS`** (not `LCXP_EXTRACTION_FOCUS`) on Railway: `frame` for Explorer/Exploiter, `window` for Balanced. See **RAILWAY_CONFIG.md**. **Logging:** Use `Growth [frame]`, `Growth [window]`, `Missing learning (job_id=...)`, and `Missing discovery (job_id=...)` as primary indicators.
+
+**Export review notes:** Ensure interpretation registry grows (automate_loop POSTs /api/interpretations; logs "Interpretation recorded"). If no new rows, run `backfill_interpretations.py`. Pure sound: only rumble/silence in export until procedural audio adds mid/high components; depth backfill: use `backfill_registry_depths.py` for learned_colors/static_colors. Non-semantic names: one script fixes both registry names and cascaded prompts — `backfill_registry_names.py` (POST /api/registries/backfill-names).
 
 ---
 
@@ -137,7 +139,7 @@ So: **themes, plots, settings, genre, mood, style, scene_type** in the export ar
 ### 5.1 Where learning and discovery are called
 
 - **automate_loop.py:** After each run: `post_all_discoveries(..., job_id=job_id)`, then `grow_and_sync_to_api(..., job_id=job_id)`, then a guaranteed `post_discoveries(api_base, {"job_id": job_id})` so discovery run is recorded even if growth failed, then `POST /api/learning` with job_id.
-- **Env:** Use **`LOOP_EXTRACTION_FOCUS`** (exact name; **not** `LCXP_EXTRACTION_FOCUS`) to set `frame` or `window` per worker. See **MISSION_AND_STRATEGIC_OPTIMIZATIONS.md** for the full mission and monitoring actions. Monitor logs for `Growth [frame]` or `Growth [window]` and for `Missing discovery (job_id=...)` / `Missing learning (job_id=...)` when POSTs fail. Full verification steps: **RAILWAY_CONFIG.md** §8.1 (env config, runtime logs, registry output).
+- **Env:** Use **`LOOP_EXTRACTION_FOCUS`** (exact name; **not** `LCXP_EXTRACTION_FOCUS`) to set `frame` or `window` per worker. See **MISSION_AND_OPERATIONS.md** for the full mission and monitoring actions. Monitor logs for `Growth [frame]` or `Growth [window]` and for `Missing discovery (job_id=...)` / `Missing learning (job_id=...)` when POSTs fail. Full verification steps: **RAILWAY_CONFIG.md** §8.1 (env config, runtime logs, registry output).
 - **generate_bridge.py (--learn):** After upload: growth + `post_*_discoveries` + `grow_and_sync_to_api` + `POST /api/learning`. If **--learn** is not passed, learning is **not** logged.
 - Jobs completed **without** going through automate_loop or generate_bridge --learn (e.g. manual upload, or a different worker path) will have no learning_run and possibly no discovery_run.
 

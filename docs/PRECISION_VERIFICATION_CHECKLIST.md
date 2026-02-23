@@ -1,6 +1,6 @@
 # Precision verification checklist
 
-Use this checklist to verify that workflows and registries align with the **refined mission** (100% precision, comprehensive data acquisition, robust prompt interpretation). See **REGISTRY_REVIEW_AND_IMPROVEMENT_PLAN.md** (refined mission section) and **MISSION_AND_STRATEGIC_OPTIMIZATIONS.md**.
+Use this checklist to verify that workflows and registries align with the **refined mission** (100% precision, comprehensive data acquisition, robust prompt interpretation). See **REGISTRY_REVIEW_AND_IMPROVEMENT_PLAN.md** (refined mission section) and **MISSION_AND_OPERATIONS.md**.
 
 ---
 
@@ -97,7 +97,7 @@ Use this checklist to verify that workflows and registries align with the **refi
 
 | Check | How |
 |-------|-----|
-| **Code** | builder.py builds pure_colors from origin + static_colors + learned_colors; creation_mode = "pure_per_frame" when pool non-empty. renderer.py _render_pure_per_frame() assigns a color per pixel from that pool. See CODEBASE_AUDIT_MISSION_ALIGNMENT §2. |
+| **Code** | builder.py builds pure_colors from origin + static_colors + learned_colors; creation_mode = "pure_per_frame" when pool non-empty. renderer.py _render_pure_per_frame() assigns a color per pixel from that pool. See MISSION_AND_OPERATIONS.md §2.4. |
 | **Parameterization** | Palette: 2–3 hints when default, with underused bias. Motion, gradient, camera: from _pool_from_knowledge (learned_* + origin_*). Audio: 35% weighted_choice_favor_recent(learned_audio), else most_common; static_sound for mood/tone with underused bias. |
 | **Tests** | Run `python -m pytest tests/ -v` or `python -m unittest discover -s tests -p "test_*.py" -v` to confirm _build_pure_color_pool and growth_metrics behave as expected. |
 
@@ -115,3 +115,41 @@ Use this checklist to verify that workflows and registries align with the **refi
 ---
 
 **Summary:** Use **Growth [frame]** / **Growth [window]** and **Missing learning (job_id=...)** / **Missing discovery (job_id=...)** as primary log indicators. Keep **LOOP_EXTRACTION_FOCUS** set per service. Review registry exports for sparse categories and backfill names when needed. This checklist supports the refined mission of 100% precision and comprehensive data acquisition for a robust prompt interpretation system.
+
+---
+
+## FAQ: Precision & accuracy (design decisions)
+
+This section answers common questions about how the registries work and how we improve precision and accuracy. It complements [REGISTRY_EXPORT_SCHEMA.md](../json%20registry%20exports/REGISTRY_EXPORT_SCHEMA.md) and [WORKFLOWS_AND_REGISTRIES.md](WORKFLOWS_AND_REGISTRIES.md).
+
+### Pure (Static) Registry
+
+**Q: There are only 4 sound primitives (silence, rumble, tone, hiss) and none have been "recorded" in a produced video.**
+
+- The **4 primitives** are the **origin set**; they are **seeded** so the mesh can reference them. Until per-frame audio extraction runs on real video, most static_sound entries come from **spec-derived** sound or from the **sound-only loop**. Discoveries from video or procedural audio reference them in `depth_breakdown`.
+
+**Pure — Colors: duplicate names** — Names are unique per key; when the same name would apply to different keys we disambiguate as **"Name (r,g,b)"**.
+
+**Depth % vs "Depth (primaries + theme/opacity)"** — There is **one** depth concept: how much this discovery is composed of primitives (and, for static color, theme/opacity). **Depth vs primitives (breakdown)** = the full mixture; **Depth %** = a single-number summary. Both refer to the same notion.
+
+**Pure — Sound: What origin/primitive sounds are used?** — The same 4 primitives; each discovery has `depth_breakdown` (origin_noises) giving the weight of each. **sound_ prefix** — We normalize for display (strip prefix in API/export). **Strength %** — Amplitude/weight of the sound in that instant (0–100%); separate from depth.
+
+### Blended (Dynamic) Registry
+
+**Gradient / Camera / Motion** — Canonical lists are the full origin sets. The API merges learned_gradient, learned_camera, learned_motion with learned_blends so per-window discoveries appear.
+
+**Learned colors here vs Pure (Static)?** — learned_colors = whole-video dominant color (aggregates over time). static_colors = per-frame discoveries. Difference is granularity: per-frame (Pure) vs per-video (Blended).
+
+**Blends (other)** — Fallback when a value does not fit a single category; API splits by domain so only full_blend or no-dedicated-section appear under "Blends (other)".
+
+### Semantic (Narrative) Registry
+
+**entry_key vs value** — entry_key = canonical identifier (code/DB); value = display form. **High counts** — Count = how many times that value was recorded; high count = chosen/inferred often. **Primitives and discoveries** — NARRATIVE_ORIGINS; loop targets missing origins via targeted narrative prompt.
+
+### Interpretation (Linguistics)
+
+**Instruction summary** — Built in the UI from the instruction object (up to 6 keys). **How interpretation grows** — Interpretation stores every resolved prompt→instruction; linguistic registry stores span→canonical; every loop adds new interpretations and span→canonical entries.
+
+### Overall
+
+**One depth concept** — Depth = composition of origin primitives (and theme/opacity where applicable); Depth % is a summary. **Unique names** — Unique per key within a table; across registries use context or scope prefix. **Extraction and growth order** — (1) extract_from_video (2) grow_all_from_video (3) post_*_discoveries (4) grow_and_sync_to_api (5) post_discoveries with job_id (6) POST /api/learning. Creation pool = get_knowledge_for_creation → _pool_from_knowledge merges origin + learned.
