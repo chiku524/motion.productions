@@ -86,9 +86,14 @@ The following have been added to support the Manus AI recommendations:
 
 ## 7. Next steps (operational)
 
-1. **Verify sound_loop deployment and POST flow**; confirm static_sound appears in export after a few sound_loop cycles.
-2. **Run backfill_registry_names.py** and **seed_linguistic_domains.py** (once per deploy or when adding new domains).
-3. **Run color_sweep.py** periodically (e.g. nightly) if you want to fill color space faster.
-4. Re-export registry after each change and run through the verification checklist above.
+See **OPERATIONAL_CHECKLIST.md** for step-by-step instructions for:
+
+1. **Deploy Cloudflare Worker** (merge for learned_lighting/composition/etc.) — GitHub Actions or manual.
+2. **Set LOOP_EXTRACTION_FOCUS=window** on the Balanced Railway service.
+3. **Run backfill_registry_names.py** (e.g. `--timeout 300`) to completion; re-run if timeout.
+4. **Run color_sweep.py** when API is stable to push more discoveries.
+5. **Confirm sound_loop** is deployed on Railway and POSTing so static_sound grows.
+
+Also: verify sound_loop deployment and POST flow; run seed_linguistic_domains.py once per deploy if needed; re-export registry after each change and use the verification checklist (§3) for ongoing monitoring.
 
 This review confirms the Manus AI report is accurate and actionable. The Worker merge and the above scripts/parser changes address Priorities 2, 4, and 5.

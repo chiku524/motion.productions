@@ -77,35 +77,38 @@ def extract_linguistic_mappings(
                 val = lookup[w]
                 if (w, domain) not in seen:
                     seen.add((w, domain))
+                    canonical_str = val if isinstance(val, str) else str(val)
                     out.append({
                         "span": w,
-                        "canonical": val,
+                        "canonical": canonical_str,
                         "domain": domain,
-                        "variant_type": _infer_variant_type(w, val),
+                        "variant_type": _infer_variant_type(w, canonical_str),
                     })
 
     # Tone/style fallback: if instruction has tone and prompt has mood word
     tone = instr_dict.get("tone") or ""
     style = instr_dict.get("style") or ""
-    if tone:
+    tone_str = tone if isinstance(tone, str) else str(tone) if tone else ""
+    style_str = style if isinstance(style, str) else str(style) if style else ""
+    if tone_str:
         for w in words:
             if w in ("dreamy", "dark", "bright", "calm", "energetic", "moody"):
                 if (w, "tone") not in seen:
                     seen.add((w, "tone"))
                     out.append({
                         "span": w,
-                        "canonical": tone,
+                        "canonical": tone_str,
                         "domain": "tone",
                         "variant_type": "synonym",
                     })
-    if style:
+    if style_str:
         for w in words:
             if w in ("cinematic", "abstract", "minimal", "realistic", "anime"):
                 if (w, "style") not in seen:
                     seen.add((w, "style"))
                     out.append({
                         "span": w,
-                        "canonical": style,
+                        "canonical": style_str,
                         "domain": "style",
                         "variant_type": "synonym",
                     })

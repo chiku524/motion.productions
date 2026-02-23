@@ -41,7 +41,8 @@ def post_discoveries(
     payload = dict(discoveries)
     if job_id:
         payload["job_id"] = job_id
-    resp = api_request_with_retry(api_base, "POST", "/api/knowledge/discoveries", data=payload, timeout=30)
+    # Worker may take a while under load (many D1 writes); use 90s to reduce read timeouts
+    resp = api_request_with_retry(api_base, "POST", "/api/knowledge/discoveries", data=payload, timeout=90)
     return resp
 
 

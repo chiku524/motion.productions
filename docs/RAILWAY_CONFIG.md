@@ -1,6 +1,6 @@
 # Railway config checklist — workflows on motion.productions
 
-Use this to confirm **Explorer**, **Exploiter**, **Balanced**, and **Interpretation** are running. The three video workflows differ by **prompt choice** (explore / exploit / UI) and **extraction focus** (frame vs window): **2 workers** do per-frame (pure/static) extraction only; **1 worker** does per-window (blended) extraction only. Set **LOOP_EXTRACTION_FOCUS** on each service as below.
+Use this to confirm **Explorer**, **Exploiter**, **Balanced**, **Interpretation**, and **Sound** are running. The start command is **unified in railway.toml** as `python scripts/railway_start.py`; which script actually runs is controlled per service by the env var **RAILWAY_START_SCRIPT** (see below). The three video workflows differ by **prompt choice** (explore / exploit / UI) and **extraction focus** (frame vs window): **2 workers** do per-frame (pure/static) extraction only; **1 worker** does per-window (blended) extraction only. Set **LOOP_EXTRACTION_FOCUS** on each service as below.
 
 ---
 
@@ -109,17 +109,20 @@ Effect: **Per-window extraction only** (dynamic + narrative + learned_colors, le
 
 This worker **does not create or render videos**. It polls the interpretation queue, interprets prompts with `interpret_user_prompt()`, and stores (prompt, instruction) in D1. The main loop’s `GET /api/knowledge/for-creation` returns these as `interpretation_prompts`; `pick_prompt()` sometimes chooses from them so creation has more user-like prompts to work with.
 
+The start command is taken from **railway.toml** (`python scripts/railway_start.py`). Do **not** override Start Command in the dashboard. Set **RAILWAY_START_SCRIPT=interpret_loop** so the dispatcher runs `interpret_loop.py`.
+
 | Setting | Value |
 |--------|--------|
 | **Service name** | e.g. `motion-interpret` or `motion-interpretation` |
 | **Root Directory** | (empty or repo root) |
 | **Builder** | Dockerfile |
-| **Start Command** | `python scripts/interpret_loop.py` |
+| **Start Command** | (from railway.toml — do not override) |
 
 **Environment variables:**
 
 | Variable | Value |
 |----------|--------|
+| `RAILWAY_START_SCRIPT` | `interpret_loop` |
 | `API_BASE` | `https://motion.productions` |
 
 **Optional:**
@@ -136,17 +139,20 @@ Effect: Fills the **interpretation registry** (D1 `interpretations` table) from 
 
 This worker **does not create or render videos**. It runs **sound_loop.py**: each cycle it fetches knowledge (for-creation), picks mood/tempo/presence (from learned_audio or keyword origins), generates procedural audio to a WAV, extracts per-instant sound with `read_audio_segments_only()`, grows the **static_sound** mesh with `grow_static_sound_from_audio_segments()`, and POSTs novel discoveries to `/api/knowledge/discoveries`. This keeps the **pure (static) sound registry** growing so video-creation workflows can use a wider variety of discovered sounds via `GET /api/knowledge/for-creation` → `static_sound`.
 
+The start command is taken from **railway.toml** (`python scripts/railway_start.py`). Do **not** override Start Command in the dashboard. Set **RAILWAY_START_SCRIPT=sound_loop** so the dispatcher runs `sound_loop.py`.
+
 | Setting | Value |
 |--------|--------|
 | **Service name** | e.g. `motion-sound` or `motion-sound-loop` |
 | **Root Directory** | (empty or repo root) |
 | **Builder** | Dockerfile |
-| **Start Command** | `python scripts/sound_loop.py` |
+| **Start Command** | (from railway.toml — do not override) |
 
 **Environment variables:**
 
 | Variable | Value |
 |----------|--------|
+| `RAILWAY_START_SCRIPT` | `sound_loop` |
 | `API_BASE` | `https://motion.productions` |
 
 **Optional:**
@@ -193,6 +199,7 @@ LOOP_WORKFLOW_TYPE=main
 **Interpretation (no create/render)**
 
 ```env
+RAILWAY_START_SCRIPT=interpret_loop
 API_BASE=https://motion.productions
 INTERPRET_DELAY_SECONDS=10
 HEALTH_PORT=8080
@@ -201,6 +208,7 @@ HEALTH_PORT=8080
 **Sound (no create/render)**
 
 ```env
+RAILWAY_START_SCRIPT=sound_loop
 API_BASE=https://motion.productions
 SOUND_LOOP_DELAY_SECONDS=15
 SOUND_LOOP_DURATION_SECONDS=2.5
@@ -216,10 +224,9 @@ HEALTH_PORT=8080
 **Prerequisites:** A Railway project with at least one existing service (Explorer, Exploiter, or Balanced); `API_BASE` pointing to your motion.productions instance.
 
 1. **Create a new service** — Railway Dashboard → your project → **+ New** → **Empty Service**; name it (e.g. `motion-interpret`).
-2. **Link the same repo** — Same repository as main loop; **Root Directory** empty; **Builder:** Dockerfile.
-3. **Start Command:** `python scripts/interpret_loop.py`
-4. **Environment variables:** `API_BASE` = `https://motion.productions`; optional: `INTERPRET_DELAY_SECONDS=10`, `HEALTH_PORT=8080`
-5. **Deploy** — Worker polls the interpretation queue every 10 seconds.
+2. **Link the same repo** — Same repository as main loop; **Root Directory** empty; **Builder:** Dockerfile. Start command comes from **railway.toml** (do not override).
+3. **Environment variables:** `RAILWAY_START_SCRIPT` = `interpret_loop`; `API_BASE` = `https://motion.productions`; optional: `INTERPRET_DELAY_SECONDS=10`, `HEALTH_PORT=8080`
+4. **Deploy** — Worker runs `railway_start.py` → `interpret_loop.py`; polls the interpretation queue every 10 seconds.
 
 **Verify:** Logs show `Interpretation worker started (no create/render)` and `interpreted:` / `backfill:` messages. `GET https://motion.productions/api/knowledge/for-creation` returns `interpretation_prompts` when the worker has stored results.
 
@@ -233,10 +240,11 @@ HEALTH_PORT=8080
 
 **What it does:** Pure (static) sound discovery only — no video. Each cycle: fetch knowledge → generate procedural audio to WAV → extract per-instant sound → grow `static_sound` mesh → POST novel discoveries. Creation workflows then use a wider variety of sounds via for-creation.
 
+**Start command:** Defined in **railway.toml** as `python scripts/railway_start.py`. Do not set a custom Start Command in the service; set **RAILWAY_START_SCRIPT=sound_loop** so the dispatcher runs `sound_loop.py`.
+
 1. **Create a new service** — Same Railway project; **Root Directory** empty; **Builder:** Dockerfile.
-2. **Start Command:** `python scripts/sound_loop.py`
-3. **Environment variables:** `API_BASE` = `https://motion.productions`; optional: `SOUND_LOOP_DELAY_SECONDS=15`, `SOUND_LOOP_DURATION_SECONDS=2.5`, `HEALTH_PORT=8080`
-4. **Deploy** — Service runs continuously; each cycle grows static_sound and syncs to API.
+2. **Environment variables:** `RAILWAY_START_SCRIPT` = `sound_loop`; `API_BASE` = `https://motion.productions`; optional: `SOUND_LOOP_DELAY_SECONDS=15`, `SOUND_LOOP_DURATION_SECONDS=2.5`, `HEALTH_PORT=8080`
+3. **Deploy** — Service runs `railway_start.py` → `sound_loop.py`; each cycle grows static_sound and syncs to API.
 
 **Verify:** Logs show `Sound-only worker started (no create/render)`, `[N] sound discovery: +M` when new sounds are added. API check: `curl -s "https://motion.productions/api/knowledge/for-creation" | jq '.static_sound | length'` (should be > 0 after the worker has run). Integration is automatic: for-creation returns `static_sound`; builder and prompt_gen use it.
 

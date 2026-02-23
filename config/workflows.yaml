@@ -40,16 +40,18 @@ workflows:
 
   interpretation:
     description: "Interpretation only — no create/render; fills interpretation registry (D1) for main pipeline"
-    start_command: "python scripts/interpret_loop.py"
+    # Start command from railway.toml (railway_start.py); this env selects interpret_loop.py
     env:
+      RAILWAY_START_SCRIPT: interpret_loop
       API_BASE: https://motion.productions
       INTERPRET_DELAY_SECONDS: "10"
 
   # Pure sound discovery: no video. Generates procedural audio → extract → grow static_sound → sync.
   sound:
     description: "Sound-only — no create/render; pure sound extraction + growth; fills static_sound registry"
-    start_command: "python scripts/sound_loop.py"
+    # Start command from railway.toml (railway_start.py); this env selects sound_loop.py
     env:
+      RAILWAY_START_SCRIPT: sound_loop
       API_BASE: https://motion.productions
       SOUND_LOOP_DELAY_SECONDS: "15"
       SOUND_LOOP_DURATION_SECONDS: "2.5"

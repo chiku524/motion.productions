@@ -1,9 +1,14 @@
 # Railway: Background Worker for self-feeding learning loop
 # https://docs.railway.app/config-as-code
 # Uses Dockerfile when present; Root Directory must be repo root (not cloudflare/)
+#
+# Start command is unified here; which script runs is controlled per service by RAILWAY_START_SCRIPT:
+#   - unset or "automate_loop" → Explorer / Exploiter / Balanced (python scripts/automate_loop.py)
+#   - "sound_loop"            → Sound workflow (python scripts/sound_loop.py)
+#   - "interpret_loop"         → Interpretation (python scripts/interpret_loop.py)
 
 [build]
 builder = "DOCKERFILE"
 
 [deploy]
-startCommand = "python scripts/automate_loop.py"
+startCommand = "python scripts/railway_start.py"

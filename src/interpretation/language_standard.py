@@ -159,8 +159,9 @@ def infer_variant_type(span: str, canonical: str) -> str:
     """
     Classify how span maps to canonical: synonym, dialect, or slang.
     Used when extracting linguistic mappings for registry growth.
+    Coerces to str so numeric instruction fields (e.g. tone from API) never cause .lower() to fail.
     """
-    s, c = span.lower(), canonical.lower()
+    s, c = str(span).strip().lower(), str(canonical).strip().lower()
     if s == c:
         return "synonym"
     for a, b in DIALECT_NORMALIZE.items():
