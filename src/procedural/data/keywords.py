@@ -190,6 +190,18 @@ KEYWORD_TO_GENRE: dict[str, str] = {
     "advert": "ad",
     "promo": "ad",
     "howto": "tutorial",
+    # Expand for Semantic registry growth (§2.4)
+    "drama": "general",
+    "horror": "general",
+    "comedy": "general",
+    "scifi": "general",
+    "sci-fi": "general",
+    "fantasy": "general",
+    "vlog": "general",
+    "music": "general",
+    "art": "general",
+    "experimental": "general",
+    "minimal": "general",
 }
 
 # Abstract style phrases → style (for "documentary feel", "cinematic look", etc.)

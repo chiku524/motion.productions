@@ -113,12 +113,15 @@ def ensure_narrative_in_registry(
     names = {e.get("name", "") for e in data.get("entries", []) if e.get("name")}
     from .blend_names import generate_sensible_name
     name = generate_sensible_name(aspect, key, existing_names=names)
+    # depth_breakdown where applicable: single value = 100% that origin (REGISTRY_FOUNDATION)
+    depth_breakdown: dict[str, Any] = {key: 1.0}
     entry: dict[str, Any] = {
         "key": key,
         "value": value.strip(),
         "name": name,
         "count": 1,
         "sources": [source_prompt[:80]] if source_prompt else [],
+        "depth_breakdown": depth_breakdown,
     }
     data.setdefault("entries", []).append(entry)
     data["count"] = len(data["entries"])
@@ -129,6 +132,7 @@ def ensure_narrative_in_registry(
             "value": value.strip(),
             "source_prompt": source_prompt[:80] if source_prompt else "",
             "name": name,
+            "depth_breakdown": depth_breakdown,
         })
     return name
 

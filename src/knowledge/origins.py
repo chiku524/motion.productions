@@ -131,13 +131,13 @@ AUDIO_ORIGINS = {
 # NARRATIVE — primitives: genre, tone, style, settings, themes, scene_type, plots
 # -----------------------------------------------------------------------------
 NARRATIVE_ORIGINS = {
-    "genre": ["general", "documentary", "thriller", "ad", "tutorial", "educational", "explainer"],
-    "tone": ["neutral", "dreamy", "dark", "bright", "calm", "energetic", "moody"],
+    "genre": ["general", "documentary", "thriller", "ad", "tutorial", "educational", "explainer", "drama", "horror", "comedy", "fantasy", "experimental"],
+    "tone": ["neutral", "dreamy", "dark", "bright", "calm", "energetic", "moody", "uplifting", "tense", "peaceful"],
     "style": ["cinematic", "abstract", "minimal", "realistic", "anime"],
     "tension_curve": ["flat", "slow_build", "standard", "immediate"],
-    "settings": ["general", "urban", "nature", "interior", "exterior", "studio", "outdoor", "abstract"],
-    "themes": ["general", "transformation", "conflict", "journey", "identity", "connection", "loss", "hope"],
-    "scene_type": ["establishing", "closeup", "wide", "medium", "dialogue", "action", "montage", "b-roll"],
+    "settings": ["general", "urban", "nature", "interior", "exterior", "studio", "outdoor", "abstract", "city", "forest", "night", "day", "ocean", "indoor"],
+    "themes": ["general", "transformation", "conflict", "journey", "identity", "connection", "loss", "hope", "nature", "love", "war", "time", "light", "motion"],
+    "scene_type": ["establishing", "closeup", "wide", "medium", "dialogue", "action", "montage", "b-roll", "pov", "aerial"],
 }
 
 

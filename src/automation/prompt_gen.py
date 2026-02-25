@@ -365,24 +365,34 @@ def generate_targeted_narrative_prompt(
     if not missing_per:
         return None
 
-    # Build prompt: "Create a [genre] scene with [mood] mood" / "with [theme] theme" / "in [setting] setting"
+    # Build prompt: combine up to 3 aspects for richer narrative discovery
     genre = random.choice(missing_per["genre"]) if missing_per.get("genre") else None
     mood = random.choice(missing_per["mood"]) if missing_per.get("mood") else None
     theme = random.choice(missing_per["themes"]) if missing_per.get("themes") else None
     setting = random.choice(missing_per["settings"]) if missing_per.get("settings") else None
+    scene_type = random.choice(missing_per["scene_type"]) if missing_per.get("scene_type") else None
+    plot = random.choice(missing_per["plots"]) if missing_per.get("plots") else None
+    style = random.choice(missing_per["style"]) if missing_per.get("style") else None
 
+    parts: list[str] = []
     if genre:
-        prompt = f"Create a {genre} scene"
+        parts.append(f"Create a {genre} scene")
     else:
-        prompt = "Create a scene"
+        parts.append("Create a scene")
     if mood:
-        prompt += f" with {mood} mood"
-    elif theme:
-        prompt += f" with {theme} theme"
-    elif setting:
-        prompt += f" in {setting} setting"
+        parts.append(f"with {mood} mood")
+    if theme and theme != "general":
+        parts.append(f"and {theme} theme")
+    if setting and setting != "general":
+        parts.append(f"in {setting} setting")
+    if scene_type:
+        parts.append(f"as {scene_type} shot")
+    if plot and plot != "standard":
+        parts.append(f"with {plot.replace('_', ' ')} pacing")
+    if style and style != "cinematic":
+        parts.append(f"in {style} style")
 
-    prompt = prompt.strip()
+    prompt = " ".join(parts).strip()
     if not prompt or prompt in avoid:
         return None
     if _prompt_overlaps_avoid(prompt, avoid):

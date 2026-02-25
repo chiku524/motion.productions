@@ -99,23 +99,64 @@ def main() -> None:
 
     if args.learn:
         from src.analysis import analyze_video
-        from src.learning import log_run
         from src.interpretation import interpret_user_prompt
         from src.creation import build_spec_from_instruction
-        from src.knowledge import grow_from_analysis
+        from src.knowledge.growth_per_instance import grow_from_video, grow_dynamic_from_video
+        from src.knowledge.narrative_registry import grow_narrative_from_spec
+        from src.learning import log_run
+
         instruction = interpret_user_prompt(args.prompt, default_duration=args.duration)
         spec = build_spec_from_instruction(instruction, knowledge=None)
         analysis = analyze_video(path)
+        analysis_dict = analysis.to_dict()
         log_path = log_run(
             args.prompt,
             {"palette_name": spec.palette_name, "motion_type": spec.motion_type, "intensity": spec.intensity},
-            analysis.to_dict(),
+            analysis_dict,
             video_path=str(path),
             config=config,
         )
-        # Growth: add novel colors/motion to learned registry (the loop)
-        grown = grow_from_analysis(analysis.to_dict(), prompt=args.prompt, config=config)
-        print(f"Logged for learning: {log_path} (grown: {grown})")
+        # Full growth pipeline (same as automate_loop / generate_bridge): static + dynamic + narrative
+        try:
+            added_static, _ = grow_from_video(
+                path,
+                prompt=args.prompt,
+                config=config,
+                max_frames=None,
+                sample_every=2,
+                collect_novel_for_sync=False,
+                spec=spec,
+            )
+            added_dynamic, _ = grow_dynamic_from_video(
+                path,
+                prompt=args.prompt,
+                config=config,
+                max_frames=None,
+                sample_every=2,
+                window_seconds=1.0,
+                collect_novel_for_sync=False,
+                spec=spec,
+            )
+            added_narrative, _ = grow_narrative_from_spec(
+                spec,
+                prompt=args.prompt,
+                config=config,
+                instruction=instruction,
+                collect_novel_for_sync=False,
+            )
+            total = sum(added_static.values()) + sum(added_dynamic.values()) + sum(added_narrative.values())
+            print(f"Registry growth: static={sum(added_static.values())}, dynamic={sum(added_dynamic.values())}, narrative={sum(added_narrative.values())} (total {total})")
+        except Exception as e:
+            print(f"Registry growth failed: {e}")
+        # Legacy: also run grow_from_analysis for backward compatibility with existing learning logs
+        try:
+            from src.knowledge import grow_from_analysis
+            grown = grow_from_analysis(analysis_dict, prompt=args.prompt, config=config)
+            if grown:
+                print(f"Legacy growth: {grown}")
+        except Exception:
+            pass
+        print(f"Logged for learning: {log_path}")
 
 
 if __name__ == "__main__":

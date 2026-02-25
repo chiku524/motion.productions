@@ -386,8 +386,12 @@ def _resolve_audio_presence(words: list[str]) -> str:
 
 
 def _resolve_depth_parallax(words: list[str]) -> bool:
-    """Resolve depth/parallax from keywords. Phase 7."""
-    depth_keywords = {"parallax", "depth", "layered", "realistic"}
+    """Resolve depth/parallax from keywords. Phase 7. Expanded for video/game parallax prompts."""
+    depth_keywords = {
+        "parallax", "depth", "layered", "realistic",
+        "layers", "multilayer", "foreground", "background",
+        "2.5d", "scrolling", "dof", "stereo", "field",
+    }
     return any(w in depth_keywords for w in words)
 
 

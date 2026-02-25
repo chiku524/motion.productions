@@ -359,6 +359,26 @@ def _extract_dynamic_from_preloaded(
         else:
             temporal_blend_rgb = None
 
+        # Transition detection at window boundary: compare last frame of previous window with first of this window
+        transition_type = "cut"
+        transition_duration_seconds = 0.0
+        if w > 0 and start_i > 0 and start_i - 1 < n and len(window_frames) > 0:
+            prev_last = frames[start_i - 1]
+            curr_first = window_frames[0]
+            if prev_last.shape == curr_first.shape and prev_last.ndim >= 2:
+                diff = np.abs(prev_last.astype(np.float64) - curr_first.astype(np.float64))
+                if diff.ndim == 3:
+                    diff = diff.mean(axis=-1)
+                mean_diff = float(diff.mean())
+                # High change at boundary → cut; low change → dissolve/fade
+                if mean_diff > 25:
+                    transition_type = "cut"
+                elif mean_diff > 12:
+                    transition_type = "dissolve"
+                else:
+                    transition_type = "fade"
+        transition_dict = {"type": transition_type, "duration_seconds": transition_duration_seconds}
+
         yield {
             "window_index": w,
             "temporal_blend_rgb": temporal_blend_rgb,
@@ -378,7 +398,7 @@ def _extract_dynamic_from_preloaded(
             "composition": {"center_x": cx / width if width else 0.5, "center_y": cy / height if height else 0.5, "luminance_balance": lum_bal},
             "graphics": {"edge_density": edge_den, "spatial_variance": spat_var, "busyness": 0.5 * edge_den + 0.5 * spat_var},
             "audio_semantic": audio_semantic,
-            "transition": {},
+            "transition": transition_dict,
             "depth": {},
         }
 
