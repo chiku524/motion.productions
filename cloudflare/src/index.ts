@@ -299,6 +299,8 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         ? raw.recent_prompts.slice(-200).map((p) => String(p ?? "").slice(0, 500))
         : [];
       state.duration_base = typeof raw.duration_base === "number" && Number.isFinite(raw.duration_base) ? raw.duration_base : 6;
+      state.exploit_count = typeof raw.exploit_count === "number" && Number.isFinite(raw.exploit_count) ? Math.floor(raw.exploit_count) : 0;
+      state.explore_count = typeof raw.explore_count === "number" && Number.isFinite(raw.explore_count) ? Math.floor(raw.explore_count) : 0;
       if (typeof raw.last_run_at === "string") state.last_run_at = raw.last_run_at.slice(0, 50);
       if (typeof raw.last_prompt === "string") state.last_prompt = raw.last_prompt.slice(0, 100);
       if (typeof raw.last_job_id === "string") state.last_job_id = raw.last_job_id.slice(0, 80);
@@ -1989,6 +1991,24 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       }
       const discoveryRate = totalRuns > 0 ? Math.round((withDiscovery / totalRuns) * 100) : 0;
 
+      // Exploit / explore counts from loop state (KV) for export and monitoring
+      let exploit_count = 0;
+      let explore_count = 0;
+      try {
+        if (env.MOTION_KV) {
+          const stateRaw = await env.MOTION_KV.get("loop_state");
+          if (stateRaw) {
+            const loopState = JSON.parse(stateRaw) as Record<string, unknown>;
+            if (typeof loopState.exploit_count === "number" && Number.isFinite(loopState.exploit_count))
+              exploit_count = Math.floor(loopState.exploit_count);
+            if (typeof loopState.explore_count === "number" && Number.isFinite(loopState.explore_count))
+              explore_count = Math.floor(loopState.explore_count);
+          }
+        }
+      } catch {
+        /* optional */
+      }
+
       // Repetition score: fraction of total count in top 20 entries (0–1). High = few entries dominate.
       let repetitionScore: number | null = null;
       try {
@@ -2006,7 +2026,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       }
 
       // Lightweight coverage snapshot for UI and export (avoids separate /api/registries/coverage call)
-      let coverage_snapshot: { static_colors_coverage_pct?: number; narrative_min_coverage_pct?: number } | null = null;
+      let coverage_snapshot: { static_colors_coverage_pct?: number; narrative_min_coverage_pct?: number; static_sound_coverage_pct?: number } | null = null;
       try {
         const sc = await env.DB.prepare("SELECT COUNT(*) as c FROM static_colors").first<{ c: number }>();
         const staticCount = sc?.c ?? 0;
@@ -2023,7 +2043,20 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           if (pct < minNarrativePct) minNarrativePct = pct;
         }
         minNarrativePct = Math.round(minNarrativePct * 100) / 100;
-        coverage_snapshot = { static_colors_coverage_pct: staticPct, narrative_min_coverage_pct: minNarrativePct };
+        let staticSoundPct: number | undefined;
+        try {
+          const ss = await env.DB.prepare("SELECT COUNT(DISTINCT sound_key) as c FROM static_sound").first<{ c: number }>();
+          const soundCount = ss?.c ?? 0;
+          const primitiveToneTarget = 5;
+          staticSoundPct = Math.round(Math.min(100, (100 * soundCount) / primitiveToneTarget) * 100) / 100;
+        } catch {
+          /* static_sound may not exist */
+        }
+        coverage_snapshot = {
+          static_colors_coverage_pct: staticPct,
+          narrative_min_coverage_pct: minNarrativePct,
+          ...(staticSoundPct !== undefined ? { static_sound_coverage_pct: staticSoundPct } : {}),
+        };
       } catch {
         /* optional */
       }
@@ -2038,6 +2071,8 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         discovery_rate_pct: discoveryRate,
         repetition_score: repetitionScore,
         coverage_snapshot: coverage_snapshot ?? undefined,
+        exploit_count,
+        explore_count,
       });
     }
 

@@ -64,7 +64,7 @@
 |---|--------|--------|--------|
 | 13 | **Transition detection and blended_transition** | extract_dynamic_per_window; ensure_dynamic_*_in_registry | Add transition category to dynamic extraction and registry (cut, fade, dissolve, wipe) for video-editing completeness. |
 | 14 | **Parallax/depth_parallax** | _resolve_depth_parallax; prompt pool | Add keywords and parallax-focused prompts so depth_parallax is populated in interpretations. |
-| 15 | **Coverage targets in coverage_snapshot** | Export / schema | Define and track primitive-combination coverage targets (e.g. % of RGB zones, % of motion combos) in coverage_snapshot. |
+| 15 | **Coverage targets in coverage_snapshot** | Export / schema | Define and track primitive-combination coverage targets (e.g. % of RGB zones, % of motion combos) in coverage_snapshot. **Done:** `static_sound_coverage_pct` added to GET /api/loop/progress coverage_snapshot. Run `python scripts/registry_export_analysis.py` periodically to validate tone leakage and depth coverage; see OPERATIONAL_CHECKLIST.md §6. |
 | 16 | **Interpretation cap (100 entries)** | API / config | Review cap; consider rotation or increase so interpretation registry can grow with new prompts. |
 | 17 | **Batch-seed linguistic registry** | Script + curated lists | Proactively add synonyms, slang, and domain terms for color, motion, mood, etc. to accelerate interpreter robustness. |
 

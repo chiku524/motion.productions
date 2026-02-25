@@ -97,6 +97,26 @@ So the **pure (static) sound** registry grows from real audio.
 
 ---
 
+## 6. Run registry export analysis (data quality)
+
+After exporting registry JSON from the UI (or from GET /api/registries + loop progress), run the analysis script to check growth velocity, exploit/explore ratio, schema shape, **pure sound tone leakage** (non-primitive tones), and depth coverage on motion/lighting.
+
+**Command (default: latest 3 exports in `json registry exports/`):**
+
+```bash
+python scripts/registry_export_analysis.py
+```
+
+**With specific files (chronological order):**
+
+```bash
+python scripts/registry_export_analysis.py "json registry exports/motion-registries-2026-02-21.json" "json registry exports/motion-registries-2026-02-24.json"
+```
+
+**Verify:** Review output for: (1) no or low “tone leakage” under Pure sound; (2) motion/lighting entries with `depth_breakdown`; (3) loop_progress `exploit_count` / `explore_count` present; (4) coverage_snapshot includes `static_sound_coverage_pct` when available. See **WORKFLOW_IMPROVEMENT_PLAN_FROM_REPORTS.md** and the Registry Comparison / Enhancement reports.
+
+---
+
 ## Quick reference
 
 | Task | Where | Command / action |
@@ -106,3 +126,4 @@ So the **pure (static) sound** registry grows from real audio.
 | Backfill names | Local/CI | `python scripts/backfill_registry_names.py --api-base https://motion.productions --timeout 300` |
 | Color sweep | Local/CI | `python scripts/color_sweep.py --api-base https://motion.productions` |
 | Sound worker | Railway | 5th service: `python scripts/sound_loop.py`, `API_BASE` set; verify logs and for-creation |
+| Registry export analysis | Local | `python scripts/registry_export_analysis.py` (or pass export JSON paths) |
