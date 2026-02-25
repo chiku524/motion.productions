@@ -40,6 +40,8 @@ def baseline_state() -> dict:
         "good_prompts": [],
         "recent_prompts": [],
         "duration_base": 6.0,
+        "exploit_count": 0,
+        "explore_count": 0,
     }
 
 
@@ -61,8 +63,11 @@ def pick_prompt(
     exploit_ratio: float = DEFAULT_EXPLOIT_RATIO,
     knowledge: dict | None = None,
     coverage: dict | None = None,
-) -> str:
-    """Exploit (good prompts) vs explore (new) based on exploit_ratio. Uses knowledge and coverage (§2.1, §2.4)."""
+) -> tuple[str, bool]:
+    """
+    Exploit (good prompts) vs explore (new) based on exploit_ratio.
+    Returns (prompt, is_exploit) so loop can track exploit_count / explore_count.
+    """
     from src.automation import generate_procedural_prompt
     from src.automation.prompt_gen import generate_targeted_narrative_prompt
 
@@ -72,21 +77,24 @@ def pick_prompt(
 
     if secure_random() < exploit_ratio and good:
         candidates = [p for p in good if p not in recent]
-        return secure_choice(candidates) if candidates else secure_choice(good)
+        chosen = secure_choice(candidates) if candidates else secure_choice(good)
+        if chosen:
+            return (chosen, True)
     # When exploring: 20% use targeted narrative prompt to fill missing genre/mood/themes (§2.4)
     if coverage and secure_random() < 0.20:
         targeted = generate_targeted_narrative_prompt(coverage, avoid=recent)
         if targeted:
             logger.info("Targeted narrative prompt (fill gaps): %s", targeted[:60] + ("..." if len(targeted) > 60 else ""))
-            return targeted
+            return (targeted, False)
     if interpretation_prompts and secure_random() < 0.45:
         candidates = [p for p in interpretation_prompts if isinstance(p, dict) and p.get("prompt") and p["prompt"] not in recent]
         if candidates:
-            return secure_choice(candidates)["prompt"]
-    return (
+            return (secure_choice(candidates)["prompt"], False)
+    fallback = (
         generate_procedural_prompt(avoid=recent, knowledge=knowledge, coverage=coverage, instructive_ratio=0.65)
         or (secure_choice(good) if good else generate_procedural_prompt(knowledge=knowledge, coverage=coverage, instructive_ratio=0.65))
     )
+    return (fallback or "", False)
 
 
 def _load_coverage(api_base: str) -> dict | None:
@@ -108,6 +116,8 @@ def _load_state(api_base: str) -> dict:
             "good_prompts": list(s.get("good_prompts", []))[-200:],
             "recent_prompts": list(s.get("recent_prompts", []))[-200:],
             "duration_base": float(s.get("duration_base", 6.0)),
+            "exploit_count": int(s.get("exploit_count", 0)),
+            "explore_count": int(s.get("explore_count", 0)),
         }
     except APIError as e:
         logger.warning("GET /api/loop/state failed (status=%s, path=%s): %s — using baseline state", e.status_code, e.path, e)
@@ -184,6 +194,50 @@ def _get_discovery_adjusted_exploit_ratio(
     if rate is not None and rate < 10:
         return min(base_ratio, 0.4)
     return base_ratio
+
+
+def _post_learning_with_retry(
+    api_base: str,
+    *,
+    job_id: str,
+    prompt: str,
+    spec,
+    analysis_dict: dict,
+) -> None:
+    """POST /api/learning with retries and one extra retry with longer backoff on failure (reduces 15% runs_with_learning gap)."""
+    payload = {
+        "job_id": job_id,
+        "prompt": prompt,
+        "spec": {
+            "palette_name": getattr(spec, "palette_name", ""),
+            "motion_type": getattr(spec, "motion_type", ""),
+            "intensity": getattr(spec, "intensity", 1.0),
+        },
+        "analysis": analysis_dict,
+    }
+    try:
+        api_request_with_retry(
+            api_base,
+            "POST",
+            "/api/learning",
+            data=payload,
+            timeout=45,
+            max_retries=5,
+            backoff_seconds=2.0,
+        )
+    except (APIError, Exception) as e:
+        # One extra retry with longer backoff (e.g. Worker cold start / timeout)
+        logger.info("Retrying POST /api/learning after %s", e)
+        time.sleep(4.0)
+        api_request_with_retry(
+            api_base,
+            "POST",
+            "/api/learning",
+            data=payload,
+            timeout=60,
+            max_retries=2,
+            backoff_seconds=4.0,
+        )
 
 
 def _load_loop_config(api_base: str) -> dict:
@@ -315,7 +369,7 @@ def run() -> None:
 
         if coverage is None and args.api_base:
             coverage = _load_coverage(args.api_base)
-        prompt = pick_prompt(state, exploit_ratio=exploit_ratio, knowledge=knowledge, coverage=coverage)
+        prompt, is_exploit = pick_prompt(state, exploit_ratio=exploit_ratio, knowledge=knowledge, coverage=coverage)
         if not prompt:
             state["recent_prompts"] = []
             continue
@@ -511,23 +565,12 @@ def run() -> None:
 
             try:
                 # Explicit retries to reduce "missing learning" from transient 5xx/429/connection (audit §1.2)
-                api_request_with_retry(
+                _post_learning_with_retry(
                     args.api_base,
-                    "POST",
-                    "/api/learning",
-                    data={
-                        "job_id": job_id,
-                        "prompt": prompt,
-                        "spec": {
-                            "palette_name": spec.palette_name,
-                            "motion_type": spec.motion_type,
-                            "intensity": spec.intensity,
-                        },
-                        "analysis": analysis_dict,
-                    },
-                    timeout=45,
-                    max_retries=5,
-                    backoff_seconds=2.0,
+                    job_id=job_id,
+                    prompt=prompt,
+                    spec=spec,
+                    analysis_dict=analysis_dict,
                 )
             except APIError as e:
                 logger.warning("Missing learning (job_id=%s): POST /api/learning failed status=%s — %s", job_id, e.status_code, e)
@@ -558,6 +601,10 @@ def run() -> None:
         if run_succeeded:
             state["run_count"] += 1
             state["recent_prompts"] = (state.get("recent_prompts", []) + [prompt])[-200:]
+            if is_exploit:
+                state["exploit_count"] = state.get("exploit_count", 0) + 1
+            else:
+                state["explore_count"] = state.get("explore_count", 0) + 1
             state["last_run_at"] = __import__("datetime").datetime.utcnow().isoformat() + "Z"
             state["last_prompt"] = (prompt or "")[:80] + ("…" if len(prompt or "") > 80 else "")
             state["last_job_id"] = job_id

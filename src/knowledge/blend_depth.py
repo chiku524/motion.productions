@@ -59,6 +59,31 @@ SOUND_ORIGIN_PRIMITIVES = ("silence", "rumble", "tone", "hiss")
 # Map frequency-band measurement (low/mid/high) to primitive names.
 _TONE_TO_NOISE = {"silent": "silence", "silence": "silence", "low": "rumble", "mid": "tone", "high": "hiss"}
 
+# Pure (static) sound must use only primitive tone values (REGISTRY_FOUNDATION).
+# Allowed in key/depth: low, mid, high, silent, neutral (neutral -> mid for depth).
+# Semantic mood words (calm, tense, dark, uplifting, etc.) belong in Blended audio_semantic, not Pure.
+PRIMITIVE_TONES = frozenset({"silent", "silence", "low", "mid", "high", "neutral"})
+# Map semantic/mood words to primitive tone for key and depth consistency.
+_SEMANTIC_TONE_TO_PRIMITIVE = {
+    "calm": "mid", "tense": "mid", "dark": "low", "uplifting": "high", "dreamy": "mid",
+    "bright": "high", "moody": "mid", "energetic": "high", "ambient": "mid", "music": "mid",
+    "full": "mid", "sfx": "high", "neutral": "mid", "peaceful": "mid", "dramatic": "mid",
+    "melancholy": "low", "happy": "high", "sad": "low", "scary": "mid", "angry": "high",
+}
+
+
+def normalize_tone_to_primitive(tone: str) -> str:
+    """
+    Return a primitive tone (low, mid, high, silent) for use in Pure sound key and depth.
+    Semantic mood values are mapped to primitives so Pure registry stays primitive-only.
+    """
+    t = (tone or "").strip().lower()
+    if not t or t in ("unknown", ""):
+        return "mid"
+    if t in PRIMITIVE_TONES:
+        return "silent" if t in ("silent", "silence") else t
+    return _SEMANTIC_TONE_TO_PRIMITIVE.get(t, "mid")
+
 
 def compute_sound_depth(amplitude: float, tone: str) -> dict[str, Any]:
     """

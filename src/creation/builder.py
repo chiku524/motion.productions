@@ -285,43 +285,49 @@ def _build_pure_color_pool(
     Each pixel in each frame gets a random value from this pool; motion over a window
     combines pixels (captured at extraction as temporal blend → new pure or dynamic).
     Pool = origin primitives + static_colors (per-frame discovered) + learned_colors (whole-video).
-    No fixed default list — only registry data so creation progresses as loop runs.
+    Creation biasing: underused colors (lower count) get higher multiplicity in the pool
+    so they are picked more often, breaking the high-count feedback loop (REGISTRY_REVIEW).
     """
     pool: list[tuple[int, int, int]] = []
     seen: set[tuple[int, int, int]] = set()
 
-    # 1. Origin primitives (always included)
+    # 1. Origin primitives (always included once each)
     for _name, (r, g, b) in COLOR_ORIGIN_PRIMITIVES:
         t = (int(round(r)), int(round(g)), int(round(b)))
         if t not in seen:
             seen.add(t)
             pool.append(t)
 
-    # 2. Static (per-frame discovered) colors — pixel-level blends become new pure values
+    def _add_with_count_inverse(
+        data_iter,
+        *,
+        max_copies: int = 5,
+        count_scale: float = 8.0,
+    ) -> None:
+        """Add colors to pool with multiplicity inversely proportional to count (favor underused)."""
+        for _key, data in data_iter:
+            if not isinstance(data, dict) or "r" not in data or "g" not in data or "b" not in data:
+                continue
+            r, g, b = int(round(float(data["r"]))), int(round(float(data["g"]))), int(round(float(data["b"])))
+            r, g, b = max(0, min(255, r)), max(0, min(255, g)), max(0, min(255, b))
+            t = (r, g, b)
+            count = int(data.get("count", 0) or 0)
+            # Multiplicity: more copies when count is low (explore underused)
+            mult = max(1, min(max_copies, int(count_scale / (1.0 + count))))
+            for _ in range(mult):
+                pool.append(t)
+            if t not in seen:
+                seen.add(t)
+
+    # 2. Static (per-frame discovered) — with count-inverse multiplicity
     static = (knowledge or {}).get("static_colors") or {}
     if isinstance(static, dict):
-        for _key, data in static.items():
-            if not isinstance(data, dict) or "r" not in data or "g" not in data or "b" not in data:
-                continue
-            r, g, b = int(round(float(data["r"]))), int(round(float(data["g"]))), int(round(float(data["b"])))
-            r, g, b = max(0, min(255, r)), max(0, min(255, g)), max(0, min(255, b))
-            t = (r, g, b)
-            if t not in seen:
-                seen.add(t)
-                pool.append(t)
+        _add_with_count_inverse(static.items())
 
-    # 3. Learned (whole-video) colors
+    # 3. Learned (whole-video) — with count-inverse multiplicity
     learned = (knowledge or {}).get("learned_colors") or {}
     if isinstance(learned, dict):
-        for _key, data in learned.items():
-            if not isinstance(data, dict) or "r" not in data or "g" not in data or "b" not in data:
-                continue
-            r, g, b = int(round(float(data["r"]))), int(round(float(data["g"]))), int(round(float(data["b"])))
-            r, g, b = max(0, min(255, r)), max(0, min(255, g)), max(0, min(255, b))
-            t = (r, g, b)
-            if t not in seen:
-                seen.add(t)
-                pool.append(t)
+        _add_with_count_inverse(learned.items())
 
     return pool
 

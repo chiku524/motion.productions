@@ -25,6 +25,7 @@ from ..procedural.data.keywords import (
     KEYWORD_TO_AUDIO_MOOD,
     KEYWORD_TO_AUDIO_PRESENCE,
     STYLE_PHRASE_TO_STYLE,
+    KEYWORD_TO_STYLE,
     MOOD_TO_TONE,
     DEFAULT_PALETTE,
     DEFAULT_MOTION,
@@ -416,33 +417,36 @@ def _resolve_text_overlay(prompt: str) -> tuple[str | None, str, str | None]:
     return None, "center", None
 
 
-def _resolve_style(words: list[str], prompt: str) -> str | None:
-    """Extract style hint from keywords or phrases like 'documentary feel', 'cinematic look'."""
+def _resolve_style(
+    words: list[str], prompt: str, linguistic_registry: dict[str, dict[str, str]] | None = None
+) -> str | None:
+    """Extract style hint from keywords or phrases; uses linguistic merge for synonyms."""
+    lookup = _merge_linguistic("style", KEYWORD_TO_STYLE, linguistic_registry)
     raw = (prompt or "").lower()
     for phrase, style in STYLE_PHRASE_TO_STYLE.items():
         if phrase in raw and any(p in raw for p in (f"{phrase} feel", f"{phrase} look", f"{phrase} style", f"{phrase}")):
             return style
     for w in words:
-        if w in _STYLE_KEYWORDS:
-            return w
+        if w in lookup:
+            return lookup[w]
     for w in words:
         if w in STYLE_PHRASE_TO_STYLE:
             return STYLE_PHRASE_TO_STYLE[w]
     return None
 
 
-def _resolve_tone(words: list[str], prompt: str) -> str | None:
-    """Extract tone from keywords or phrases like 'something nostalgic', 'melancholic vibe'."""
+def _resolve_tone(
+    words: list[str], prompt: str, linguistic_registry: dict[str, dict[str, str]] | None = None
+) -> str | None:
+    """Extract tone from keywords or phrases; uses linguistic merge for synonyms."""
+    lookup = _merge_linguistic("tone", MOOD_TO_TONE, linguistic_registry)
     raw = (prompt or "").lower()
-    for mood, tone in MOOD_TO_TONE.items():
-        if mood in raw:
+    for mood, tone in lookup.items():
+        if mood in (prompt or "").lower():
             return tone
     for w in words:
-        if w in _TONE_KEYWORDS:
-            return w
-    for w in words:
-        if w in MOOD_TO_TONE:
-            return MOOD_TO_TONE[w]
+        if w in lookup:
+            return lookup[w]
     return None
 
 
@@ -476,8 +480,8 @@ def interpret_user_prompt(
     words = _extract_words(prompt)
     avoid_motion, avoid_palette = _extract_negations(prompt)
     duration = _extract_duration(prompt) or default_duration
-    style = _resolve_style(words, prompt)
-    tone = _resolve_tone(words, prompt)
+    style = _resolve_style(words, prompt, linguistic_registry)
+    tone = _resolve_tone(words, prompt, linguistic_registry)
     # Resolve with tone fallback for arbitrary prompts (unknown words)
     palette = _resolve_palette(words, avoid_palette, tone=tone, linguistic_registry=linguistic_registry)
     motion = _resolve_motion(words, avoid_motion, tone=tone, linguistic_registry=linguistic_registry)

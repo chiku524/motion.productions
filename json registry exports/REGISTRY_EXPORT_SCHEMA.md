@@ -2,11 +2,15 @@
 
 Exports from the **Export JSON** action on the registries page produce a JSON file with this structure.
 
+**Schema version:** Exports may include **exported_schema_version** (e.g. `2`). When present, the structure below and the optional **coverage_snapshot** and **loop_progress** apply.
+
 ## Top-level
 
 - **exported_at** — ISO 8601 timestamp (e.g. `2026-02-21T16:22:36.140Z`).
+- **exported_schema_version** (optional) — Integer; `2` indicates this export includes `loop_progress` and `coverage_snapshot`. Omitted in older exports.
 - **registries** — Object with `pure_static`, `blended_dynamic`, and `semantic_narrative`.
-- **loop_progress** (optional) — Learning loop stats: `last_n`, `total_runs`, `precision_pct`, `target_pct`, `runs_with_learning`, `discovery_rate_pct`, `repetition_score`.
+- **loop_progress** (optional) — Learning loop stats: `last_n`, `total_runs`, `precision_pct`, `target_pct`, `runs_with_learning`, `discovery_rate_pct`, `repetition_score`. Present when `exported_schema_version >= 2`.
+- **coverage_snapshot** (optional) — At-a-glance progress toward 100% registry completion; e.g. `static_colors_coverage_pct`, and other category coverage metrics. Present when `exported_schema_version >= 2`.
 
 ## Key format (canonical)
 

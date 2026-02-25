@@ -217,6 +217,7 @@ def grow_and_sync_to_api(
     mkey = f"{level_bucket}_{motion_trend}"
     motion_name = generate_sensible_name("motion", mkey, existing_names=used_names)
     used_names.add(motion_name)
+    motion_depth = compute_motion_depth(motion_level, motion_trend)
     discoveries["motion"].append({
         "key": mkey,
         "motion_level": motion_level,
@@ -224,6 +225,7 @@ def grow_and_sync_to_api(
         "motion_trend": motion_trend,
         "name": motion_name,
         "source_prompt": prompt[:80] if prompt else "",
+        "depth_breakdown": motion_depth,
     })
     discoveries["blends"].append({
         "name": motion_name,
@@ -241,6 +243,7 @@ def grow_and_sync_to_api(
     lkey = f"{round(brightness/25)*25}_{round(contrast,1)}_{round(saturation,1)}"
     light_name = generate_sensible_name("lighting", lkey, existing_names=used_names)
     used_names.add(light_name)
+    lighting_depth = compute_lighting_depth(brightness, contrast, saturation)
     discoveries["lighting"].append({
         "key": lkey,
         "brightness": brightness,
@@ -248,6 +251,7 @@ def grow_and_sync_to_api(
         "saturation": saturation,
         "name": light_name,
         "source_prompt": prompt[:80] if prompt else "",
+        "depth_breakdown": lighting_depth,
     })
     discoveries["blends"].append({
         "name": light_name,
@@ -281,6 +285,7 @@ def grow_and_sync_to_api(
         ckey = f"{round(cx,2)}_{round(cy,2)}_{round(lb,2)}"
         comp_name = generate_sensible_name("composition", ckey, existing_names=used_names)
         used_names.add(comp_name)
+        comp_depth = compute_composition_depth(cx, cy, lb)
         discoveries["composition"].append({
             "key": ckey,
             "center_x": cx,
@@ -288,6 +293,7 @@ def grow_and_sync_to_api(
             "luminance_balance": lb,
             "name": comp_name,
             "source_prompt": prompt[:80] if prompt else "",
+            "depth_breakdown": comp_depth,
         })
         discoveries["blends"].append({
             "name": comp_name,
@@ -306,6 +312,7 @@ def grow_and_sync_to_api(
         gkey = f"{round(ed,2)}_{round(sv,2)}_{round(busy,2)}"
         graph_name = generate_sensible_name("graphics", gkey, existing_names=used_names)
         used_names.add(graph_name)
+        graph_depth = compute_graphics_depth(ed, sv, busy)
         discoveries["graphics"].append({
             "key": gkey,
             "edge_density": ed,
@@ -313,6 +320,7 @@ def grow_and_sync_to_api(
             "busyness": busy,
             "name": graph_name,
             "source_prompt": prompt[:80] if prompt else "",
+            "depth_breakdown": graph_depth,
         })
         discoveries["blends"].append({
             "name": graph_name,
@@ -328,12 +336,14 @@ def grow_and_sync_to_api(
     tkey = f"{round(duration,1)}_{motion_trend}"
     temp_name = generate_sensible_name("temporal", tkey, existing_names=used_names)
     used_names.add(temp_name)
+    temporal_depth = compute_temporal_depth(duration, motion_trend)
     discoveries["temporal"].append({
         "key": tkey,
         "duration": duration,
         "motion_trend": motion_trend,
         "name": temp_name,
         "source_prompt": prompt[:80] if prompt else "",
+        "depth_breakdown": temporal_depth,
     })
     discoveries["blends"].append({
         "name": temp_name,
@@ -352,6 +362,7 @@ def grow_and_sync_to_api(
         tekkey = f"{w}x{h}_{fps}"
         tech_name = generate_sensible_name("technical", tekkey, existing_names=used_names)
         used_names.add(tech_name)
+        tech_depth = compute_technical_depth(w, h, fps)
         discoveries["technical"].append({
             "key": tekkey,
             "width": w,
@@ -359,6 +370,7 @@ def grow_and_sync_to_api(
             "fps": fps,
             "name": tech_name,
             "source_prompt": prompt[:80] if prompt else "",
+            "depth_breakdown": tech_depth,
         })
         discoveries["blends"].append({
             "name": tech_name,

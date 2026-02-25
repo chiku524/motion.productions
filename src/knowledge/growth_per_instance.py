@@ -45,13 +45,17 @@ def _static_color_key(color: dict[str, Any], tolerance: int = 25, opacity_steps:
 def _static_sound_key(sound: dict[str, Any]) -> str:
     """
     Standard key for pure sound (one instant): amplitude_tone_timbre.
-    Per-frame discoveries use primitives (silence, rumble, tone, hiss); timbre defaults to tone when missing.
+    Per REGISTRY_FOUNDATION, Pure sound uses only primitive tones (low, mid, high, silent, neutral).
+    Semantic mood words (calm, tense, dark, uplifting) are normalized to primitives so keys stay consistent.
     """
     if not sound:
         return ""
+    from .blend_depth import normalize_tone_to_primitive
     amp = sound.get("amplitude") or sound.get("weight") or 0
-    tone = (sound.get("tone") or "unknown").strip().lower()
-    timbre = (sound.get("timbre") or tone or "unknown").strip().lower()
+    raw_tone = (sound.get("tone") or "unknown").strip().lower()
+    raw_timbre = (sound.get("timbre") or raw_tone or "unknown").strip().lower()
+    tone = normalize_tone_to_primitive(raw_tone)
+    timbre = normalize_tone_to_primitive(raw_timbre)
     return f"{round(float(amp), 2)}_{tone}_{timbre}"
 
 
@@ -71,19 +75,21 @@ def derive_static_sound_from_spec(spec: Any) -> dict[str, Any]:
     """
     Build one static sound dict from creation spec (audio_mood, audio_tempo, audio_presence).
     §2.5: Vary tone/timbre so discoveries include mid/high (tone, hiss) not only low (rumble).
+    Per REGISTRY_FOUNDATION, Pure sound uses only primitive tones (low, mid, high, silent, neutral).
     """
     import random
+    from .blend_depth import normalize_tone_to_primitive
     mood = getattr(spec, "audio_mood", None) or "neutral"
     tempo = getattr(spec, "audio_tempo", None) or "medium"
     presence = getattr(spec, "audio_presence", None) or "ambient"
     weight = 0.3 if presence == "silence" else (0.7 if presence == "full" else 0.5)
-    # Sometimes use band names so static_sound keys and depth_breakdown can map to tone/hiss
-    tone = str(mood)
-    timbre = str(presence)
+    # Use primitive tones only; vary so discoveries include mid/high not only low
+    tone = normalize_tone_to_primitive(str(mood))
+    timbre = normalize_tone_to_primitive(str(presence))
     if random.random() < 0.25:
-        tone = random.choice(("mid", "neutral", "calm"))
+        tone = random.choice(("mid", "neutral", "low"))
     if random.random() < 0.2:
-        timbre = random.choice(("high", "ambient", "music"))
+        timbre = random.choice(("high", "mid"))
     return {
         "amplitude": weight,
         "weight": weight,
@@ -316,8 +322,9 @@ def ensure_static_sound_in_registry(
     names = {e.get("name", "") for e in entries if e.get("name")}
     name = generate_sensible_name("sound", key, existing_names=names)
     amp = float(sound.get("amplitude") or sound.get("weight") or 0)
-    tone = (sound.get("tone") or "mid").strip()
-    from .blend_depth import compute_sound_depth
+    from .blend_depth import compute_sound_depth, normalize_tone_to_primitive
+    raw_tone = (sound.get("tone") or "mid").strip()
+    tone = normalize_tone_to_primitive(raw_tone)  # depth must use primitive tone only
     depth_breakdown = compute_sound_depth(amp, tone)
     strength_pct = depth_breakdown.get("strength_pct") if isinstance(depth_breakdown, dict) else amp
     entry = {
@@ -501,9 +508,19 @@ def ensure_dynamic_composition_in_registry(
     out_novel: list[dict[str, Any]] | None = None,
     registry_cache: dict[str, dict[str, Any]] | None = None,
 ) -> str | None:
+    from .blend_depth import compute_composition_depth
     comp = window.get("composition", {})
     key = _composition_key(comp)
-    api = {"key": key, "center_x": comp.get("center_x", 0.5), "center_y": comp.get("center_y", 0.5), "luminance_balance": comp.get("luminance_balance", 0.5)}
+    cx = float(comp.get("center_x", 0.5))
+    cy = float(comp.get("center_y", 0.5))
+    lb = float(comp.get("luminance_balance", 0.5))
+    api = {
+        "key": key,
+        "center_x": cx,
+        "center_y": cy,
+        "luminance_balance": lb,
+        "depth_breakdown": compute_composition_depth(cx, cy, lb),
+    }
     return _ensure_dynamic_in_registry("composition", key, dict(comp), source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache)
 
 
@@ -515,9 +532,19 @@ def ensure_dynamic_graphics_in_registry(
     out_novel: list[dict[str, Any]] | None = None,
     registry_cache: dict[str, dict[str, Any]] | None = None,
 ) -> str | None:
+    from .blend_depth import compute_graphics_depth
     graphics = window.get("graphics", {})
     key = _graphics_key(graphics)
-    api = {"key": key, "edge_density": graphics.get("edge_density", 0), "spatial_variance": graphics.get("spatial_variance", 0), "busyness": graphics.get("busyness", 0)}
+    ed = float(graphics.get("edge_density", 0))
+    sv = float(graphics.get("spatial_variance", 0))
+    busy = float(graphics.get("busyness", 0))
+    api = {
+        "key": key,
+        "edge_density": ed,
+        "spatial_variance": sv,
+        "busyness": busy,
+        "depth_breakdown": compute_graphics_depth(ed, sv, busy),
+    }
     return _ensure_dynamic_in_registry("graphics", key, dict(graphics), source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache)
 
 
@@ -529,11 +556,19 @@ def ensure_dynamic_temporal_in_registry(
     out_novel: list[dict[str, Any]] | None = None,
     registry_cache: dict[str, dict[str, Any]] | None = None,
 ) -> str | None:
+    from .blend_depth import compute_temporal_depth
     key = _temporal_key(window)
     time_dict = window.get("time", {})
     motion = window.get("motion", {})
-    payload = {"duration": time_dict.get("duration"), "motion_trend": motion.get("trend", "steady")}
-    api = {"key": key, "duration": payload["duration"], "motion_trend": payload["motion_trend"]}
+    duration = float(time_dict.get("duration", 5))
+    motion_trend = str(motion.get("trend", "steady"))
+    payload = {"duration": duration, "motion_trend": motion_trend}
+    api = {
+        "key": key,
+        "duration": payload["duration"],
+        "motion_trend": payload["motion_trend"],
+        "depth_breakdown": compute_temporal_depth(duration, motion_trend),
+    }
     return _ensure_dynamic_in_registry("temporal", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache)
 
 
@@ -548,11 +583,20 @@ def ensure_dynamic_technical_in_registry(
     out_novel: list[dict[str, Any]] | None = None,
     registry_cache: dict[str, dict[str, Any]] | None = None,
 ) -> str | None:
+    from .blend_depth import compute_technical_depth
     time_dict = window.get("time", {})
-    f = time_dict.get("fps", fps)
-    key = _technical_key(window, width=width, height=height, fps=f)
-    payload = {"width": width, "height": height, "fps": f}
-    api = {"key": key, "width": width, "height": height, "fps": f}
+    f = float(time_dict.get("fps", fps))
+    w = int(width or 512)
+    h = int(height or 512)
+    key = _technical_key(window, width=w, height=h, fps=f)
+    payload = {"width": w, "height": h, "fps": f}
+    api = {
+        "key": key,
+        "width": w,
+        "height": h,
+        "fps": f,
+        "depth_breakdown": compute_technical_depth(w, h, f),
+    }
     return _ensure_dynamic_in_registry("technical", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache)
 
 

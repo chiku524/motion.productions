@@ -26,6 +26,45 @@ BUILTIN_LINGUISTIC: dict[str, dict[str, str]] = {
     "palette": {"lit": "warm_sunset", "chill": "ocean", "vibing": "neon", "mellow": "dreamy", "lowkey": "night"},
     "motion": {"chill": "slow", "lit": "pulse", "mellow": "flow", "vibing": "pulse"},
     "lighting": {"lit": "documentary", "lowkey": "noir", "chill": "golden_hour"},
+    # Shot (filmmaking): synonyms for close/wide/medium so interpreter resolves e.g. "close-up", "aerial"
+    "shot": {
+        "close-up": "close", "closeup": "close", "tight": "close", "cu": "close",
+        "overhead": "wide", "aerial": "wide", "birds_eye": "wide", "establishing": "wide",
+        "medium_shot": "medium", "two_shot": "medium",
+    },
+    # Transition: fade, dissolve, cut, wipe
+    "transition": {
+        "crossfade": "dissolve", "smooth": "dissolve", "hard": "cut", "jump_cut": "cut",
+        "fade_out": "fade", "fade_in": "fade", "blackout": "fade",
+    },
+    # Theme (narrative): nature, urban, cosmic, romantic, conflict
+    "theme": {
+        "nature": "nature", "forest": "nature", "city": "urban", "urban": "urban",
+        "space": "cosmic", "cosmic": "cosmic", "love": "romantic", "romantic": "romantic",
+        "war": "conflict", "conflict": "conflict", "fantasy": "nature",
+    },
+    # Mood (emotional tone for narrative/spec)
+    "mood": {
+        "happy": "uplifting", "sad": "melancholy", "scary": "tense", "peaceful": "calm",
+        "angry": "dramatic", "hopeful": "bright", "eerie": "dark", "serene": "calm",
+    },
+    # Setting (location/env for narrative)
+    "setting": {
+        "forest": "nature", "city": "urban", "ocean": "ocean", "night": "night",
+        "day": "day", "urban": "urban", "nature": "nature", "indoors": "urban",
+    },
+    # Tone and style synonyms (improve resolution for lighting/spec refinement)
+    "tone": {
+        "dreamy": "dreamy", "dark": "dark", "bright": "bright", "calm": "calm",
+        "energetic": "energetic", "moody": "moody", "nostalgic": "moody",
+        "melancholic": "dark", "uplifting": "bright", "serene": "calm",
+        "eerie": "dark", "warm": "bright", "cool": "calm", "mysterious": "dark",
+    },
+    "style": {
+        "cinematic": "cinematic", "documentary": "realistic", "abstract": "abstract",
+        "minimal": "minimal", "realistic": "realistic", "anime": "anime",
+        "film": "cinematic", "natural": "realistic", "noir": "realistic",
+    },
 }
 
 # Dialect: normalize to one form for lookup (US preferred; parser accepts both)
@@ -56,6 +95,13 @@ STANDARD_DOMAINS: tuple[str, ...] = (
     "audio_tempo",
     "audio_mood",
     "audio_presence",
+    "shot",
+    "transition",
+    "theme",
+    "mood",
+    "setting",
+    "tone",
+    "style",
 )
 
 
