@@ -302,15 +302,22 @@ After each successful upload, you should see (when the latest code is deployed):
 
 If **`[interpretation]`** lines never appear, confirm the running image includes the latest `automate_loop.py` (redeploy if needed).
 
-### 8.3 429 / 503 from the API
+### 8.3 429 / 503 / 500 from the API
 
-If logs show **429 Too Many Requests** (e.g. on `POST /api/loop/state`) or **503 Service Unavailable** (e.g. on `POST /api/knowledge/discoveries`, `GET /api/learning/stats`), the Worker or platform is rate-limiting or overloaded. The loop already retries with backoff; some requests may still fail after max retries.
+If logs show **429 Too Many Requests**, **503 Service Unavailable**, or **500 Internal Server Error** (e.g. on `POST /api/knowledge/discoveries`, `GET /api/knowledge/for-creation`, `GET /api/learning/stats`), the Cloudflare Worker or D1 is overloaded or hitting limits.
+
+**Likely causes:**
+
+1. **D1 query limit (50/Worker invocation on Free plan):** `POST /api/knowledge/discoveries` does ~2–4 D1 queries per discovery item. The API caps at 14 items/request; the Python client auto-batches larger payloads into chunks of 14 to stay under the limit.
+2. **D1 overload:** D1 is single-threaded per DB. With 5 Railway workers + webapp, concurrent requests queue; when overloaded, D1 returns errors.
+3. **Read timeouts:** `GET /api/knowledge/for-creation` runs 15+ sequential D1 queries. Under load it can exceed the client timeout (now 45s; was 15s).
 
 **What to do:**
 
 - **Reduce load:** Run fewer Railway services in parallel, or increase delay between runs (e.g. loop delay or `SOUND_LOOP_DELAY_SECONDS`).
-- **Accept transient failures:** Occasional 429/503 are expected under load; state and discoveries may not persist for that run. Next run will retry.
-- **Cloudflare:** If 429/503 persist, check Worker limits and consider upgrading plan or reducing request volume.
+- **Cloudflare plan:** Workers Paid increases D1 query limit to 1,000/request. Consider upgrading if batches often exceed ~15–20 discovery items.
+- **Cloudflare logs:** Dashboard → Workers → Logs to see actual D1 errors (e.g. `D1_QUERY_LIMIT_EXCEEDED`, overload).
+- **Accept transient failures:** Occasional 429/503/500 are expected under load; state and discoveries may not persist for that run. Next run will retry.
 
 ---
 

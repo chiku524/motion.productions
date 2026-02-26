@@ -149,7 +149,7 @@ def _save_state(api_base: str, state: dict, run_count: int) -> None:
 def _load_progress(api_base: str) -> dict:
     """Load loop progress (discovery rate, precision) for adaptive exploit ratio."""
     try:
-        return api_request_with_retry(api_base, "GET", "/api/loop/progress?last=20", timeout=10)
+        return api_request_with_retry(api_base, "GET", "/api/loop/progress?last=20", timeout=30)
     except APIError:
         return {}
 

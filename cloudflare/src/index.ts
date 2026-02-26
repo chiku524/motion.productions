@@ -772,7 +772,9 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
 
     // POST /api/knowledge/discoveries — batch record discoveries (D1)
     // Supports: static_colors, static_sound (per-frame) + colors, blends, motion, etc. (dynamic/whole-video)
+    // D1 Free plan: 50 queries/request. ~3 queries/item. Max 14 items per request to stay under limit.
     if (path === "/api/knowledge/discoveries" && request.method === "POST") {
+      const DISCOVERIES_MAX_ITEMS = 14;
       let body: {
         static_colors?: Array<{ key: string; r: number; g: number; b: number; brightness?: number; luminance?: number; contrast?: number; saturation?: number; chroma?: number; hue?: number; color_variance?: number; opacity?: number; depth_breakdown?: Record<string, unknown>; source_prompt?: string; name?: string }>;
         static_sound?: Array<{ key: string; amplitude?: number; weight?: number; strength_pct?: number; tone?: string; timbre?: string; depth_breakdown?: Record<string, unknown>; source_prompt?: string; name?: string }>;
@@ -799,10 +801,13 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         return err("Invalid JSON");
       }
       const results: Record<string, number> = { static_colors: 0, static_sound: 0, narrative: 0, colors: 0, blends: 0, motion: 0, lighting: 0, composition: 0, graphics: 0, temporal: 0, technical: 0, audio_semantic: 0, time: 0, gradient: 0, camera: 0, transition: 0, depth: 0 };
+      let itemsProcessed = 0;
+      let truncated = false;
 
       try {
       // Static registry: per-frame color entries
       for (const c of body.static_colors || []) {
+        if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
         const existing = await env.DB.prepare("SELECT id, name, count FROM static_colors WHERE color_key = ?").bind(c.key).first();
         if (existing) {
           await env.DB.prepare("UPDATE static_colors SET count = count + 1 WHERE color_key = ?").bind(c.key).run();
@@ -814,9 +819,11 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           ).bind(uuid(), c.key, c.r, c.g, c.b, c.brightness ?? null, c.luminance ?? c.brightness ?? null, c.contrast ?? null, c.saturation ?? null, c.chroma ?? c.saturation ?? null, c.hue ?? null, c.color_variance ?? null, c.opacity ?? null, c.source_prompt ? JSON.stringify([c.source_prompt.slice(0, 80)]) : null, name, c.depth_breakdown ? JSON.stringify(c.depth_breakdown) : null).run();
         }
         results.static_colors++;
+        itemsProcessed++;
       }
       // Static registry: per-frame sound entries
       for (const s of body.static_sound || []) {
+        if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
         const existing = await env.DB.prepare("SELECT id, name, count FROM static_sound WHERE sound_key = ?").bind(s.key).first();
         if (existing) {
           await env.DB.prepare("UPDATE static_sound SET count = count + 1 WHERE sound_key = ?").bind(s.key).run();
@@ -828,11 +835,13 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           ).bind(uuid(), s.key, s.amplitude ?? null, s.weight ?? null, s.tone ?? null, s.timbre ?? null, s.source_prompt ? JSON.stringify([s.source_prompt.slice(0, 80)]) : null, name, s.depth_breakdown ? JSON.stringify(s.depth_breakdown) : null, s.strength_pct ?? s.amplitude ?? s.weight ?? null).run();
         }
         results.static_sound++;
+        itemsProcessed++;
       }
       // Narrative registry: themes, plots, settings, genre, mood, scene_type
       const narrativeAspects = ["genre", "mood", "plots", "settings", "themes", "style", "scene_type"];
-      for (const aspect of narrativeAspects) {
+      narrative_loop: for (const aspect of narrativeAspects) {
         for (const item of body.narrative?.[aspect] || []) {
+          if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break narrative_loop; }
           const key = (item.key || "").trim().toLowerCase();
           if (!key) continue;
           const existing = await env.DB.prepare("SELECT id, name, count FROM narrative_entries WHERE aspect = ? AND entry_key = ?").bind(aspect, key).first();
@@ -847,9 +856,11 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
             ).bind(uuid(), aspect, key, valueStr, item.source_prompt ? JSON.stringify([item.source_prompt.slice(0, 80)]) : null, name).run();
           }
           results.narrative++;
+          itemsProcessed++;
         }
       }
       for (const c of body.colors || []) {
+        if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
         const existing = await env.DB.prepare("SELECT id, name, count FROM learned_colors WHERE color_key = ?").bind(c.key).first();
         const depthJson = c.depth_breakdown && typeof c.depth_breakdown === "object" ? JSON.stringify(c.depth_breakdown) : null;
         if (existing) {
@@ -865,8 +876,10 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           ).bind(uuid(), c.key, c.r, c.g, c.b, c.source_prompt ? JSON.stringify([c.source_prompt.slice(0, 80)]) : null, name, depthJson).run();
         }
         results.colors++;
+        itemsProcessed++;
       }
       for (const b of body.blends || []) {
+        if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
         let name = (b.name && b.name.trim()) ? b.name.trim() : await generateUniqueName(env);
         if (b.name && b.name.trim()) {
           name = await resolveUniqueBlendName(env, name);
@@ -877,8 +890,10 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           "INSERT INTO learned_blends (id, name, domain, inputs_json, output_json, primitive_depths_json, source_prompt) VALUES (?, ?, ?, ?, ?, ?, ?)"
         ).bind(uuid(), name, b.domain, JSON.stringify(b.inputs), JSON.stringify(b.output), b.primitive_depths ? JSON.stringify(b.primitive_depths) : null, (b.source_prompt || "").slice(0, 120)).run();
         results.blends++;
+        itemsProcessed++;
       }
       for (const t of body.time || []) {
+        if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
         const existing = await env.DB.prepare("SELECT id FROM learned_time WHERE profile_key = ?").bind(t.key).first();
         if (existing) {
           await env.DB.prepare("UPDATE learned_time SET count = count + 1 WHERE profile_key = ?").bind(t.key).run();
@@ -890,8 +905,10 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           ).bind(uuid(), t.key, t.duration, t.fps, t.source_prompt ? JSON.stringify([t.source_prompt.slice(0, 80)]) : null, name).run();
         }
         results.time++;
+        itemsProcessed++;
       }
       for (const m of body.motion || []) {
+        if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
         const existing = await env.DB.prepare("SELECT id FROM learned_motion WHERE profile_key = ?").bind(m.key).first();
         if (existing) {
           await env.DB.prepare("UPDATE learned_motion SET count = count + 1 WHERE profile_key = ?").bind(m.key).run();
@@ -903,8 +920,10 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           ).bind(uuid(), m.key, m.motion_level, m.motion_std, m.motion_trend, m.motion_direction ?? "neutral", m.motion_rhythm ?? "steady", m.source_prompt ? JSON.stringify([m.source_prompt.slice(0, 80)]) : null, name, m.depth_breakdown ? JSON.stringify(m.depth_breakdown) : null).run();
         }
         results.motion++;
+        itemsProcessed++;
       }
       for (const l of body.lighting || []) {
+        if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
         const existing = await env.DB.prepare("SELECT id FROM learned_lighting WHERE profile_key = ?").bind(l.key).first();
         if (existing) {
           await env.DB.prepare("UPDATE learned_lighting SET count = count + 1 WHERE profile_key = ?").bind(l.key).run();
@@ -916,8 +935,10 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           ).bind(uuid(), l.key, l.brightness, l.contrast, l.saturation, l.source_prompt ? JSON.stringify([l.source_prompt.slice(0, 80)]) : null, name, l.depth_breakdown ? JSON.stringify(l.depth_breakdown) : null).run();
         }
         results.lighting++;
+        itemsProcessed++;
       }
       for (const c of body.composition || []) {
+        if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
         const existing = await env.DB.prepare("SELECT id FROM learned_composition WHERE profile_key = ?").bind(c.key).first();
         if (existing) {
           await env.DB.prepare("UPDATE learned_composition SET count = count + 1 WHERE profile_key = ?").bind(c.key).run();
@@ -929,8 +950,10 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           ).bind(uuid(), c.key, c.center_x, c.center_y, c.luminance_balance, c.source_prompt ? JSON.stringify([c.source_prompt.slice(0, 80)]) : null, name).run();
         }
         results.composition++;
+        itemsProcessed++;
       }
       for (const g of body.graphics || []) {
+        if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
         const existing = await env.DB.prepare("SELECT id FROM learned_graphics WHERE profile_key = ?").bind(g.key).first();
         if (existing) {
           await env.DB.prepare("UPDATE learned_graphics SET count = count + 1 WHERE profile_key = ?").bind(g.key).run();
@@ -942,8 +965,10 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           ).bind(uuid(), g.key, g.edge_density, g.spatial_variance, g.busyness, g.source_prompt ? JSON.stringify([g.source_prompt.slice(0, 80)]) : null, name).run();
         }
         results.graphics++;
+        itemsProcessed++;
       }
       for (const t of body.temporal || []) {
+        if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
         const existing = await env.DB.prepare("SELECT id FROM learned_temporal WHERE profile_key = ?").bind(t.key).first();
         if (existing) {
           await env.DB.prepare("UPDATE learned_temporal SET count = count + 1 WHERE profile_key = ?").bind(t.key).run();
@@ -955,8 +980,10 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           ).bind(uuid(), t.key, t.duration, t.motion_trend, t.source_prompt ? JSON.stringify([t.source_prompt.slice(0, 80)]) : null, name).run();
         }
         results.temporal++;
+        itemsProcessed++;
       }
       for (const t of body.technical || []) {
+        if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
         const existing = await env.DB.prepare("SELECT id FROM learned_technical WHERE profile_key = ?").bind(t.key).first();
         if (existing) {
           await env.DB.prepare("UPDATE learned_technical SET count = count + 1 WHERE profile_key = ?").bind(t.key).run();
@@ -968,8 +995,10 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           ).bind(uuid(), t.key, t.width, t.height, t.fps, t.source_prompt ? JSON.stringify([t.source_prompt.slice(0, 80)]) : null, name).run();
         }
         results.technical++;
+        itemsProcessed++;
       }
       for (const a of body.audio_semantic || []) {
+        if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
         const existing = await env.DB.prepare("SELECT id FROM learned_audio_semantic WHERE profile_key = ?").bind(a.key).first();
         if (existing) {
           await env.DB.prepare("UPDATE learned_audio_semantic SET count = count + 1 WHERE profile_key = ?").bind(a.key).run();
@@ -981,8 +1010,10 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           ).bind(uuid(), a.key, a.role || "ambient", a.source_prompt ? JSON.stringify([a.source_prompt.slice(0, 80)]) : null, name).run();
         }
         results.audio_semantic++;
+        itemsProcessed++;
       }
       for (const g of body.gradient || []) {
+        if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
         const existing = await env.DB.prepare("SELECT id FROM learned_gradient WHERE profile_key = ?").bind(g.key).first();
         if (existing) {
           await env.DB.prepare("UPDATE learned_gradient SET count = count + 1 WHERE profile_key = ?").bind(g.key).run();
@@ -994,8 +1025,10 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           ).bind(uuid(), g.key, g.gradient_type ?? "angled", g.strength ?? null, g.source_prompt ? JSON.stringify([g.source_prompt.slice(0, 80)]) : null, name, g.depth_breakdown ? JSON.stringify(g.depth_breakdown) : null).run();
         }
         results.gradient++;
+        itemsProcessed++;
       }
       for (const c of body.camera || []) {
+        if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
         const existing = await env.DB.prepare("SELECT id FROM learned_camera WHERE profile_key = ?").bind(c.key).first();
         if (existing) {
           await env.DB.prepare("UPDATE learned_camera SET count = count + 1 WHERE profile_key = ?").bind(c.key).run();
@@ -1007,8 +1040,10 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           ).bind(uuid(), c.key, c.motion_type ?? "static", c.speed ?? null, c.source_prompt ? JSON.stringify([c.source_prompt.slice(0, 80)]) : null, name, c.depth_breakdown ? JSON.stringify(c.depth_breakdown) : null).run();
         }
         results.camera++;
+        itemsProcessed++;
       }
       for (const t of body.transition || []) {
+        if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
         const existing = await env.DB.prepare("SELECT id FROM learned_transition WHERE profile_key = ?").bind(t.key).first();
         if (existing) {
           await env.DB.prepare("UPDATE learned_transition SET count = count + 1 WHERE profile_key = ?").bind(t.key).run();
@@ -1020,8 +1055,10 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           ).bind(uuid(), t.key, t.type ?? "cut", t.duration_seconds ?? null, t.source_prompt ? JSON.stringify([t.source_prompt.slice(0, 80)]) : null, name).run();
         }
         results.transition++;
+        itemsProcessed++;
       }
       for (const d of body.depth || []) {
+        if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
         const existing = await env.DB.prepare("SELECT id FROM learned_depth WHERE profile_key = ?").bind(d.key).first();
         if (existing) {
           await env.DB.prepare("UPDATE learned_depth SET count = count + 1 WHERE profile_key = ?").bind(d.key).run();
@@ -1033,6 +1070,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           ).bind(uuid(), d.key, d.parallax_strength ?? null, d.layer_count ?? null, d.source_prompt ? JSON.stringify([d.source_prompt.slice(0, 80)]) : null, name).run();
         }
         results.depth++;
+        itemsProcessed++;
       }
       const totalResults = Object.values(results).reduce((a, b) => a + b, 0);
       const jobId = typeof (body as { job_id?: string }).job_id === "string" ? (body as { job_id: string }).job_id.trim() : null;
@@ -1046,7 +1084,9 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         }
       }
       // Do not use KV delete (free tier limit). Stats cache expires via TTL; GET recomputes when stale.
-      return json({ status: "recorded", results }, 201);
+      const resp: { status: string; results: Record<string, number>; truncated?: boolean } = { status: "recorded", results };
+      if (truncated) resp.truncated = true;
+      return json(resp, 201);
       } catch (e) {
         console.error("POST /api/knowledge/discoveries failed:", e);
         return json({ error: "Failed to record discoveries", details: String(e) }, 500);

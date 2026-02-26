@@ -142,7 +142,7 @@ def run() -> None:
                 try:
                     backfill = api_request_with_retry(
                         api_base, "GET", "/api/interpret/backfill-prompts?limit=50",
-                        timeout=15,
+                        timeout=45,
                     )
                     raw = [p.strip() for p in backfill.get("prompts", []) if p and isinstance(p, str)]
                     prompts = filter_gibberish_prompts(raw, strict=True)

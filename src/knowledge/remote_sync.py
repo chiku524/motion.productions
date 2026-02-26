@@ -1,8 +1,78 @@
 """
 Remote sync: POST discoveries to the Cloudflare API (D1/KV).
 When api_base is set, growth persists to D1 instead of local JSON.
+
+Batching: D1 Free plan allows 50 queries/request; ~3 queries per discovery item.
+We send max 14 items per request to stay under the limit and avoid 500s.
 """
 from typing import Any
+
+# Match API DISCOVERIES_MAX_ITEMS; stay under D1 50-query limit
+DISCOVERIES_MAX_ITEMS = 14
+
+
+def _chunk_discoveries(discoveries: dict[str, Any]) -> list[dict[str, Any]]:
+    """
+    Split discoveries into chunks of at most DISCOVERIES_MAX_ITEMS items each.
+    Order matches API processing: static_colors, static_sound, narrative, colors,
+    blends, motion, lighting, composition, graphics, temporal, technical,
+    audio_semantic, time, gradient, camera, transition, depth.
+    """
+    job_id = discoveries.pop("job_id", None)
+    chunks: list[dict[str, Any]] = []
+    current: dict[str, Any] = {}
+    count = 0
+    narrative_aspects = ("genre", "mood", "plots", "settings", "themes", "style", "scene_type")
+    list_keys = (
+        "static_colors", "static_sound", "colors", "blends", "motion", "lighting",
+        "composition", "graphics", "temporal", "technical", "audio_semantic",
+        "time", "gradient", "camera", "transition", "depth",
+    )
+
+    def flush() -> None:
+        nonlocal current, count
+        if current:
+            chunks.append(current)
+        current = {}
+        count = 0
+
+    # Narrative: dict of aspect -> list
+    narr = discoveries.get("narrative") or {}
+    for aspect in narrative_aspects:
+        items = narr.get(aspect) or []
+        for item in items:
+            if count >= DISCOVERIES_MAX_ITEMS:
+                flush()
+            if "narrative" not in current:
+                current["narrative"] = {}
+            if aspect not in current["narrative"]:
+                current["narrative"][aspect] = []
+            current["narrative"][aspect].append(item)
+            count += 1
+
+    # List categories
+    for key in list_keys:
+        items = discoveries.get(key) or []
+        for item in items:
+            if count >= DISCOVERIES_MAX_ITEMS:
+                flush()
+            if key not in current:
+                current[key] = []
+            current[key].append(item)
+            count += 1
+
+    if current:
+        chunks.append(current)
+
+    # Attach job_id only to last chunk (single discovery_runs row per logical batch)
+    # If no items but job_id present, send one empty chunk to record discovery_runs
+    if job_id:
+        if chunks:
+            chunks[-1]["job_id"] = job_id
+        else:
+            chunks.append({"job_id": job_id})
+
+    return chunks
 
 
 def growth_metrics(added: dict[str, Any]) -> dict[str, Any]:
@@ -33,17 +103,28 @@ def post_discoveries(
 ) -> dict[str, Any]:
     """
     POST discoveries to /api/knowledge/discoveries.
-    Returns API response. Uses retry on 5xx/connection errors.
-    Supports static_colors, static_sound (per-frame) and colors, motion, lighting, etc. (dynamic).
-    When job_id is provided, records for discovery rate metric.
+    Batches into chunks of max 14 items to stay under D1 query limit (50/request).
+    Returns merged API response. Uses retry on 5xx/connection errors.
+    When job_id is provided, records for discovery rate metric (on last chunk).
     """
     from ..api_client import api_request_with_retry
     payload = dict(discoveries)
     if job_id:
         payload["job_id"] = job_id
-    # Worker may take a while under load (many D1 writes); use 90s to reduce read timeouts
-    resp = api_request_with_retry(api_base, "POST", "/api/knowledge/discoveries", data=payload, timeout=90)
-    return resp
+    chunks = _chunk_discoveries(payload)
+    if not chunks:
+        return {}
+    merged: dict[str, Any] = {"status": "recorded", "results": {}}
+    for chunk in chunks:
+        # Worker may take a while under load; use 90s to reduce read timeouts
+        resp = api_request_with_retry(
+            api_base, "POST", "/api/knowledge/discoveries", data=chunk, timeout=90
+        )
+        merged["truncated"] = merged.get("truncated", False) or resp.get("truncated", False)
+        res = resp.get("results", {})
+        for k, v in res.items():
+            merged["results"][k] = merged["results"].get(k, 0) + v
+    return merged
 
 
 def post_static_discoveries(

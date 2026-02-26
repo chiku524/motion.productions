@@ -31,7 +31,7 @@ def get_knowledge_for_creation(
     if base:
         try:
             from ..api_client import api_request_with_retry
-            stats = api_request_with_retry(base, "GET", "/api/learning/stats", timeout=15)
+            stats = api_request_with_retry(base, "GET", "/api/learning/stats", timeout=30)
             knowledge["by_keyword"] = stats.get("by_keyword", {})
             knowledge["by_palette"] = stats.get("by_palette", {})
             knowledge["overall"] = stats.get("overall", {})
@@ -62,7 +62,7 @@ def get_knowledge_for_creation(
     if base:
         try:
             from ..api_client import api_request_with_retry
-            data = api_request_with_retry(base, "GET", "/api/knowledge/for-creation", timeout=15)
+            data = api_request_with_retry(base, "GET", "/api/knowledge/for-creation", timeout=45)
             knowledge["learned_colors"] = data.get("learned_colors", {})
             knowledge["learned_motion"] = data.get("learned_motion", [])
             knowledge["learned_audio"] = data.get("learned_audio", [])
