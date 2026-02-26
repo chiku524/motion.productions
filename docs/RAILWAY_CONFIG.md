@@ -318,15 +318,15 @@ If logs show **429 Too Many Requests**, **503 Service Unavailable**, or **500 In
 - **Reduce load:** Run fewer Railway services or increase loop delay if on Free plan.
 - **Cloudflare logs:** Dashboard → Workers → Logs to see actual D1 errors.
 
-### 8.4 Optimized setup (~$20/mo for maximum throughput)
+### 8.4 Optimized setup (Railway Pro + Workers Paid)
 
 For the most efficient workflow and fastest registry completion:
 
 | Component | Cost | What to do |
 |-----------|------|------------|
-| **Cloudflare Workers Paid** | ~$5/mo | Upgrade at [dash.cloudflare.com](https://dash.cloudflare.com) → Workers & Pages → Workers Paid. Unlocks 1,000 D1 queries/request (vs 50 on Free). Essential for stability. |
-| **Railway (6 workers)** | ~$10–15/mo | Run: Explorer, Exploiter, Balanced, Balanced-2, Interpretation, Sound. Balanced-2 doubles dynamic/narrative throughput. |
-| **Buffer** | ~$5 | Covers D1/KV overages, Railway usage spikes. |
+| **Cloudflare Workers Paid** | ~$5/mo + usage | Upgrade at [dash.cloudflare.com](https://dash.cloudflare.com) → Workers & Pages → Workers Paid. Unlocks 1,000 D1 queries/request (vs 50 on Free). Essential for stability. |
+| **Railway Pro** | $20/mo base | [railway.app](https://railway.app) → Pro plan. Higher limits, priority support. Run 6 workers: Explorer, Exploiter, Balanced, Balanced-2, Interpretation, Sound. Balanced-2 doubles dynamic/narrative throughput. |
+| **Buffer** | ~$5 | Covers D1/KV overages, usage spikes. |
 
 **Add 6th worker (Balanced-2):**
 
