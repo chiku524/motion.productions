@@ -15,9 +15,18 @@
   "r2_buckets": [{ "binding": "VIDEOS", "bucket_name": "motion-productions-videos" }],
   "assets": { "directory": "./public", "binding": "ASSETS" },
   "observability": {
+    "enabled": false,
+    "head_sampling_rate": 1,
     "logs": {
-      "enabled": false,
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "persist": true,
       "invocation_logs": true
+    },
+    "traces": {
+      "enabled": false,
+      "persist": true,
+      "head_sampling_rate": 1
     }
   }
 }
