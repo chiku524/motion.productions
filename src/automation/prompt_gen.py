@@ -395,7 +395,7 @@ def generate_targeted_narrative_prompt(
     prompt = " ".join(parts).strip()
     if not prompt or prompt in avoid:
         return None
-    if _prompt_overlaps_avoid(prompt, avoid):
+    if _is_near_duplicate(prompt, avoid):
         return None
     return prompt
 
