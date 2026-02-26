@@ -101,12 +101,10 @@ def api_request(
                 logger.warning("API %s %s → %s (attempt %s), retrying in %.1fs", method, path, status, attempt + 1, delay)
                 time.sleep(delay)
                 continue
-            raise APIError(
-                f"API {method} {path} failed: {e}",
-                status_code=status,
-                path=path,
-                body=err_body,
-            ) from e
+            msg = f"API {method} {path} failed: {e}"
+            if err_body and status and 500 <= status < 600:
+                msg += f" — response: {err_body[:300]}"
+            raise APIError(msg, status_code=status, path=path, body=err_body) from e
         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
             last_exc = e
             if attempt < max_retries:

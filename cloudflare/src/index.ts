@@ -522,8 +522,8 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       }
       const items = Array.isArray(body.items) ? body.items : [];
       if (items.length === 0) return json({ inserted: 0 });
-      const maxBatch = 50;
-      const toInsert = items.slice(0, maxBatch);
+      const INTERPRET_BATCH_MAX = 14; // D1 Free: 50 queries/request; 1 per insert
+      const toInsert = items.slice(0, INTERPRET_BATCH_MAX);
       let inserted = 0;
       for (const it of toInsert) {
         const prompt = typeof it.prompt === "string" ? it.prompt.trim() : "";
@@ -570,6 +570,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
     }
 
     // POST /api/linguistic-registry/batch — add mappings from extraction (upsert: increment count if exists)
+    // D1 Free: 50 queries/request. ~2 queries/item. Cap at 14 items to stay under limit.
     if (path === "/api/linguistic-registry/batch" && request.method === "POST") {
       let body: { items: Array<{ span: string; canonical: string; domain: string; variant_type?: string }> };
       try {
@@ -579,9 +580,10 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       }
       const items = Array.isArray(body.items) ? body.items : [];
       if (items.length === 0) return json({ inserted: 0, updated: 0 });
+      const LINGUISTIC_BATCH_MAX = 14;
       let inserted = 0;
       let updated = 0;
-      for (const it of items.slice(0, 100)) {
+      for (const it of items.slice(0, LINGUISTIC_BATCH_MAX)) {
         const span = typeof it.span === "string" ? it.span.trim().toLowerCase() : "";
         const canonical = typeof it.canonical === "string" ? it.canonical.trim() : "";
         const domain = typeof it.domain === "string" ? it.domain.trim() : "";

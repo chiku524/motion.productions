@@ -165,12 +165,15 @@ def run() -> None:
                                 logger.warning("Backfill interpret failed for %s: %s", prompt[:40], e)
                         if batch:
                             try:
-                                resp = api_request_with_retry(
-                                    api_base, "POST", "/api/interpretations/batch",
-                                    data={"items": batch},
-                                    timeout=30,
-                                )
-                                n = resp.get("inserted", 0)
+                                n = 0
+                                for i in range(0, len(batch), 14):  # API caps at 14/request (D1 limit)
+                                    chunk = batch[i : i + 14]
+                                    resp = api_request_with_retry(
+                                        api_base, "POST", "/api/interpretations/batch",
+                                        data={"items": chunk},
+                                        timeout=30,
+                                    )
+                                    n += resp.get("inserted", 0)
                                 if n:
                                     print(f"[{cycle}] backfill: {n} interpreted")
                             except APIError as e:

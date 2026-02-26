@@ -1,10 +1,13 @@
 """
 Client for linguistic registry API. Fetch mappings for interpretation; post growth.
+Batching: D1 Free allows 50 queries/request; ~2 per item. Max 14 items/request.
 """
 import logging
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+LINGUISTIC_BATCH_MAX = 14
 
 
 def fetch_linguistic_registry(api_base: str, domain: str | None = None) -> dict[str, dict[str, str]]:
@@ -34,19 +37,25 @@ def post_linguistic_growth(
     items: list[dict[str, Any]],
 ) -> dict[str, int]:
     """
-    Post extracted mappings to linguistic registry. Upserts; increments count if exists.
-    items: [{"span": str, "canonical": str, "domain": str, "variant_type"?: str}]
+    Post extracted mappings to linguistic registry. Batches into chunks of 14
+    to stay under D1 query limit. items: [{"span", "canonical", "domain", "variant_type"?}]
     """
     if not items:
         return {"inserted": 0, "updated": 0}
+    total_inserted = 0
+    total_updated = 0
     try:
         from ..api_client import api_request_with_retry
-        data = api_request_with_retry(
-            api_base, "POST", "/api/linguistic-registry/batch",
-            data={"items": items},
-            timeout=15,
-        )
-        return {"inserted": data.get("inserted", 0), "updated": data.get("updated", 0)}
+        for i in range(0, len(items), LINGUISTIC_BATCH_MAX):
+            chunk = items[i : i + LINGUISTIC_BATCH_MAX]
+            data = api_request_with_retry(
+                api_base, "POST", "/api/linguistic-registry/batch",
+                data={"items": chunk},
+                timeout=30,
+            )
+            total_inserted += data.get("inserted", 0)
+            total_updated += data.get("updated", 0)
+        return {"inserted": total_inserted, "updated": total_updated}
     except Exception as e:
         logger.warning("Post linguistic growth failed: %s", e)
-        return {"inserted": 0, "updated": 0}
+        return {"inserted": total_inserted, "updated": total_updated}
