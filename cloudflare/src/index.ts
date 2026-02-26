@@ -499,6 +499,11 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
     // GET /api/interpret/backfill-prompts — prompts from jobs not yet in interpretations (for interpretation worker)
     if (path === "/api/interpret/backfill-prompts" && request.method === "GET") {
       const limit = Math.min(parseInt(new URL(request.url).searchParams.get("limit") || "30", 10), 100);
+      const backfillCacheKey = `interpret:backfill-prompts:${limit}`;
+      if (env.MOTION_KV) {
+        const cached = await env.MOTION_KV.get(backfillCacheKey);
+        if (cached) return new Response(cached, { headers: { "Content-Type": "application/json", "X-Cache": "HIT" } });
+      }
       const rows = await env.DB.prepare(
         `SELECT DISTINCT j.prompt FROM jobs j
          LEFT JOIN interpretations i ON i.prompt = j.prompt AND i.status = 'done'
@@ -509,7 +514,13 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         .all<{ prompt: string }>();
       const raw = (rows.results || []).map((r) => r.prompt);
       const prompts = raw.filter((p) => !isGibberishPrompt(p, true)).slice(0, limit);
-      return json({ prompts });
+      const backfillBody = JSON.stringify({ prompts });
+      if (env.MOTION_KV) {
+        try {
+          await env.MOTION_KV.put(backfillCacheKey, backfillBody, { expirationTtl: 30 });
+        } catch { /* ignore */ }
+      }
+      return new Response(backfillBody, { headers: { "Content-Type": "application/json" } });
     }
 
     // POST /api/interpretations/batch — store multiple completed interpretations (batch backfill)
@@ -1107,6 +1118,13 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
     if (path === "/api/knowledge/for-creation" && request.method === "GET") {
       try {
       const limit = Math.min(parseInt(new URL(request.url).searchParams.get("limit") || "500", 10), 2000);
+      const interpLimitParam = new URL(request.url).searchParams.get("interpretation_limit") || "100";
+      const interpLimit = Math.min(parseInt(interpLimitParam, 10), 500);
+      const cacheKey = `knowledge:for-creation:${limit}:${interpLimit}`;
+      if (env.MOTION_KV) {
+        const cached = await env.MOTION_KV.get(cacheKey);
+        if (cached) return new Response(cached, { headers: { "Content-Type": "application/json", "X-Cache": "HIT" } });
+      }
       const colorRows = await env.DB.prepare(
         "SELECT color_key, r, g, b, count, sources_json, name FROM learned_colors ORDER BY count DESC LIMIT ?"
       )
@@ -1209,7 +1227,6 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       const origin_camera = ["static", "pan", "tilt", "dolly", "crane", "zoom", "zoom_out", "handheld", "roll", "truck", "pedestal", "arc", "tracking", "birds_eye", "whip_pan", "rotate"];
       const origin_motion = ["slow", "wave", "flow", "fast", "pulse"];
       // Interpretation registry: user prompts + resolved instructions (for creation / pick_prompt)
-      const interpLimit = Math.min(parseInt(new URL(request.url).searchParams.get("interpretation_limit") || "100", 10), 500);
       const interpRows = await env.DB.prepare(
         "SELECT prompt, instruction_json FROM interpretations WHERE status = 'done' AND instruction_json IS NOT NULL ORDER BY updated_at DESC LIMIT ?"
       )
@@ -1240,7 +1257,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         count: r.count,
         created_at: r.created_at ?? undefined,
       }));
-      return json({
+      const payload = {
         learned_colors: colors,
         learned_motion: motion,
         learned_audio,
@@ -1252,7 +1269,14 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         interpretation_prompts,
         static_colors,
         static_sound,
-      });
+      };
+      const body = JSON.stringify(payload);
+      if (env.MOTION_KV) {
+        try {
+          await env.MOTION_KV.put(cacheKey, body, { expirationTtl: 60 });
+        } catch { /* ignore KV write failure */ }
+      }
+      return new Response(body, { headers: { "Content-Type": "application/json" } });
       } catch (e) {
         console.error("GET /api/knowledge/for-creation failed:", e);
         return json({ error: "Failed to load for-creation", details: String(e) }, 500);
@@ -2005,6 +2029,11 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
     // GET /api/loop/progress — learning precision (runs with growth in last N)
     if (path === "/api/loop/progress" && request.method === "GET") {
       const last = Math.min(parseInt(new URL(request.url).searchParams.get("last") || "20", 10), 100);
+      const progressCacheKey = `loop:progress:${last}`;
+      if (env.MOTION_KV) {
+        const cached = await env.MOTION_KV.get(progressCacheKey);
+        if (cached) return new Response(cached, { headers: { "Content-Type": "application/json", "X-Cache": "HIT" } });
+      }
       const completed = await env.DB.prepare(
         "SELECT id FROM jobs WHERE status = 'completed' AND r2_key IS NOT NULL ORDER BY updated_at DESC LIMIT ?"
       ).bind(last).all<{ id: string }>();
@@ -2103,7 +2132,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         /* optional */
       }
 
-      return json({
+      const progressPayload = {
         last_n: last,
         total_runs: totalRuns,
         runs_with_learning: withLearning,
@@ -2115,7 +2144,14 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         coverage_snapshot: coverage_snapshot ?? undefined,
         exploit_count,
         explore_count,
-      });
+      };
+      const progressBody = JSON.stringify(progressPayload);
+      if (env.MOTION_KV) {
+        try {
+          await env.MOTION_KV.put(progressCacheKey, progressBody, { expirationTtl: 30 });
+        } catch { /* ignore KV write failure */ }
+      }
+      return new Response(progressBody, { headers: { "Content-Type": "application/json" } });
     }
 
     // GET /api/metrics — Prometheus-compatible metrics for dashboards

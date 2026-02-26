@@ -5,6 +5,7 @@ Step 1 (ENHANCEMENTS): explicit success/failure, retries, and error context.
 """
 import json
 import logging
+import random
 import time
 
 import requests
@@ -64,6 +65,13 @@ def api_request(
     If max_retries > 0, retries on 5xx and connection errors only.
     """
     url = f"{api_base.rstrip('/')}{path}"
+    # Jitter for heavy D1 endpoints: spread concurrent requests from multiple workers
+    if method == "GET" and (
+        "/api/knowledge/for-creation" in path
+        or "/api/loop/progress" in path
+        or "/api/interpret/backfill-prompts" in path
+    ):
+        time.sleep(random.uniform(0, 4))
     headers = dict(_API_HEADERS)
     if raw_body is not None:
         body = raw_body
