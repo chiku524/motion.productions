@@ -1,13 +1,13 @@
 """
 Client for linguistic registry API. Fetch mappings for interpretation; post growth.
-Batching: D1 Free allows 50 queries/request; ~2 per item. Max 14 items/request.
+Batching: Workers Paid allows 1000 queries/request; ~2 per item. Max 100 items/request.
 """
 import logging
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
-LINGUISTIC_BATCH_MAX = 14
+LINGUISTIC_BATCH_MAX = 100
 
 
 def fetch_linguistic_registry(api_base: str, domain: str | None = None) -> dict[str, dict[str, str]]:

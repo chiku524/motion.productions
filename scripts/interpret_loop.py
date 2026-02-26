@@ -166,8 +166,8 @@ def run() -> None:
                         if batch:
                             try:
                                 n = 0
-                                for i in range(0, len(batch), 14):  # API caps at 14/request (D1 limit)
-                                    chunk = batch[i : i + 14]
+                                for i in range(0, len(batch), 50):  # API caps at 50/request (Workers Paid)
+                                    chunk = batch[i : i + 50]
                                     resp = api_request_with_retry(
                                         api_base, "POST", "/api/interpretations/batch",
                                         data={"items": chunk},

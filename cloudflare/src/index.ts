@@ -522,7 +522,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       }
       const items = Array.isArray(body.items) ? body.items : [];
       if (items.length === 0) return json({ inserted: 0 });
-      const INTERPRET_BATCH_MAX = 14; // D1 Free: 50 queries/request; 1 per insert
+      const INTERPRET_BATCH_MAX = 50; // Workers Paid: 1000 queries/request; 1 per insert
       const toInsert = items.slice(0, INTERPRET_BATCH_MAX);
       let inserted = 0;
       for (const it of toInsert) {
@@ -570,7 +570,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
     }
 
     // POST /api/linguistic-registry/batch — add mappings from extraction (upsert: increment count if exists)
-    // D1 Free: 50 queries/request. ~2 queries/item. Cap at 14 items to stay under limit.
+    // Workers Paid: 1000 queries/request. ~2 queries/item. Cap at 100 for efficiency (~200 queries).
     if (path === "/api/linguistic-registry/batch" && request.method === "POST") {
       let body: { items: Array<{ span: string; canonical: string; domain: string; variant_type?: string }> };
       try {
@@ -580,7 +580,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       }
       const items = Array.isArray(body.items) ? body.items : [];
       if (items.length === 0) return json({ inserted: 0, updated: 0 });
-      const LINGUISTIC_BATCH_MAX = 14;
+      const LINGUISTIC_BATCH_MAX = 100;
       let inserted = 0;
       let updated = 0;
       for (const it of items.slice(0, LINGUISTIC_BATCH_MAX)) {
@@ -774,9 +774,9 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
 
     // POST /api/knowledge/discoveries — batch record discoveries (D1)
     // Supports: static_colors, static_sound (per-frame) + colors, blends, motion, etc. (dynamic/whole-video)
-    // D1 Free plan: 50 queries/request. ~3 queries/item. Max 14 items per request to stay under limit.
+    // Workers Paid: 1000 queries/request. ~3 queries/item. Max 200 items for efficiency (600 queries).
     if (path === "/api/knowledge/discoveries" && request.method === "POST") {
-      const DISCOVERIES_MAX_ITEMS = 14;
+      const DISCOVERIES_MAX_ITEMS = 200;
       let body: {
         static_colors?: Array<{ key: string; r: number; g: number; b: number; brightness?: number; luminance?: number; contrast?: number; saturation?: number; chroma?: number; hue?: number; color_variance?: number; opacity?: number; depth_breakdown?: Record<string, unknown>; source_prompt?: string; name?: string }>;
         static_sound?: Array<{ key: string; amplitude?: number; weight?: number; strength_pct?: number; tone?: string; timbre?: string; depth_breakdown?: Record<string, unknown>; source_prompt?: string; name?: string }>;

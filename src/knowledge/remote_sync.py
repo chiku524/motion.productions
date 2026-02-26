@@ -2,13 +2,13 @@
 Remote sync: POST discoveries to the Cloudflare API (D1/KV).
 When api_base is set, growth persists to D1 instead of local JSON.
 
-Batching: D1 Free plan allows 50 queries/request; ~3 queries per discovery item.
-We send max 14 items per request to stay under the limit and avoid 500s.
+Batching: Workers Paid allows 1000 queries/request; ~3 per item.
+We send max 200 items per request for efficiency (fewer round-trips).
 """
 from typing import Any
 
-# Match API DISCOVERIES_MAX_ITEMS; stay under D1 50-query limit
-DISCOVERIES_MAX_ITEMS = 14
+# Match API DISCOVERIES_MAX_ITEMS (Workers Paid: 1000 queries/request)
+DISCOVERIES_MAX_ITEMS = 200
 
 
 def _chunk_discoveries(discoveries: dict[str, Any]) -> list[dict[str, Any]]:

@@ -308,16 +308,35 @@ If logs show **429 Too Many Requests**, **503 Service Unavailable**, or **500 In
 
 **Likely causes:**
 
-1. **D1 query limit (50/Worker invocation on Free plan):** `POST /api/knowledge/discoveries` does ~2–4 D1 queries per discovery item. The API caps at 14 items/request; the Python client auto-batches larger payloads into chunks of 14 to stay under the limit.
-2. **D1 overload:** D1 is single-threaded per DB. With 5 Railway workers + webapp, concurrent requests queue; when overloaded, D1 returns errors.
-3. **Read timeouts:** `GET /api/knowledge/for-creation` runs 15+ sequential D1 queries. Under load it can exceed the client timeout (now 45s; was 15s).
+1. **D1 query limit (50/Worker invocation on Free plan):** Workers Paid raises this to 1,000/request. The codebase uses larger batch limits (200 discoveries, 100 linguistic, 50 interpretations) optimized for Workers Paid.
+2. **D1 overload:** D1 is single-threaded per DB. With 6 Railway workers + webapp, concurrent requests queue; when overloaded, D1 returns errors.
+3. **Read timeouts:** `GET /api/knowledge/for-creation` runs 15+ sequential D1 queries. Client timeout is 45s.
 
 **What to do:**
 
-- **Reduce load:** Run fewer Railway services in parallel, or increase delay between runs (e.g. loop delay or `SOUND_LOOP_DELAY_SECONDS`).
-- **Cloudflare plan:** Workers Paid increases D1 query limit to 1,000/request. Consider upgrading if batches often exceed ~15–20 discovery items.
-- **Cloudflare logs:** Dashboard → Workers → Logs to see actual D1 errors (e.g. `D1_QUERY_LIMIT_EXCEEDED`, overload).
-- **Accept transient failures:** Occasional 429/503/500 are expected under load; state and discoveries may not persist for that run. Next run will retry.
+- **Cloudflare Workers Paid ($5/mo):** Increases D1 to 1,000 queries/request. Recommended for production. See §8.4.
+- **Reduce load:** Run fewer Railway services or increase loop delay if on Free plan.
+- **Cloudflare logs:** Dashboard → Workers → Logs to see actual D1 errors.
+
+### 8.4 Optimized setup (~$20/mo for maximum throughput)
+
+For the most efficient workflow and fastest registry completion:
+
+| Component | Cost | What to do |
+|-----------|------|------------|
+| **Cloudflare Workers Paid** | ~$5/mo | Upgrade at [dash.cloudflare.com](https://dash.cloudflare.com) → Workers & Pages → Workers Paid. Unlocks 1,000 D1 queries/request (vs 50 on Free). Essential for stability. |
+| **Railway (6 workers)** | ~$10–15/mo | Run: Explorer, Exploiter, Balanced, Balanced-2, Interpretation, Sound. Balanced-2 doubles dynamic/narrative throughput. |
+| **Buffer** | ~$5 | Covers D1/KV overages, Railway usage spikes. |
+
+**Add 6th worker (Balanced-2):**
+
+1. Create a new Railway service; same repo, Dockerfile.
+2. **Env vars:** `API_BASE`, `LOOP_EXTRACTION_FOCUS=window`, `LOOP_WORKFLOW_TYPE=main` (same as Balanced). Do **not** set `LOOP_EXPLOIT_RATIO_OVERRIDE`.
+3. Both Balanced workers read exploit ratio from the UI and run per-window extraction. 2× Balanced = 2× dynamic/narrative discovery rate.
+
+**Alternative:** Add 2nd Explorer for 2× static (color/sound) throughput instead of Balanced-2. Choose based on which registry (static vs dynamic) you want to grow faster.
+
+**Batch limits (Workers Paid):** Discoveries 200/request, linguistic 100/request, interpretations 50/request. Fewer HTTP round-trips = more efficient.
 
 ---
 
