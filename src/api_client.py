@@ -66,11 +66,15 @@ def api_request(
     """
     url = f"{api_base.rstrip('/')}{path}"
     # Jitter for heavy D1 endpoints: spread concurrent requests from multiple workers
-    if method == "GET" and (
-        "/api/knowledge/for-creation" in path
-        or "/api/loop/progress" in path
-        or "/api/interpret/backfill-prompts" in path
-    ):
+    needs_jitter = (
+        (method == "GET" and (
+            "/api/knowledge/for-creation" in path
+            or "/api/loop/progress" in path
+            or "/api/interpret/backfill-prompts" in path
+        ))
+        or (method == "POST" and "/api/knowledge/discoveries" in path)
+    )
+    if needs_jitter:
         time.sleep(random.uniform(0, 4))
     headers = dict(_API_HEADERS)
     if raw_body is not None:

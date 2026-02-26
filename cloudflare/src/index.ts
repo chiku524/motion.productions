@@ -517,7 +517,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       const backfillBody = JSON.stringify({ prompts });
       if (env.MOTION_KV) {
         try {
-          await env.MOTION_KV.put(backfillCacheKey, backfillBody, { expirationTtl: 30 });
+          await env.MOTION_KV.put(backfillCacheKey, backfillBody, { expirationTtl: 60 });
         } catch { /* ignore */ }
       }
       return new Response(backfillBody, { headers: { "Content-Type": "application/json" } });
@@ -785,9 +785,9 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
 
     // POST /api/knowledge/discoveries — batch record discoveries (D1)
     // Supports: static_colors, static_sound (per-frame) + colors, blends, motion, etc. (dynamic/whole-video)
-    // Workers Paid: 1000 queries/request. ~3 queries/item. Max 200 items for efficiency (600 queries).
+    // Workers Paid: 1000 queries/request. ~3 queries/item. Max 150 items to reduce D1 CPU load under concurrency.
     if (path === "/api/knowledge/discoveries" && request.method === "POST") {
-      const DISCOVERIES_MAX_ITEMS = 200;
+      const DISCOVERIES_MAX_ITEMS = 150;
       let body: {
         static_colors?: Array<{ key: string; r: number; g: number; b: number; brightness?: number; luminance?: number; contrast?: number; saturation?: number; chroma?: number; hue?: number; color_variance?: number; opacity?: number; depth_breakdown?: Record<string, unknown>; source_prompt?: string; name?: string }>;
         static_sound?: Array<{ key: string; amplitude?: number; weight?: number; strength_pct?: number; tone?: string; timbre?: string; depth_breakdown?: Record<string, unknown>; source_prompt?: string; name?: string }>;
@@ -1117,7 +1117,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
     // GET /api/knowledge/for-creation — learned colors and motion for creation (closes the loop)
     if (path === "/api/knowledge/for-creation" && request.method === "GET") {
       try {
-      const limit = Math.min(parseInt(new URL(request.url).searchParams.get("limit") || "500", 10), 2000);
+      const limit = Math.min(parseInt(new URL(request.url).searchParams.get("limit") || "300", 10), 2000);
       const interpLimitParam = new URL(request.url).searchParams.get("interpretation_limit") || "100";
       const interpLimit = Math.min(parseInt(interpLimitParam, 10), 500);
       const cacheKey = `knowledge:for-creation:${limit}:${interpLimit}`;
@@ -1273,7 +1273,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       const body = JSON.stringify(payload);
       if (env.MOTION_KV) {
         try {
-          await env.MOTION_KV.put(cacheKey, body, { expirationTtl: 60 });
+          await env.MOTION_KV.put(cacheKey, body, { expirationTtl: 90 });
         } catch { /* ignore KV write failure */ }
       }
       return new Response(body, { headers: { "Content-Type": "application/json" } });
@@ -1476,6 +1476,11 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
 
     // GET /api/registries/coverage — counts and coverage % per registry for completion targeting (§2.1, §2.8)
     if (path === "/api/registries/coverage" && request.method === "GET") {
+      const coverageCacheKey = "registries:coverage";
+      if (env.MOTION_KV) {
+        const cached = await env.MOTION_KV.get(coverageCacheKey);
+        if (cached) return new Response(cached, { headers: { "Content-Type": "application/json", "X-Cache": "HIT" } });
+      }
       const STATIC_COLOR_ESTIMATED_CELLS = 27951;
       const NARRATIVE_ORIGIN_SIZES: Record<string, number> = {
         genre: 7, mood: 7, style: 5, plots: 4, settings: 8, themes: 8, scene_type: 8,
@@ -1556,7 +1561,13 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           ? Math.min(...narrativeAspects.map((a) => narrative[a]?.coverage_pct ?? 0))
           : 0,
       };
-      return json(coverage);
+      const coverageBody = JSON.stringify(coverage);
+      if (env.MOTION_KV) {
+        try {
+          await env.MOTION_KV.put(coverageCacheKey, coverageBody, { expirationTtl: 60 });
+        } catch { /* ignore */ }
+      }
+      return new Response(coverageBody, { headers: { "Content-Type": "application/json" } });
     }
 
     // GET /api/registries — pure (STATIC) vs non-pure (DYNAMIC + NARRATIVE); depth % vs primitives always
@@ -2148,7 +2159,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       const progressBody = JSON.stringify(progressPayload);
       if (env.MOTION_KV) {
         try {
-          await env.MOTION_KV.put(progressCacheKey, progressBody, { expirationTtl: 30 });
+          await env.MOTION_KV.put(progressCacheKey, progressBody, { expirationTtl: 60 });
         } catch { /* ignore KV write failure */ }
       }
       return new Response(progressBody, { headers: { "Content-Type": "application/json" } });
