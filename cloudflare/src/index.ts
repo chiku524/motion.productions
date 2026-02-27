@@ -83,20 +83,27 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
   const err = (message: string, status = 400) =>
     json({ error: message }, status);
 
+  // Use D1 Sessions API for read replication when available (spreads reads across replicas)
+  const primaryDb = env.DB;
+  const db: D1Database =
+    (primaryDb as D1Database & { withSession?: (b: string) => D1Database }).withSession?.(
+      "first-unconstrained"
+    ) ?? primaryDb;
+
   // GET /api/jobs?status=pending|completed — list jobs (pending for worker; completed for library)
     if (path === "/api/jobs" && request.method === "GET") {
       const url = new URL(request.url);
       const status = url.searchParams.get("status");
       const limit = Math.min(parseInt(url.searchParams.get("limit") ?? "24", 10) || 24, 100);
       if (status === "pending") {
-        const rows = await env.DB.prepare(
+        const rows = await db.prepare(
           "SELECT id, prompt, duration_seconds, created_at FROM jobs WHERE status = 'pending' ORDER BY created_at ASC"
         )
           .all<{ id: string; prompt: string; duration_seconds: number | null; created_at: string }>();
         return json({ jobs: rows.results || [] });
       }
       if (status === "completed") {
-        const rows = await env.DB.prepare(
+        const rows = await db.prepare(
           "SELECT id, prompt, duration_seconds, created_at, updated_at, workflow_type FROM jobs WHERE status = 'completed' AND r2_key IS NOT NULL ORDER BY updated_at DESC LIMIT ?"
         )
           .bind(limit)
@@ -128,7 +135,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       const id = uuid();
       const duration_seconds = typeof body.duration_seconds === "number" ? body.duration_seconds : null;
       const workflow_type = typeof body.workflow_type === "string" && /^(explorer|exploiter|main|web)$/.test(body.workflow_type) ? body.workflow_type : null;
-      await env.DB.prepare(
+      await db.prepare(
         "INSERT INTO jobs (id, prompt, duration_seconds, status, workflow_type) VALUES (?, ?, ?, 'pending', ?)"
       )
         .bind(id, prompt, duration_seconds ?? null, workflow_type)
@@ -140,7 +147,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
     const jobMatch = path.match(/^\/api\/jobs\/([a-f0-9-]+)$/);
     if (jobMatch && request.method === "GET") {
       const id = jobMatch[1];
-      const row = await env.DB.prepare(
+      const row = await db.prepare(
         "SELECT id, prompt, duration_seconds, status, r2_key, created_at, updated_at, workflow_type FROM jobs WHERE id = ?"
       )
         .bind(id)
@@ -177,7 +184,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
     const uploadMatch = path.match(/^\/api\/jobs\/([a-f0-9-]+)\/upload$/);
     if (uploadMatch && request.method === "POST") {
       const id = uploadMatch[1];
-      const row = await env.DB.prepare("SELECT id, status FROM jobs WHERE id = ?").bind(id).first();
+      const row = await db.prepare("SELECT id, status FROM jobs WHERE id = ?").bind(id).first();
       if (!row) return err("Job not found", 404);
       if ((row as { status: string }).status !== "pending") return err("Job already has video", 400);
 
@@ -196,7 +203,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       if (body.byteLength === 0) return err("Empty body");
       const r2_key = `jobs/${id}/video.mp4`;
       await env.VIDEOS.put(r2_key, body, { httpMetadata: { contentType } });
-      await env.DB.prepare(
+      await db.prepare(
         "UPDATE jobs SET status = 'completed', r2_key = ?, updated_at = datetime('now') WHERE id = ?"
       )
         .bind(r2_key, id)
@@ -208,7 +215,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
     const downloadMatch = path.match(/^\/api\/jobs\/([a-f0-9-]+)\/download$/);
     if (downloadMatch && request.method === "GET") {
       const id = downloadMatch[1];
-      const row = await env.DB.prepare("SELECT r2_key FROM jobs WHERE id = ? AND status = 'completed'")
+      const row = await db.prepare("SELECT r2_key FROM jobs WHERE id = ? AND status = 'completed'")
         .bind(id)
         .first<{ r2_key: string | null }>();
       if (!row?.r2_key) return err("Not found", 404);
@@ -237,7 +244,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       const analysis = body.analysis && typeof body.analysis === "object" ? body.analysis : {};
       const jobId = typeof body.job_id === "string" ? body.job_id : null;
       const id = uuid();
-      await env.DB.prepare(
+      await db.prepare(
         "INSERT INTO learning_runs (id, job_id, prompt, spec_json, analysis_json) VALUES (?, ?, ?, ?, ?)"
       )
         .bind(id, jobId, prompt, JSON.stringify(spec), JSON.stringify(analysis))
@@ -249,7 +256,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
     // GET /api/learning/runs — list learning runs (for aggregation/reports)
     if (path === "/api/learning/runs" && request.method === "GET") {
       const limit = Math.min(parseInt(new URL(request.url).searchParams.get("limit") || "100", 10), 500);
-      const rows = await env.DB.prepare(
+      const rows = await db.prepare(
         "SELECT id, job_id, prompt, spec_json, analysis_json, created_at FROM learning_runs ORDER BY created_at DESC LIMIT ?"
       )
         .bind(limit)
@@ -405,7 +412,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
             /* use empty */
           }
         }
-        const rows = await env.DB.prepare(
+        const rows = await db.prepare(
           "SELECT id, prompt, duration_seconds, updated_at, workflow_type FROM jobs WHERE status = 'completed' AND r2_key IS NOT NULL ORDER BY updated_at DESC LIMIT 10"
         )
           .all<{ id: string; prompt: string; duration_seconds: number | null; updated_at: string; workflow_type: string | null }>();
@@ -448,7 +455,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       if (!prompt) return err("prompt is required");
       const source = typeof body.source === "string" && /^(web|worker|loop)$/.test(body.source) ? body.source : "worker";
       const id = uuid();
-      await env.DB.prepare(
+      await db.prepare(
         "INSERT INTO interpretations (id, prompt, source, status) VALUES (?, ?, ?, 'pending')"
       )
         .bind(id, prompt, source)
@@ -460,7 +467,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
     if (path === "/api/interpret/queue" && request.method === "GET") {
       const limit = Math.min(parseInt(new URL(request.url).searchParams.get("limit") || "20", 10), 50);
       // Prioritize user-submitted (web) over worker-enqueued
-      const rows = await env.DB.prepare(
+      const rows = await db.prepare(
         "SELECT id, prompt, source, created_at FROM interpretations WHERE status = 'pending' ORDER BY CASE WHEN source = 'web' THEN 0 ELSE 1 END, created_at ASC LIMIT ?"
       )
         .bind(limit)
@@ -486,10 +493,10 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       }
       const instruction = body.instruction && typeof body.instruction === "object" ? body.instruction : null;
       if (!instruction) return err("instruction is required");
-      const row = await env.DB.prepare("SELECT id, status FROM interpretations WHERE id = ?").bind(id).first();
+      const row = await db.prepare("SELECT id, status FROM interpretations WHERE id = ?").bind(id).first();
       if (!row) return err("Interpretation job not found", 404);
       if ((row as { status: string }).status !== "pending") return err("Already interpreted", 400);
-      await env.DB.prepare(
+      await db.prepare(
         "UPDATE interpretations SET instruction_json = ?, status = 'done', updated_at = datetime('now') WHERE id = ?"
       )
         .bind(JSON.stringify(instruction), id)
@@ -505,7 +512,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         const cached = await env.MOTION_KV.get(backfillCacheKey);
         if (cached) return new Response(cached, { headers: { "Content-Type": "application/json", "X-Cache": "HIT" } });
       }
-      const rows = await env.DB.prepare(
+      const rows = await db.prepare(
         `SELECT DISTINCT j.prompt FROM jobs j
          LEFT JOIN interpretations i ON i.prompt = j.prompt AND i.status = 'done'
          WHERE j.prompt IS NOT NULL AND j.prompt != '' AND i.id IS NULL
@@ -518,7 +525,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       const backfillBody = JSON.stringify({ prompts });
       if (env.MOTION_KV) {
         try {
-          await env.MOTION_KV.put(backfillCacheKey, backfillBody, { expirationTtl: 60 });
+          await env.MOTION_KV.put(backfillCacheKey, backfillBody, { expirationTtl: 90 });
         } catch { /* ignore */ }
       }
       return new Response(backfillBody, { headers: { "Content-Type": "application/json" } });
@@ -546,7 +553,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         const source = typeof it.source === "string" && /^(web|worker|loop|backfill)$/.test(it.source) ? it.source : "backfill";
         const id = uuid();
         try {
-          await env.DB.prepare(
+          await db.prepare(
             "INSERT INTO interpretations (id, prompt, instruction_json, source, status) VALUES (?, ?, ?, ?, 'done')"
           )
             .bind(id, prompt, JSON.stringify(instruction), source)
@@ -566,7 +573,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         const q = domain
           ? "SELECT span, canonical, domain, variant_type, count FROM linguistic_registry WHERE domain = ?"
           : "SELECT span, canonical, domain, variant_type, count FROM linguistic_registry";
-        const stmt = domain ? env.DB.prepare(q).bind(domain) : env.DB.prepare(q);
+        const stmt = domain ? db.prepare(q).bind(domain) : db.prepare(q);
         const rows = await stmt.all<{ span: string; canonical: string; domain: string; variant_type: string; count: number }>();
         const mappings = (rows.results || []).map((r) => ({
           span: r.span,
@@ -602,16 +609,16 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         const variantType = typeof it.variant_type === "string" ? it.variant_type : "synonym";
         if (!span || !canonical || !domain) continue;
         try {
-          const existing = await env.DB.prepare("SELECT id, count FROM linguistic_registry WHERE span = ? AND domain = ?")
+          const existing = await db.prepare("SELECT id, count FROM linguistic_registry WHERE span = ? AND domain = ?")
             .bind(span, domain)
             .first<{ id: string; count: number }>();
           if (existing) {
-            await env.DB.prepare("UPDATE linguistic_registry SET count = count + 1, updated_at = datetime('now') WHERE span = ? AND domain = ?")
+            await db.prepare("UPDATE linguistic_registry SET count = count + 1, updated_at = datetime('now') WHERE span = ? AND domain = ?")
               .bind(span, domain)
               .run();
             updated++;
           } else {
-            await env.DB.prepare(
+            await db.prepare(
               "INSERT INTO linguistic_registry (id, span, canonical, domain, variant_type, count) VALUES (?, ?, ?, ?, ?, 1)"
             )
               .bind(uuid(), span, canonical, domain, variantType)
@@ -641,7 +648,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       const instruction = body.instruction && typeof body.instruction === "object" ? body.instruction : null;
       if (!instruction) return err("instruction is required");
       const id = uuid();
-      await env.DB.prepare(
+      await db.prepare(
         "INSERT INTO interpretations (id, prompt, instruction_json, source, status) VALUES (?, ?, ?, ?, 'done')"
       )
         .bind(id, prompt, JSON.stringify(instruction), source)
@@ -664,7 +671,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       const jobId = typeof body.job_id === "string" ? body.job_id : null;
       const payload = body.payload && typeof body.payload === "object" ? body.payload : null;
       const id = uuid();
-      await env.DB.prepare(
+      await db.prepare(
         "INSERT INTO events (id, event_type, job_id, payload_json) VALUES (?, ?, ?, ?)"
       )
         .bind(id, eventType, jobId, payload ? JSON.stringify(payload) : null)
@@ -682,7 +689,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         q = "SELECT id, event_type, job_id, payload_json, created_at FROM events WHERE event_type = ? ORDER BY created_at DESC LIMIT ?";
         params.unshift(typeFilter);
       }
-      const rows = await env.DB.prepare(q).bind(...params)
+      const rows = await db.prepare(q).bind(...params)
         .all<{ id: string; event_type: string; job_id: string | null; payload_json: string | null; created_at: string }>();
       const events = (rows.results || []).map((r) => ({
         id: r.id,
@@ -697,7 +704,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
     // GET /api/knowledge/prompts — distinct prompts from jobs (for automation avoid set)
     if (path === "/api/knowledge/prompts" && request.method === "GET") {
       const limit = Math.min(parseInt(new URL(request.url).searchParams.get("limit") || "500", 10), 1000);
-      const rows = await env.DB.prepare(
+      const rows = await db.prepare(
         "SELECT prompt FROM jobs WHERE prompt IS NOT NULL AND prompt != '' ORDER BY created_at DESC LIMIT ?"
       )
         .bind(limit * 2)
@@ -717,7 +724,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
     // GET /api/feedback — list feedback (for learning pipeline)
     if (path === "/api/feedback" && request.method === "GET") {
       const limit = Math.min(parseInt(new URL(request.url).searchParams.get("limit") || "500", 10), 1000);
-      const rows = await env.DB.prepare(
+      const rows = await db.prepare(
         "SELECT f.id, f.job_id, f.rating, f.created_at, j.prompt FROM feedback f JOIN jobs j ON j.id = f.job_id ORDER BY f.created_at DESC LIMIT ?"
       )
         .bind(limit)
@@ -737,10 +744,10 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       }
       const rating = body.rating === 1 || body.rating === 2 ? body.rating : 0;
       if (rating === 0) return err("rating must be 1 (thumbs down) or 2 (thumbs up)");
-      const row = await env.DB.prepare("SELECT id FROM jobs WHERE id = ? AND status = 'completed'").bind(id).first();
+      const row = await db.prepare("SELECT id FROM jobs WHERE id = ? AND status = 'completed'").bind(id).first();
       if (!row) return err("Job not found or not completed", 404);
       const fid = uuid();
-      await env.DB.prepare(
+      await db.prepare(
         "INSERT INTO feedback (id, job_id, rating) VALUES (?, ?, ?) ON CONFLICT(job_id) DO UPDATE SET rating = excluded.rating"
       )
         .bind(fid, id, rating)
@@ -752,13 +759,13 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
     // GET /api/learning/stats — aggregated stats (KV cache; fallback to D1-only on KV failure)
     if (path === "/api/learning/stats" && request.method === "GET") {
       const safeDefault = { total_runs: 0, by_palette: {}, by_keyword: {}, overall: {} };
-      if (!env.DB) return json(safeDefault);
+      if (!db) return json(safeDefault);
       try {
         if (env.MOTION_KV) {
           const cached = await env.MOTION_KV.get("learning:stats");
           if (cached) return json(JSON.parse(cached));
         }
-        const rows = await env.DB.prepare(
+        const rows = await db.prepare(
           "SELECT prompt, spec_json, analysis_json FROM learning_runs ORDER BY created_at DESC LIMIT 500"
         )
           .all<{ prompt: string; spec_json: string; analysis_json: string }>();
@@ -780,7 +787,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
     // POST /api/knowledge/name/take — reserve a unique name for a discovery
     if (path === "/api/knowledge/name/take" && request.method === "POST") {
       const name = await generateUniqueName(env);
-      await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+      await db.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
       return json({ name }, 201);
     }
 
@@ -788,7 +795,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
     // Supports: static_colors, static_sound (per-frame) + colors, blends, motion, etc. (dynamic/whole-video)
     // Workers Paid: 1000 queries/request. ~3 queries/item. Max 150 items to reduce D1 CPU load under concurrency.
     if (path === "/api/knowledge/discoveries" && request.method === "POST") {
-      const DISCOVERIES_MAX_ITEMS = 150;
+      const DISCOVERIES_MAX_ITEMS = 100;
       let body: {
         static_colors?: Array<{ key: string; r: number; g: number; b: number; brightness?: number; luminance?: number; contrast?: number; saturation?: number; chroma?: number; hue?: number; color_variance?: number; opacity?: number; depth_breakdown?: Record<string, unknown>; source_prompt?: string; name?: string }>;
         static_sound?: Array<{ key: string; amplitude?: number; weight?: number; strength_pct?: number; tone?: string; timbre?: string; depth_breakdown?: Record<string, unknown>; source_prompt?: string; name?: string }>;
@@ -822,13 +829,13 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       // Static registry: per-frame color entries
       for (const c of body.static_colors || []) {
         if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
-        const existing = await env.DB.prepare("SELECT id, name, count FROM static_colors WHERE color_key = ?").bind(c.key).first();
+        const existing = await db.prepare("SELECT id, name, count FROM static_colors WHERE color_key = ?").bind(c.key).first();
         if (existing) {
-          await env.DB.prepare("UPDATE static_colors SET count = count + 1 WHERE color_key = ?").bind(c.key).run();
+          await db.prepare("UPDATE static_colors SET count = count + 1 WHERE color_key = ?").bind(c.key).run();
         } else {
           const name = (c.name && c.name.trim()) ? c.name : await generateUniqueName(env);
-          if (!c.name || !c.name.trim()) await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
-          await env.DB.prepare(
+          if (!c.name || !c.name.trim()) await db.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+          await db.prepare(
             "INSERT INTO static_colors (id, color_key, r, g, b, brightness, luminance, contrast, saturation, chroma, hue, color_variance, opacity, count, sources_json, name, depth_breakdown_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)"
           ).bind(uuid(), c.key, c.r, c.g, c.b, c.brightness ?? null, c.luminance ?? c.brightness ?? null, c.contrast ?? null, c.saturation ?? null, c.chroma ?? c.saturation ?? null, c.hue ?? null, c.color_variance ?? null, c.opacity ?? null, c.source_prompt ? JSON.stringify([c.source_prompt.slice(0, 80)]) : null, name, c.depth_breakdown ? JSON.stringify(c.depth_breakdown) : null).run();
         }
@@ -838,13 +845,13 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       // Static registry: per-frame sound entries
       for (const s of body.static_sound || []) {
         if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
-        const existing = await env.DB.prepare("SELECT id, name, count FROM static_sound WHERE sound_key = ?").bind(s.key).first();
+        const existing = await db.prepare("SELECT id, name, count FROM static_sound WHERE sound_key = ?").bind(s.key).first();
         if (existing) {
-          await env.DB.prepare("UPDATE static_sound SET count = count + 1 WHERE sound_key = ?").bind(s.key).run();
+          await db.prepare("UPDATE static_sound SET count = count + 1 WHERE sound_key = ?").bind(s.key).run();
         } else {
           const name = (s.name && s.name.trim()) ? s.name : await generateUniqueName(env);
-          if (!s.name || !s.name.trim()) await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
-          await env.DB.prepare(
+          if (!s.name || !s.name.trim()) await db.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+          await db.prepare(
             "INSERT INTO static_sound (id, sound_key, amplitude, weight, tone, timbre, count, sources_json, name, depth_breakdown_json, strength_pct) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)"
           ).bind(uuid(), s.key, s.amplitude ?? null, s.weight ?? null, s.tone ?? null, s.timbre ?? null, s.source_prompt ? JSON.stringify([s.source_prompt.slice(0, 80)]) : null, name, s.depth_breakdown ? JSON.stringify(s.depth_breakdown) : null, s.strength_pct ?? s.amplitude ?? s.weight ?? null).run();
         }
@@ -858,14 +865,14 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break narrative_loop; }
           const key = (item.key || "").trim().toLowerCase();
           if (!key) continue;
-          const existing = await env.DB.prepare("SELECT id, name, count FROM narrative_entries WHERE aspect = ? AND entry_key = ?").bind(aspect, key).first();
+          const existing = await db.prepare("SELECT id, name, count FROM narrative_entries WHERE aspect = ? AND entry_key = ?").bind(aspect, key).first();
           if (existing) {
-            await env.DB.prepare("UPDATE narrative_entries SET count = count + 1 WHERE aspect = ? AND entry_key = ?").bind(aspect, key).run();
+            await db.prepare("UPDATE narrative_entries SET count = count + 1 WHERE aspect = ? AND entry_key = ?").bind(aspect, key).run();
           } else {
             const valueStr = (item.value ?? item.key ?? key).slice(0, 200);
             const name = (item.name && item.name.trim()) ? item.name.trim() : (valueStr || (await generateUniqueName(env)));
-            if (!(item.name && item.name.trim())) await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
-            await env.DB.prepare(
+            if (!(item.name && item.name.trim())) await db.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+            await db.prepare(
               "INSERT INTO narrative_entries (id, aspect, entry_key, value, count, sources_json, name) VALUES (?, ?, ?, ?, 1, ?, ?)"
             ).bind(uuid(), aspect, key, valueStr, item.source_prompt ? JSON.stringify([item.source_prompt.slice(0, 80)]) : null, name).run();
           }
@@ -875,17 +882,17 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       }
       for (const c of body.colors || []) {
         if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
-        const existing = await env.DB.prepare("SELECT id, name, count FROM learned_colors WHERE color_key = ?").bind(c.key).first();
+        const existing = await db.prepare("SELECT id, name, count FROM learned_colors WHERE color_key = ?").bind(c.key).first();
         const depthJson = c.depth_breakdown && typeof c.depth_breakdown === "object" ? JSON.stringify(c.depth_breakdown) : null;
         if (existing) {
-          await env.DB.prepare("UPDATE learned_colors SET count = count + 1 WHERE color_key = ?").bind(c.key).run();
+          await db.prepare("UPDATE learned_colors SET count = count + 1 WHERE color_key = ?").bind(c.key).run();
           if (depthJson) {
-            await env.DB.prepare("UPDATE learned_colors SET depth_breakdown_json = ? WHERE color_key = ?").bind(depthJson, c.key).run();
+            await db.prepare("UPDATE learned_colors SET depth_breakdown_json = ? WHERE color_key = ?").bind(depthJson, c.key).run();
           }
         } else {
           const name = (c.name && String(c.name).trim()) || await generateUniqueName(env);
-          if (!c.name || !String(c.name).trim()) await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
-          await env.DB.prepare(
+          if (!c.name || !String(c.name).trim()) await db.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+          await db.prepare(
             "INSERT INTO learned_colors (id, color_key, r, g, b, count, sources_json, name, depth_breakdown_json) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)"
           ).bind(uuid(), c.key, c.r, c.g, c.b, c.source_prompt ? JSON.stringify([c.source_prompt.slice(0, 80)]) : null, name, depthJson).run();
         }
@@ -898,9 +905,9 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         if (b.name && b.name.trim()) {
           name = await resolveUniqueBlendName(env, name);
         } else {
-          await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+          await db.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
         }
-        await env.DB.prepare(
+        await db.prepare(
           "INSERT INTO learned_blends (id, name, domain, inputs_json, output_json, primitive_depths_json, source_prompt) VALUES (?, ?, ?, ?, ?, ?, ?)"
         ).bind(uuid(), name, b.domain, JSON.stringify(b.inputs), JSON.stringify(b.output), b.primitive_depths ? JSON.stringify(b.primitive_depths) : null, (b.source_prompt || "").slice(0, 120)).run();
         results.blends++;
@@ -908,13 +915,13 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       }
       for (const t of body.time || []) {
         if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
-        const existing = await env.DB.prepare("SELECT id FROM learned_time WHERE profile_key = ?").bind(t.key).first();
+        const existing = await db.prepare("SELECT id FROM learned_time WHERE profile_key = ?").bind(t.key).first();
         if (existing) {
-          await env.DB.prepare("UPDATE learned_time SET count = count + 1 WHERE profile_key = ?").bind(t.key).run();
+          await db.prepare("UPDATE learned_time SET count = count + 1 WHERE profile_key = ?").bind(t.key).run();
         } else {
           const name = await generateUniqueName(env);
-          await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
-          await env.DB.prepare(
+          await db.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+          await db.prepare(
             "INSERT INTO learned_time (id, profile_key, duration, fps, count, sources_json, name) VALUES (?, ?, ?, ?, 1, ?, ?)"
           ).bind(uuid(), t.key, t.duration, t.fps, t.source_prompt ? JSON.stringify([t.source_prompt.slice(0, 80)]) : null, name).run();
         }
@@ -923,13 +930,13 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       }
       for (const m of body.motion || []) {
         if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
-        const existing = await env.DB.prepare("SELECT id FROM learned_motion WHERE profile_key = ?").bind(m.key).first();
+        const existing = await db.prepare("SELECT id FROM learned_motion WHERE profile_key = ?").bind(m.key).first();
         if (existing) {
-          await env.DB.prepare("UPDATE learned_motion SET count = count + 1 WHERE profile_key = ?").bind(m.key).run();
+          await db.prepare("UPDATE learned_motion SET count = count + 1 WHERE profile_key = ?").bind(m.key).run();
         } else {
           const name = await generateUniqueName(env);
-          await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
-          await env.DB.prepare(
+          await db.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+          await db.prepare(
             "INSERT INTO learned_motion (id, profile_key, motion_level, motion_std, motion_trend, motion_direction, motion_rhythm, count, sources_json, name, depth_breakdown_json) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)"
           ).bind(uuid(), m.key, m.motion_level, m.motion_std, m.motion_trend, m.motion_direction ?? "neutral", m.motion_rhythm ?? "steady", m.source_prompt ? JSON.stringify([m.source_prompt.slice(0, 80)]) : null, name, m.depth_breakdown ? JSON.stringify(m.depth_breakdown) : null).run();
         }
@@ -938,13 +945,13 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       }
       for (const l of body.lighting || []) {
         if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
-        const existing = await env.DB.prepare("SELECT id FROM learned_lighting WHERE profile_key = ?").bind(l.key).first();
+        const existing = await db.prepare("SELECT id FROM learned_lighting WHERE profile_key = ?").bind(l.key).first();
         if (existing) {
-          await env.DB.prepare("UPDATE learned_lighting SET count = count + 1 WHERE profile_key = ?").bind(l.key).run();
+          await db.prepare("UPDATE learned_lighting SET count = count + 1 WHERE profile_key = ?").bind(l.key).run();
         } else {
           const name = await generateUniqueName(env);
-          await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
-          await env.DB.prepare(
+          await db.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+          await db.prepare(
             "INSERT INTO learned_lighting (id, profile_key, brightness, contrast, saturation, count, sources_json, name, depth_breakdown_json) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)"
           ).bind(uuid(), l.key, l.brightness, l.contrast, l.saturation, l.source_prompt ? JSON.stringify([l.source_prompt.slice(0, 80)]) : null, name, l.depth_breakdown ? JSON.stringify(l.depth_breakdown) : null).run();
         }
@@ -953,13 +960,13 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       }
       for (const c of body.composition || []) {
         if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
-        const existing = await env.DB.prepare("SELECT id FROM learned_composition WHERE profile_key = ?").bind(c.key).first();
+        const existing = await db.prepare("SELECT id FROM learned_composition WHERE profile_key = ?").bind(c.key).first();
         if (existing) {
-          await env.DB.prepare("UPDATE learned_composition SET count = count + 1 WHERE profile_key = ?").bind(c.key).run();
+          await db.prepare("UPDATE learned_composition SET count = count + 1 WHERE profile_key = ?").bind(c.key).run();
         } else {
           const name = await generateUniqueName(env);
-          await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
-          await env.DB.prepare(
+          await db.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+          await db.prepare(
             "INSERT INTO learned_composition (id, profile_key, center_x, center_y, luminance_balance, count, sources_json, name) VALUES (?, ?, ?, ?, ?, 1, ?, ?)"
           ).bind(uuid(), c.key, c.center_x, c.center_y, c.luminance_balance, c.source_prompt ? JSON.stringify([c.source_prompt.slice(0, 80)]) : null, name).run();
         }
@@ -968,13 +975,13 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       }
       for (const g of body.graphics || []) {
         if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
-        const existing = await env.DB.prepare("SELECT id FROM learned_graphics WHERE profile_key = ?").bind(g.key).first();
+        const existing = await db.prepare("SELECT id FROM learned_graphics WHERE profile_key = ?").bind(g.key).first();
         if (existing) {
-          await env.DB.prepare("UPDATE learned_graphics SET count = count + 1 WHERE profile_key = ?").bind(g.key).run();
+          await db.prepare("UPDATE learned_graphics SET count = count + 1 WHERE profile_key = ?").bind(g.key).run();
         } else {
           const name = await generateUniqueName(env);
-          await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
-          await env.DB.prepare(
+          await db.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+          await db.prepare(
             "INSERT INTO learned_graphics (id, profile_key, edge_density, spatial_variance, busyness, count, sources_json, name) VALUES (?, ?, ?, ?, ?, 1, ?, ?)"
           ).bind(uuid(), g.key, g.edge_density, g.spatial_variance, g.busyness, g.source_prompt ? JSON.stringify([g.source_prompt.slice(0, 80)]) : null, name).run();
         }
@@ -983,13 +990,13 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       }
       for (const t of body.temporal || []) {
         if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
-        const existing = await env.DB.prepare("SELECT id FROM learned_temporal WHERE profile_key = ?").bind(t.key).first();
+        const existing = await db.prepare("SELECT id FROM learned_temporal WHERE profile_key = ?").bind(t.key).first();
         if (existing) {
-          await env.DB.prepare("UPDATE learned_temporal SET count = count + 1 WHERE profile_key = ?").bind(t.key).run();
+          await db.prepare("UPDATE learned_temporal SET count = count + 1 WHERE profile_key = ?").bind(t.key).run();
         } else {
           const name = await generateUniqueName(env);
-          await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
-          await env.DB.prepare(
+          await db.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+          await db.prepare(
             "INSERT INTO learned_temporal (id, profile_key, duration, motion_trend, count, sources_json, name) VALUES (?, ?, ?, ?, 1, ?, ?)"
           ).bind(uuid(), t.key, t.duration, t.motion_trend, t.source_prompt ? JSON.stringify([t.source_prompt.slice(0, 80)]) : null, name).run();
         }
@@ -998,13 +1005,13 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       }
       for (const t of body.technical || []) {
         if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
-        const existing = await env.DB.prepare("SELECT id FROM learned_technical WHERE profile_key = ?").bind(t.key).first();
+        const existing = await db.prepare("SELECT id FROM learned_technical WHERE profile_key = ?").bind(t.key).first();
         if (existing) {
-          await env.DB.prepare("UPDATE learned_technical SET count = count + 1 WHERE profile_key = ?").bind(t.key).run();
+          await db.prepare("UPDATE learned_technical SET count = count + 1 WHERE profile_key = ?").bind(t.key).run();
         } else {
           const name = await generateUniqueName(env);
-          await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
-          await env.DB.prepare(
+          await db.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+          await db.prepare(
             "INSERT INTO learned_technical (id, profile_key, width, height, fps, count, sources_json, name) VALUES (?, ?, ?, ?, ?, 1, ?, ?)"
           ).bind(uuid(), t.key, t.width, t.height, t.fps, t.source_prompt ? JSON.stringify([t.source_prompt.slice(0, 80)]) : null, name).run();
         }
@@ -1013,13 +1020,13 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       }
       for (const a of body.audio_semantic || []) {
         if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
-        const existing = await env.DB.prepare("SELECT id FROM learned_audio_semantic WHERE profile_key = ?").bind(a.key).first();
+        const existing = await db.prepare("SELECT id FROM learned_audio_semantic WHERE profile_key = ?").bind(a.key).first();
         if (existing) {
-          await env.DB.prepare("UPDATE learned_audio_semantic SET count = count + 1 WHERE profile_key = ?").bind(a.key).run();
+          await db.prepare("UPDATE learned_audio_semantic SET count = count + 1 WHERE profile_key = ?").bind(a.key).run();
         } else {
           const name = (a.name && a.name.trim()) ? a.name : await generateUniqueName(env);
-          if (!a.name || !a.name.trim()) await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
-          await env.DB.prepare(
+          if (!a.name || !a.name.trim()) await db.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+          await db.prepare(
             "INSERT INTO learned_audio_semantic (id, profile_key, role, count, sources_json, name) VALUES (?, ?, ?, 1, ?, ?)"
           ).bind(uuid(), a.key, a.role || "ambient", a.source_prompt ? JSON.stringify([a.source_prompt.slice(0, 80)]) : null, name).run();
         }
@@ -1028,13 +1035,13 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       }
       for (const g of body.gradient || []) {
         if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
-        const existing = await env.DB.prepare("SELECT id FROM learned_gradient WHERE profile_key = ?").bind(g.key).first();
+        const existing = await db.prepare("SELECT id FROM learned_gradient WHERE profile_key = ?").bind(g.key).first();
         if (existing) {
-          await env.DB.prepare("UPDATE learned_gradient SET count = count + 1 WHERE profile_key = ?").bind(g.key).run();
+          await db.prepare("UPDATE learned_gradient SET count = count + 1 WHERE profile_key = ?").bind(g.key).run();
         } else {
           const name = await generateUniqueName(env);
-          await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
-          await env.DB.prepare(
+          await db.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+          await db.prepare(
             "INSERT INTO learned_gradient (id, profile_key, gradient_type, strength, count, sources_json, name, depth_breakdown_json) VALUES (?, ?, ?, ?, 1, ?, ?, ?)"
           ).bind(uuid(), g.key, g.gradient_type ?? "angled", g.strength ?? null, g.source_prompt ? JSON.stringify([g.source_prompt.slice(0, 80)]) : null, name, g.depth_breakdown ? JSON.stringify(g.depth_breakdown) : null).run();
         }
@@ -1043,13 +1050,13 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       }
       for (const c of body.camera || []) {
         if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
-        const existing = await env.DB.prepare("SELECT id FROM learned_camera WHERE profile_key = ?").bind(c.key).first();
+        const existing = await db.prepare("SELECT id FROM learned_camera WHERE profile_key = ?").bind(c.key).first();
         if (existing) {
-          await env.DB.prepare("UPDATE learned_camera SET count = count + 1 WHERE profile_key = ?").bind(c.key).run();
+          await db.prepare("UPDATE learned_camera SET count = count + 1 WHERE profile_key = ?").bind(c.key).run();
         } else {
           const name = await generateUniqueName(env);
-          await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
-          await env.DB.prepare(
+          await db.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+          await db.prepare(
             "INSERT INTO learned_camera (id, profile_key, motion_type, speed, count, sources_json, name, depth_breakdown_json) VALUES (?, ?, ?, ?, 1, ?, ?, ?)"
           ).bind(uuid(), c.key, c.motion_type ?? "static", c.speed ?? null, c.source_prompt ? JSON.stringify([c.source_prompt.slice(0, 80)]) : null, name, c.depth_breakdown ? JSON.stringify(c.depth_breakdown) : null).run();
         }
@@ -1058,13 +1065,13 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       }
       for (const t of body.transition || []) {
         if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
-        const existing = await env.DB.prepare("SELECT id FROM learned_transition WHERE profile_key = ?").bind(t.key).first();
+        const existing = await db.prepare("SELECT id FROM learned_transition WHERE profile_key = ?").bind(t.key).first();
         if (existing) {
-          await env.DB.prepare("UPDATE learned_transition SET count = count + 1 WHERE profile_key = ?").bind(t.key).run();
+          await db.prepare("UPDATE learned_transition SET count = count + 1 WHERE profile_key = ?").bind(t.key).run();
         } else {
           const name = await generateUniqueName(env);
-          await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
-          await env.DB.prepare(
+          await db.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+          await db.prepare(
             "INSERT INTO learned_transition (id, profile_key, type, duration_seconds, count, sources_json, name) VALUES (?, ?, ?, ?, 1, ?, ?)"
           ).bind(uuid(), t.key, t.type ?? "cut", t.duration_seconds ?? null, t.source_prompt ? JSON.stringify([t.source_prompt.slice(0, 80)]) : null, name).run();
         }
@@ -1073,13 +1080,13 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       }
       for (const d of body.depth || []) {
         if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
-        const existing = await env.DB.prepare("SELECT id FROM learned_depth WHERE profile_key = ?").bind(d.key).first();
+        const existing = await db.prepare("SELECT id FROM learned_depth WHERE profile_key = ?").bind(d.key).first();
         if (existing) {
-          await env.DB.prepare("UPDATE learned_depth SET count = count + 1 WHERE profile_key = ?").bind(d.key).run();
+          await db.prepare("UPDATE learned_depth SET count = count + 1 WHERE profile_key = ?").bind(d.key).run();
         } else {
           const name = await generateUniqueName(env);
-          await env.DB.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
-          await env.DB.prepare(
+          await db.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+          await db.prepare(
             "INSERT INTO learned_depth (id, profile_key, parallax_strength, layer_count, count, sources_json, name) VALUES (?, ?, ?, ?, 1, ?, ?)"
           ).bind(uuid(), d.key, d.parallax_strength ?? null, d.layer_count ?? null, d.source_prompt ? JSON.stringify([d.source_prompt.slice(0, 80)]) : null, name).run();
         }
@@ -1091,7 +1098,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       // Record discovery run when job_id present (even if totalResults=0) so diagnostics show "attempted"
       if (jobId) {
         try {
-          await env.DB.prepare("INSERT INTO discovery_runs (id, job_id) VALUES (?, ?)")
+          await db.prepare("INSERT INTO discovery_runs (id, job_id) VALUES (?, ?)")
             .bind(uuid(), jobId).run();
         } catch {
           // Ignore duplicate or missing table
@@ -1111,14 +1118,14 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
     if (path === "/api/knowledge/colors" && request.method === "GET") {
       const key = new URL(request.url).searchParams.get("key");
       if (!key) return err("key required");
-      const row = await env.DB.prepare("SELECT color_key FROM learned_colors WHERE color_key = ?").bind(key).first();
+      const row = await db.prepare("SELECT color_key FROM learned_colors WHERE color_key = ?").bind(key).first();
       return json({ exists: !!row });
     }
 
     // GET /api/knowledge/for-creation — learned colors and motion for creation (closes the loop)
     if (path === "/api/knowledge/for-creation" && request.method === "GET") {
       try {
-      const limit = Math.min(parseInt(new URL(request.url).searchParams.get("limit") || "300", 10), 2000);
+      const limit = Math.min(parseInt(new URL(request.url).searchParams.get("limit") || "200", 10), 2000);
       const interpLimitParam = new URL(request.url).searchParams.get("interpretation_limit") || "100";
       const interpLimit = Math.min(parseInt(interpLimitParam, 10), 500);
       const cacheKey = `knowledge:for-creation:${limit}:${interpLimit}`;
@@ -1126,13 +1133,31 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         const cached = await env.MOTION_KV.get(cacheKey);
         if (cached) return new Response(cached, { headers: { "Content-Type": "application/json", "X-Cache": "HIT" } });
       }
-      const colorRows = await env.DB.prepare(
-        "SELECT color_key, r, g, b, count, sources_json, name FROM learned_colors ORDER BY count DESC LIMIT ?"
-      )
-        .bind(limit)
-        .all<{ color_key: string; r: number; g: number; b: number; count: number; sources_json: string | null; name: string }>();
+      // Single batch reduces D1 round-trips and CPU overhead
+      const batchResults = await db.batch([
+        db.prepare("SELECT color_key, r, g, b, count, sources_json, name FROM learned_colors ORDER BY count DESC LIMIT ?").bind(limit),
+        db.prepare("SELECT profile_key, motion_level, motion_std, motion_trend, count, sources_json, name FROM learned_motion ORDER BY count DESC LIMIT ?").bind(limit),
+        db.prepare("SELECT domain, inputs_json, output_json, source_prompt, created_at FROM learned_blends WHERE domain = 'audio' ORDER BY created_at DESC LIMIT ?").bind(limit),
+        db.prepare("SELECT output_json FROM learned_blends WHERE domain = 'gradient' ORDER BY created_at DESC LIMIT ?").bind(limit),
+        db.prepare("SELECT gradient_type FROM learned_gradient ORDER BY count DESC LIMIT ?").bind(limit),
+        db.prepare("SELECT output_json FROM learned_blends WHERE domain = 'camera' ORDER BY created_at DESC LIMIT ?").bind(limit),
+        db.prepare("SELECT motion_type FROM learned_camera ORDER BY count DESC LIMIT ?").bind(limit),
+        db.prepare("SELECT prompt, instruction_json FROM interpretations WHERE status = 'done' AND instruction_json IS NOT NULL ORDER BY updated_at DESC LIMIT ?").bind(interpLimit),
+        db.prepare("SELECT color_key, r, g, b, count, created_at FROM static_colors ORDER BY count DESC LIMIT ?").bind(limit),
+        db.prepare("SELECT sound_key, tone, timbre, amplitude, name, count, created_at FROM static_sound ORDER BY count DESC LIMIT ?").bind(limit),
+      ]);
+      type ColorRow = { color_key: string; r: number; g: number; b: number; count: number; sources_json: string | null; name: string };
+      type MotionRow = { profile_key: string; motion_level: number; motion_std: number; motion_trend: string; count: number; sources_json: string | null; name: string | null };
+      type AudioRow = { domain: string; inputs_json: string; output_json: string; source_prompt: string | null; created_at: string };
+      type OutputRow = { output_json: string };
+      type GradientRow = { gradient_type: string };
+      type CameraRow = { motion_type: string };
+      type InterpRow = { prompt: string; instruction_json: string };
+      type StaticColorRow = { color_key: string; r: number; g: number; b: number; count: number; created_at: string | null };
+      type StaticSoundRow = { sound_key: string; tone: string | null; timbre: string | null; amplitude: number | null; name: string | null; count: number; created_at: string | null };
+      const colorRows = (batchResults[0].results || []) as ColorRow[];
       const colors: Record<string, { r: number; g: number; b: number; count: number; sources: string[]; name: string }> = {};
-      for (const r of colorRows.results || []) {
+      for (const r of colorRows) {
         colors[r.color_key] = {
           r: r.r,
           g: r.g,
@@ -1142,12 +1167,8 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           name: r.name,
         };
       }
-      const motionRows = await env.DB.prepare(
-        "SELECT profile_key, motion_level, motion_std, motion_trend, count, sources_json, name FROM learned_motion ORDER BY count DESC LIMIT ?"
-      )
-        .bind(limit)
-        .all<{ profile_key: string; motion_level: number; motion_std: number; motion_trend: string; count: number; sources_json: string | null; name: string | null }>();
-      const motion = (motionRows.results || []).map((r) => ({
+      const motionRows = (batchResults[1].results || []) as MotionRow[];
+      const motion = motionRows.map((r) => ({
         key: r.profile_key,
         motion_level: r.motion_level,
         motion_std: r.motion_std,
@@ -1156,27 +1177,17 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         sources: r.sources_json ? (JSON.parse(r.sources_json) as string[]) : [],
         name: r.name,
       }));
-      const audioRows = await env.DB.prepare(
-        "SELECT domain, inputs_json, output_json, source_prompt, created_at FROM learned_blends WHERE domain = 'audio' ORDER BY created_at DESC LIMIT ?"
-      )
-        .bind(limit)
-        .all<{ domain: string; inputs_json: string; output_json: string; source_prompt: string | null; created_at: string }>();
-      const learned_audio = (audioRows.results || []).map((r) => ({
+      const audioRows = (batchResults[2].results || []) as AudioRow[];
+      const learned_audio = audioRows.map((r) => ({
         tempo: (JSON.parse(r.output_json) as Record<string, unknown>).tempo ?? "medium",
         mood: (JSON.parse(r.output_json) as Record<string, unknown>).mood ?? "neutral",
         presence: (JSON.parse(r.output_json) as Record<string, unknown>).presence ?? "ambient",
         source_prompt: r.source_prompt ?? "",
         created_at: r.created_at,
       }));
-      // Gradient and camera from learned_blends (growth from spec) — creation picks from STATIC/registry
       const gradientSeen = new Set<string>();
       const learned_gradient: string[] = [];
-      const gradientBlendRows = await env.DB.prepare(
-        "SELECT output_json FROM learned_blends WHERE domain = 'gradient' ORDER BY created_at DESC LIMIT ?"
-      )
-        .bind(limit)
-        .all<{ output_json: string }>();
-      for (const r of gradientBlendRows.results || []) {
+      for (const r of (batchResults[3].results || []) as OutputRow[]) {
         const out = JSON.parse(r.output_json) as Record<string, unknown>;
         const v = typeof out.gradient_type === "string" ? out.gradient_type.trim() : "";
         if (v && !gradientSeen.has(v)) {
@@ -1184,12 +1195,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           learned_gradient.push(v);
         }
       }
-      const gradientTableRows = await env.DB.prepare(
-        "SELECT gradient_type FROM learned_gradient ORDER BY count DESC LIMIT ?"
-      )
-        .bind(limit)
-        .all<{ gradient_type: string }>();
-      for (const r of gradientTableRows.results || []) {
+      for (const r of (batchResults[4].results || []) as GradientRow[]) {
         const v = (r.gradient_type || "").trim();
         if (v && !gradientSeen.has(v)) {
           gradientSeen.add(v);
@@ -1198,12 +1204,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       }
       const cameraSeen = new Set<string>();
       const learned_camera: string[] = [];
-      const cameraBlendRows = await env.DB.prepare(
-        "SELECT output_json FROM learned_blends WHERE domain = 'camera' ORDER BY created_at DESC LIMIT ?"
-      )
-        .bind(limit)
-        .all<{ output_json: string }>();
-      for (const r of cameraBlendRows.results || []) {
+      for (const r of (batchResults[5].results || []) as OutputRow[]) {
         const out = JSON.parse(r.output_json) as Record<string, unknown>;
         const v = typeof out.camera_motion === "string" ? out.camera_motion.trim() : "";
         if (v && !cameraSeen.has(v)) {
@@ -1211,45 +1212,28 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           learned_camera.push(v);
         }
       }
-      const cameraTableRows = await env.DB.prepare(
-        "SELECT motion_type FROM learned_camera ORDER BY count DESC LIMIT ?"
-      )
-        .bind(limit)
-        .all<{ motion_type: string }>();
-      for (const r of cameraTableRows.results || []) {
+      for (const r of (batchResults[6].results || []) as CameraRow[]) {
         const v = (r.motion_type || "").trim();
         if (v && !cameraSeen.has(v)) {
           cameraSeen.add(v);
           learned_camera.push(v);
         }
       }
-      // Canonical non-pure (multi-frame) options — gradient/camera/motion are non-pure; creation uses these when registry empty
       const origin_gradient = ["vertical", "horizontal", "radial", "angled"];
       const origin_camera = ["static", "pan", "tilt", "dolly", "crane", "zoom", "zoom_out", "handheld", "roll", "truck", "pedestal", "arc", "tracking", "birds_eye", "whip_pan", "rotate"];
       const origin_motion = ["slow", "wave", "flow", "fast", "pulse"];
-      // Interpretation registry: user prompts + resolved instructions (for creation / pick_prompt)
-      const interpRows = await env.DB.prepare(
-        "SELECT prompt, instruction_json FROM interpretations WHERE status = 'done' AND instruction_json IS NOT NULL ORDER BY updated_at DESC LIMIT ?"
-      )
-        .bind(interpLimit)
-        .all<{ prompt: string; instruction_json: string }>();
-      const interpretation_prompts = (interpRows.results || []).map((r) => ({
+      const interpRows = (batchResults[7].results || []) as InterpRow[];
+      const interpretation_prompts = interpRows.map((r) => ({
         prompt: r.prompt,
         instruction: r.instruction_json ? (JSON.parse(r.instruction_json) as Record<string, unknown>) : {},
       }));
-      // Pure (static) colors for random-per-pixel creation: origin + discovered per-frame colors (include count for underused bias)
-      const staticColorRows = await env.DB.prepare(
-        "SELECT color_key, r, g, b, count, created_at FROM static_colors ORDER BY count DESC LIMIT ?"
-      ).bind(limit).all<{ color_key: string; r: number; g: number; b: number; count: number; created_at: string | null }>();
+      const staticColorRows = (batchResults[8].results || []) as StaticColorRow[];
       const static_colors: Record<string, { r: number; g: number; b: number; count?: number; created_at?: string }> = {};
-      for (const r of staticColorRows.results || []) {
+      for (const r of staticColorRows) {
         static_colors[r.color_key] = { r: r.r, g: r.g, b: r.b, count: r.count, created_at: r.created_at ?? undefined };
       }
-      // Pure (static) sound mesh: origin + discovered per-instant sounds (include count for underused bias)
-      const staticSoundRows = await env.DB.prepare(
-        "SELECT sound_key, tone, timbre, amplitude, name, count, created_at FROM static_sound ORDER BY count DESC LIMIT ?"
-      ).bind(limit).all<{ sound_key: string; tone: string | null; timbre: string | null; amplitude: number | null; name: string | null; count: number; created_at: string | null }>();
-      const static_sound = (staticSoundRows.results || []).map((r) => ({
+      const staticSoundRows = (batchResults[9].results || []) as StaticSoundRow[];
+      const static_sound = staticSoundRows.map((r) => ({
         key: r.sound_key,
         tone: r.tone ?? undefined,
         timbre: r.timbre ?? undefined,
@@ -1274,7 +1258,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       const body = JSON.stringify(payload);
       if (env.MOTION_KV) {
         try {
-          await env.MOTION_KV.put(cacheKey, body, { expirationTtl: 90 });
+          await env.MOTION_KV.put(cacheKey, body, { expirationTtl: 120 });
         } catch { /* ignore KV write failure */ }
       }
       return new Response(body, { headers: { "Content-Type": "application/json" } });
@@ -1298,7 +1282,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           const word = inventSemanticWord(seed);
           const name = toTitleCase(word);
           if (usedNames.has(name)) continue;
-          const inDb = await env.DB.prepare("SELECT 1 FROM learned_blends WHERE name = ?").bind(name).first();
+          const inDb = await db.prepare("SELECT 1 FROM learned_blends WHERE name = ?").bind(name).first();
           if (inDb) continue;
           usedNames.add(name);
           return name;
@@ -1325,7 +1309,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         );
         for (const table of colorTables) {
           try {
-            const rows = await env.DB.prepare(
+            const rows = await db.prepare(
               `SELECT id, name, r, g, b FROM ${table} WHERE name GLOB 'dsc_*' OR name GLOB 'Novel*' OR name GLOB 'color_*' LIMIT ?`
             ).bind(maxRows).all<{ id: string; name: string; r: number; g: number; b: number }>();
             for (const r of rows.results || []) {
@@ -1336,7 +1320,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
                 const newName = rgbToSemanticColorName(row.r ?? 0, row.g ?? 0, row.b ?? 0, usedNames);
                 usedNames.add(newName);
                 if (!dryRun) {
-                  await env.DB.prepare(`UPDATE ${table} SET name = ? WHERE id = ?`)
+                  await db.prepare(`UPDATE ${table} SET name = ? WHERE id = ?`)
                     .bind(newName, row.id)
                     .run();
                   await cascadeNameUpdate(env, oldName, newName);
@@ -1372,7 +1356,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         for (const { table, idCol, nameCol } of otherTables) {
           try {
             // Include dsc_*, Novel*, and long names (9+ chars) that may be gibberish
-            const rows = await env.DB.prepare(
+            const rows = await db.prepare(
               `SELECT ${idCol}, ${nameCol} FROM ${table} WHERE ${nameCol} GLOB 'dsc_*' OR ${nameCol} GLOB 'Novel*' OR LENGTH(TRIM(${nameCol})) > 9 LIMIT ?`
             ).bind(maxRows).all<{ id: string; name: string }>();
             for (const r of rows.results || []) {
@@ -1382,7 +1366,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
                 const oldName = row.name;
                 const newName = await pickUniqueName();
                 if (!dryRun) {
-                  await env.DB.prepare(`UPDATE ${table} SET ${nameCol} = ? WHERE ${idCol} = ?`)
+                  await db.prepare(`UPDATE ${table} SET ${nameCol} = ? WHERE ${idCol} = ?`)
                     .bind(newName, row.id)
                     .run();
                   await cascadeNameUpdate(env, oldName, newName);
@@ -1412,22 +1396,22 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       try {
         let rows: unknown[] = [];
         if (table === "static_colors") {
-          const r = await env.DB.prepare(
+          const r = await db.prepare(
             "SELECT id, r, g, b FROM static_colors LIMIT ?"
           ).bind(limit).all<{ id: string; r: number; g: number; b: number }>();
           rows = r.results || [];
         } else if (table === "learned_colors") {
-          const r = await env.DB.prepare(
+          const r = await db.prepare(
             "SELECT id, color_key, r, g, b FROM learned_colors LIMIT ?"
           ).bind(limit).all<{ id: string; color_key: string; r: number; g: number; b: number }>();
           rows = r.results || [];
         } else if (table === "learned_motion") {
-          const r = await env.DB.prepare(
+          const r = await db.prepare(
             "SELECT id, motion_level, motion_trend FROM learned_motion LIMIT ?"
           ).bind(limit).all<{ id: string; motion_level: number; motion_trend: string }>();
           rows = r.results || [];
         } else if (table === "learned_lighting") {
-          const r = await env.DB.prepare(
+          const r = await db.prepare(
             "SELECT id, brightness, contrast, saturation FROM learned_lighting LIMIT ?"
           ).bind(limit).all<{ id: string; brightness: number; contrast: number; saturation: number }>();
           rows = r.results || [];
@@ -1461,7 +1445,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         if (!col) continue;
         try {
           if (!dryRun) {
-            await env.DB.prepare(
+            await db.prepare(
               `UPDATE ${u.table} SET ${col} = ? WHERE id = ?`
             )
               .bind(JSON.stringify(u.depth_breakdown), u.id)
@@ -1494,15 +1478,15 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       const soundPrimitives = new Set<string>();
 
       try {
-        const sc = await env.DB.prepare("SELECT COUNT(*) as c FROM static_colors").first<{ c: number }>();
+        const sc = await db.prepare("SELECT COUNT(*) as c FROM static_colors").first<{ c: number }>();
         staticColorsCount = sc?.c ?? 0;
       } catch { /* table may not exist */ }
       try {
-        const ss = await env.DB.prepare("SELECT COUNT(*) as c FROM static_sound").first<{ c: number }>();
+        const ss = await db.prepare("SELECT COUNT(*) as c FROM static_sound").first<{ c: number }>();
         staticSoundCount = ss?.c ?? 0;
       } catch { /* table may not exist */ }
       try {
-        const rows = await env.DB.prepare("SELECT depth_breakdown_json FROM static_sound LIMIT 500")
+        const rows = await db.prepare("SELECT depth_breakdown_json FROM static_sound LIMIT 500")
           .all<{ depth_breakdown_json: string | null }>();
         for (const r of rows.results || []) {
           if (!r.depth_breakdown_json) continue;
@@ -1519,7 +1503,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         }
       } catch { /* ignore */ }
       try {
-        const lc = await env.DB.prepare("SELECT COUNT(*) as c FROM learned_colors").first<{ c: number }>();
+        const lc = await db.prepare("SELECT COUNT(*) as c FROM learned_colors").first<{ c: number }>();
         learnedColorsCount = lc?.c ?? 0;
       } catch { /* ignore */ }
 
@@ -1530,7 +1514,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       for (const aspect of narrativeAspects) {
         const originSize = NARRATIVE_ORIGIN_SIZES[aspect] ?? 0;
         try {
-          const r = await env.DB.prepare(
+          const r = await db.prepare(
             "SELECT entry_key FROM narrative_entries WHERE aspect = ?"
           ).bind(aspect).all<{ entry_key: string }>();
           const entryKeys = [...new Set((r.results || []).map((x) => x.entry_key))];
@@ -1565,7 +1549,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       const coverageBody = JSON.stringify(coverage);
       if (env.MOTION_KV) {
         try {
-          await env.MOTION_KV.put(coverageCacheKey, coverageBody, { expirationTtl: 60 });
+          await env.MOTION_KV.put(coverageCacheKey, coverageBody, { expirationTtl: 90 });
         } catch { /* ignore */ }
       }
       return new Response(coverageBody, { headers: { "Content-Type": "application/json" } });
@@ -1659,31 +1643,31 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         mood_amace: "mood_amber", mood_lumera: "mood_lumina", mood_luneber: "mood_lunar", mood_glowish: "mood_glow", mood_starwood: "mood_star",
       };
       const fixNarrativeName = (name: string): string => NARRATIVE_NAME_TYPOS[name] ?? name;
-      const staticColors = await env.DB.prepare(
+      const staticColors = await db.prepare(
         "SELECT color_key, r, g, b, name, count, depth_breakdown_json FROM static_colors ORDER BY count DESC LIMIT ?"
       ).bind(regLimit).all<{ color_key: string; r: number; g: number; b: number; name: string; count: number; depth_breakdown_json: string | null }>();
-      const staticSound = await env.DB.prepare(
+      const staticSound = await db.prepare(
         "SELECT sound_key, name, count, depth_breakdown_json, strength_pct FROM static_sound ORDER BY count DESC LIMIT ?"
       ).bind(regLimit).all<{ sound_key: string; name: string; count: number; depth_breakdown_json: string | null; strength_pct: number | null }>();
-      const learnedColors = await env.DB.prepare(
+      const learnedColors = await db.prepare(
         "SELECT color_key, r, g, b, name, count, depth_breakdown_json FROM learned_colors ORDER BY count DESC LIMIT ?"
       ).bind(regLimit).all<{ color_key: string; r: number; g: number; b: number; name: string; count: number; depth_breakdown_json: string | null }>();
-      const learnedMotion = await env.DB.prepare(
+      const learnedMotion = await db.prepare(
         "SELECT profile_key, motion_trend, name, count FROM learned_motion ORDER BY count DESC LIMIT ?"
       ).bind(regLimit).all<{ profile_key: string; motion_trend: string; name: string | null; count: number }>();
-      const blends = await env.DB.prepare(
+      const blends = await db.prepare(
         "SELECT name, domain, output_json, primitive_depths_json FROM learned_blends ORDER BY created_at DESC LIMIT ?"
       ).bind(regLimit).all<{ name: string; domain: string; output_json: string; primitive_depths_json: string | null }>();
       // Merge discovery tables into dynamic (living plan §1.2 / Priority 1): per-window discoveries appear in export
-      const learnedGradientRows = await env.DB.prepare(
+      const learnedGradientRows = await db.prepare(
         "SELECT profile_key, gradient_type, name, count, depth_breakdown_json FROM learned_gradient ORDER BY count DESC LIMIT ?"
       ).bind(regLimit).all<{ profile_key: string; gradient_type: string; name: string; count: number; depth_breakdown_json: string | null }>();
-      const learnedCameraRows = await env.DB.prepare(
+      const learnedCameraRows = await db.prepare(
         "SELECT profile_key, motion_type, name, count, depth_breakdown_json FROM learned_camera ORDER BY count DESC LIMIT ?"
       ).bind(regLimit).all<{ profile_key: string; motion_type: string; name: string; count: number; depth_breakdown_json: string | null }>();
       let learnedAudioSemanticRows: Array<{ profile_key: string; role: string; name: string; count: number }> = [];
       try {
-        const r = await env.DB.prepare(
+        const r = await db.prepare(
           "SELECT profile_key, role, name, count FROM learned_audio_semantic ORDER BY count DESC LIMIT ?"
         ).bind(regLimit).all<{ profile_key: string; role: string; name: string; count: number }>();
         learnedAudioSemanticRows = r.results || [];
@@ -1694,7 +1678,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       const narrative: Record<string, Array<{ entry_key: string; value: string; name: string; count: number }>> = {};
       const NARRATIVE_LOW_COUNT_THRESHOLD = 5;
       for (const aspect of narrativeAspects) {
-        const rows = await env.DB.prepare(
+        const rows = await db.prepare(
           "SELECT entry_key, value, name, count FROM narrative_entries WHERE aspect = ? ORDER BY count DESC LIMIT ?"
         ).bind(aspect, regLimit).all<{ entry_key: string; value: string | null; name: string; count: number }>();
         narrative[aspect] = (rows.results || []).map((r) => {
@@ -1708,7 +1692,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           };
         });
       }
-      const interpretationRows = await env.DB.prepare(
+      const interpretationRows = await db.prepare(
         "SELECT id, prompt, instruction_json, updated_at FROM interpretations WHERE status = 'done' AND instruction_json IS NOT NULL ORDER BY updated_at DESC LIMIT ?"
       ).bind(Math.min(regLimit, 100)).all<{ id: string; prompt: string; instruction_json: string; updated_at: string }>();
       const interpretation = (interpretationRows.results || []).map((r) => ({
@@ -1719,7 +1703,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       }));
       let linguistic: Array<{ span: string; canonical: string; domain: string; variant_type: string; count: number }> = [];
       try {
-        const lingRows = await env.DB.prepare(
+        const lingRows = await db.prepare(
           "SELECT span, canonical, domain, variant_type, count FROM linguistic_registry ORDER BY count DESC LIMIT ?"
         ).bind(Math.min(regLimit, 200)).all<{ span: string; canonical: string; domain: string; variant_type: string; count: number }>();
         linguistic = lingRows.results || [];
@@ -1832,7 +1816,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       let learnedTemporalRows: LearnedRow[] = [];
       let learnedTechnicalRows: LearnedRow[] = [];
       try {
-        const l = await env.DB.prepare(
+        const l = await db.prepare(
           "SELECT profile_key, name, depth_breakdown_json FROM learned_lighting ORDER BY count DESC LIMIT ?"
         ).bind(regLimit).all<{ profile_key: string; name: string; depth_breakdown_json: string | null }>();
         learnedLightingRows = (l.results || []).map((r) => {
@@ -1844,7 +1828,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         // table may not exist
       }
       try {
-        const c = await env.DB.prepare(
+        const c = await db.prepare(
           "SELECT profile_key, name FROM learned_composition ORDER BY count DESC LIMIT ?"
         ).bind(regLimit).all<{ profile_key: string; name: string }>();
         learnedCompositionRows = (c.results || []).map((r) => ({
@@ -1857,7 +1841,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         // table may not exist
       }
       try {
-        const g = await env.DB.prepare(
+        const g = await db.prepare(
           "SELECT profile_key, name FROM learned_graphics ORDER BY count DESC LIMIT ?"
         ).bind(regLimit).all<{ profile_key: string; name: string }>();
         learnedGraphicsRows = (g.results || []).map((r) => ({
@@ -1870,7 +1854,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         // table may not exist
       }
       try {
-        const t = await env.DB.prepare(
+        const t = await db.prepare(
           "SELECT profile_key, name FROM learned_temporal ORDER BY count DESC LIMIT ?"
         ).bind(regLimit).all<{ profile_key: string; name: string }>();
         learnedTemporalRows = (t.results || []).map((r) => ({
@@ -1883,7 +1867,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         // table may not exist
       }
       try {
-        const tech = await env.DB.prepare(
+        const tech = await db.prepare(
           "SELECT profile_key, name FROM learned_technical ORDER BY count DESC LIMIT ?"
         ).bind(regLimit).all<{ profile_key: string; name: string }>();
         learnedTechnicalRows = (tech.results || []).map((r) => ({
@@ -2046,14 +2030,14 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         const cached = await env.MOTION_KV.get(progressCacheKey);
         if (cached) return new Response(cached, { headers: { "Content-Type": "application/json", "X-Cache": "HIT" } });
       }
-      const completed = await env.DB.prepare(
+      const completed = await db.prepare(
         "SELECT id FROM jobs WHERE status = 'completed' AND r2_key IS NOT NULL ORDER BY updated_at DESC LIMIT ?"
       ).bind(last).all<{ id: string }>();
       const ids = (completed.results || []).map((r) => r.id);
       let withLearning = 0;
       if (ids.length > 0) {
         const placeholders = ids.map(() => "?").join(",");
-        const r = await env.DB.prepare(
+        const r = await db.prepare(
           `SELECT COUNT(DISTINCT job_id) as c FROM learning_runs WHERE job_id IN (${placeholders})`
         ).bind(...ids).first<{ c: number }>();
         withLearning = r?.c ?? 0;
@@ -2064,7 +2048,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       if (ids.length > 0) {
         try {
           const placeholders = ids.map(() => "?").join(",");
-          const dr = await env.DB.prepare(
+          const dr = await db.prepare(
             `SELECT COUNT(DISTINCT job_id) as c FROM discovery_runs WHERE job_id IN (${placeholders})`
           ).bind(...ids).first<{ c: number }>();
           withDiscovery = dr?.c ?? 0;
@@ -2095,8 +2079,8 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       // Repetition score: fraction of total count in top 20 entries (0–1). High = few entries dominate.
       let repetitionScore: number | null = null;
       try {
-        const totalMotion = await env.DB.prepare("SELECT COALESCE(SUM(count), 0) as s FROM learned_motion").first<{ s: number }>();
-        const topMotion = await env.DB.prepare(
+        const totalMotion = await db.prepare("SELECT COALESCE(SUM(count), 0) as s FROM learned_motion").first<{ s: number }>();
+        const topMotion = await db.prepare(
           "SELECT SUM(c) as s FROM (SELECT count as c FROM learned_motion ORDER BY count DESC LIMIT 20)"
         ).first<{ s: number }>();
         const total = totalMotion?.s ?? 0;
@@ -2111,7 +2095,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       // Lightweight coverage snapshot for UI and export (avoids separate /api/registries/coverage call)
       let coverage_snapshot: { static_colors_coverage_pct?: number; narrative_min_coverage_pct?: number; static_sound_coverage_pct?: number } | null = null;
       try {
-        const sc = await env.DB.prepare("SELECT COUNT(*) as c FROM static_colors").first<{ c: number }>();
+        const sc = await db.prepare("SELECT COUNT(*) as c FROM static_colors").first<{ c: number }>();
         const staticCount = sc?.c ?? 0;
         const staticCells = 27951;
         const staticPct = staticCells > 0 ? Math.round((100 * staticCount) / staticCells * 100) / 100 : 0;
@@ -2119,7 +2103,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         const aspects = Object.keys(narrativeSizes);
         let minNarrativePct = 100;
         for (const aspect of aspects) {
-          const r = await env.DB.prepare("SELECT COUNT(DISTINCT entry_key) as c FROM narrative_entries WHERE aspect = ?").bind(aspect).first<{ c: number }>();
+          const r = await db.prepare("SELECT COUNT(DISTINCT entry_key) as c FROM narrative_entries WHERE aspect = ?").bind(aspect).first<{ c: number }>();
           const count = r?.c ?? 0;
           const size = narrativeSizes[aspect] ?? 1;
           const pct = size > 0 ? (100 * count) / size : 100;
@@ -2128,7 +2112,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         minNarrativePct = Math.round(minNarrativePct * 100) / 100;
         let staticSoundPct: number | undefined;
         try {
-          const ss = await env.DB.prepare("SELECT COUNT(DISTINCT sound_key) as c FROM static_sound").first<{ c: number }>();
+          const ss = await db.prepare("SELECT COUNT(DISTINCT sound_key) as c FROM static_sound").first<{ c: number }>();
           const soundCount = ss?.c ?? 0;
           const primitiveToneTarget = 5;
           staticSoundPct = Math.round(Math.min(100, (100 * soundCount) / primitiveToneTarget) * 100) / 100;
@@ -2160,7 +2144,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       const progressBody = JSON.stringify(progressPayload);
       if (env.MOTION_KV) {
         try {
-          await env.MOTION_KV.put(progressCacheKey, progressBody, { expirationTtl: 60 });
+          await env.MOTION_KV.put(progressCacheKey, progressBody, { expirationTtl: 90 });
         } catch { /* ignore KV write failure */ }
       }
       return new Response(progressBody, { headers: { "Content-Type": "application/json" } });
@@ -2170,7 +2154,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
     if (path === "/api/metrics" && request.method === "GET") {
       try {
         const last = 20;
-        const completed = await env.DB.prepare(
+        const completed = await db.prepare(
           "SELECT id FROM jobs WHERE status = 'completed' AND r2_key IS NOT NULL ORDER BY updated_at DESC LIMIT ?"
         ).bind(last).all<{ id: string }>();
         const ids = (completed.results || []).map((r) => r.id);
@@ -2178,17 +2162,17 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         let withDiscovery = 0;
         if (ids.length > 0) {
           const ph = ids.map(() => "?").join(",");
-          const lr = await env.DB.prepare(`SELECT COUNT(DISTINCT job_id) as c FROM learning_runs WHERE job_id IN (${ph})`).bind(...ids).first<{ c: number }>();
+          const lr = await db.prepare(`SELECT COUNT(DISTINCT job_id) as c FROM learning_runs WHERE job_id IN (${ph})`).bind(...ids).first<{ c: number }>();
           withLearning = lr?.c ?? 0;
           try {
-            const dr = await env.DB.prepare(`SELECT COUNT(DISTINCT job_id) as c FROM discovery_runs WHERE job_id IN (${ph})`).bind(...ids).first<{ c: number }>();
+            const dr = await db.prepare(`SELECT COUNT(DISTINCT job_id) as c FROM discovery_runs WHERE job_id IN (${ph})`).bind(...ids).first<{ c: number }>();
             withDiscovery = dr?.c ?? 0;
           } catch { /* discovery_runs may not exist */ }
         }
         const totalRuns = ids.length;
         const precision = totalRuns > 0 ? (withLearning / totalRuns) * 100 : 0;
         const discoveryRate = totalRuns > 0 ? (withDiscovery / totalRuns) * 100 : 0;
-        const jobCount = await env.DB.prepare("SELECT COUNT(*) as c FROM jobs WHERE status = 'completed'").first<{ c: number }>();
+        const jobCount = await db.prepare("SELECT COUNT(*) as c FROM jobs WHERE status = 'completed'").first<{ c: number }>();
         const lines = [
           "# HELP motion_productions_total_runs Completed jobs in last N",
           "# TYPE motion_productions_total_runs gauge",
@@ -2214,7 +2198,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
     // GET /api/loop/diagnostics — per-job has_learning / has_discovery for debugging precision gap
     if (path === "/api/loop/diagnostics" && request.method === "GET") {
       const last = Math.min(parseInt(new URL(request.url).searchParams.get("last") || "20", 10), 50);
-      const completed = await env.DB.prepare(
+      const completed = await db.prepare(
         "SELECT id, prompt, created_at FROM jobs WHERE status = 'completed' AND r2_key IS NOT NULL ORDER BY updated_at DESC LIMIT ?"
       ).bind(last).all<{ id: string; prompt: string; created_at: string }>();
       const rows = completed.results || [];
@@ -2223,10 +2207,10 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       const discoverySet = new Set<string>();
       if (ids.length > 0) {
         const placeholders = ids.map(() => "?").join(",");
-        const lr = await env.DB.prepare(`SELECT job_id FROM learning_runs WHERE job_id IN (${placeholders})`).bind(...ids).all<{ job_id: string }>();
+        const lr = await db.prepare(`SELECT job_id FROM learning_runs WHERE job_id IN (${placeholders})`).bind(...ids).all<{ job_id: string }>();
         (lr.results || []).forEach((r) => { if (r.job_id) learningSet.add(r.job_id); });
         try {
-          const dr = await env.DB.prepare(`SELECT job_id FROM discovery_runs WHERE job_id IN (${placeholders})`).bind(...ids).all<{ job_id: string }>();
+          const dr = await db.prepare(`SELECT job_id FROM discovery_runs WHERE job_id IN (${placeholders})`).bind(...ids).all<{ job_id: string }>();
           (dr.results || []).forEach((r) => { if (r.job_id) discoverySet.add(r.job_id); });
         } catch { /* discovery_runs may not exist */ }
       }
@@ -2258,8 +2242,8 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
 async function resolveUniqueBlendName(env: Env, base: string): Promise<string> {
   let candidate = base;
   for (let i = 0; i < 100; i++) {
-    const inReserve = await env.DB.prepare("SELECT name FROM name_reserve WHERE name = ?").bind(candidate).first();
-    const inBlends = await env.DB.prepare("SELECT name FROM learned_blends WHERE name = ?").bind(candidate).first();
+    const inReserve = await db.prepare("SELECT name FROM name_reserve WHERE name = ?").bind(candidate).first();
+    const inBlends = await db.prepare("SELECT name FROM learned_blends WHERE name = ?").bind(candidate).first();
     if (!inReserve && !inBlends) return candidate;
     candidate = i === 0 ? base + "2" : base + (i + 2);
   }
@@ -2388,7 +2372,7 @@ async function cascadeNameUpdate(env: Env, oldName: string, newName: string): Pr
   ];
   for (const { table, col } of tables) {
     try {
-      await env.DB.prepare(
+      await db.prepare(
         `UPDATE ${table} SET ${col} = REPLACE(${col}, ?, ?) WHERE ${col} LIKE ? ESCAPE '\\'`
       )
         .bind(oldName, newName, like)
@@ -2442,10 +2426,10 @@ async function generateUniqueName(env: Env): Promise<string> {
     const word = inventSemanticWord(seed);
     if (word.length >= 4) {
       const name = toTitleCase(word);
-      const inReserve = await env.DB.prepare("SELECT name FROM name_reserve WHERE name = ?").bind(name).first();
-      const inBlends = await env.DB.prepare("SELECT name FROM learned_blends WHERE name = ?").bind(name).first();
-      const inStatic = await env.DB.prepare("SELECT name FROM static_colors WHERE name = ?").bind(name).first();
-      const inLearned = await env.DB.prepare("SELECT name FROM learned_colors WHERE name = ?").bind(name).first();
+      const inReserve = await db.prepare("SELECT name FROM name_reserve WHERE name = ?").bind(name).first();
+      const inBlends = await db.prepare("SELECT name FROM learned_blends WHERE name = ?").bind(name).first();
+      const inStatic = await db.prepare("SELECT name FROM static_colors WHERE name = ?").bind(name).first();
+      const inLearned = await db.prepare("SELECT name FROM learned_colors WHERE name = ?").bind(name).first();
       if (!inReserve && !inBlends && !inStatic && !inLearned) return name;
     }
   }
@@ -2455,7 +2439,7 @@ async function generateUniqueName(env: Env): Promise<string> {
 
 async function logEvent(env: Env, eventType: string, jobId: string | null, payload: Record<string, unknown> | null): Promise<void> {
   const id = crypto.randomUUID();
-  await env.DB.prepare("INSERT INTO events (id, event_type, job_id, payload_json) VALUES (?, ?, ?, ?)")
+  await db.prepare("INSERT INTO events (id, event_type, job_id, payload_json) VALUES (?, ?, ?, ?)")
     .bind(id, eventType, jobId, payload ? JSON.stringify(payload) : null)
     .run();
 }

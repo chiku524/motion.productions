@@ -66,7 +66,17 @@ Copy the **database_id** from the output and add it to `cloudflare/wrangler.json
 ],
 ```
 
-### 3. Apply D1 migrations
+### 3. Enable D1 Read Replication (recommended for multiple workers)
+
+For production with several Railway workers hitting D1 concurrently, enable **Read Replication** to spread read load across replicas and reduce CPU time limit errors:
+
+1. Go to **Cloudflare Dashboard** → **Workers & Pages** → **D1** → **motion-productions-db**
+2. Open **Settings** → **Read Replication**
+3. Click **Enable**
+
+The Worker uses the D1 Sessions API (`withSession("first-unconstrained")`) so reads can be served by replicas; writes always go to the primary. If Read Replication is not enabled, the Worker falls back to the primary with no change in behavior.
+
+### 4. Apply D1 migrations
 
 Migrations apply **all** pending migration files (current and any added in the future). From the **project root**:
 
@@ -88,7 +98,7 @@ npx wrangler d1 migrations apply motion-productions-db --remote
 npx wrangler d1 migrations apply motion-productions-db --local   # for local D1
 ```
 
-### 4. Deploy the Worker
+### 5. Deploy the Worker
 
 From `cloudflare/`:
 
