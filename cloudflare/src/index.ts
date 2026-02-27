@@ -43,6 +43,22 @@ export default {
       return json({ ok: true, service: "motion-productions" });
     }
 
+    // Security.txt (RFC 9116) — vulnerability disclosure
+    if (path === "/security.txt" || path === "/.well-known/security.txt") {
+      const securityTxt = [
+        "Contact: mailto:security@motion.productions",
+        "Expires: 2026-12-31T23:59:59.000Z",
+        "Preferred-Languages: en",
+        "Canonical: https://motion.productions/.well-known/security.txt",
+      ].join("\n");
+      return new Response(securityTxt, {
+        headers: {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Cache-Control": "max-age=86400",
+        },
+      });
+    }
+
     // API routes
     if (path.startsWith("/api/")) {
       try {
