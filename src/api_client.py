@@ -71,6 +71,7 @@ def api_request(
             "/api/knowledge/for-creation" in path
             or "/api/loop/progress" in path
             or "/api/interpret/backfill-prompts" in path
+            or "/api/learning/stats" in path
         ))
         or (method == "POST" and "/api/knowledge/discoveries" in path)
     )

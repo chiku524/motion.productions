@@ -7,8 +7,8 @@ We send max 200 items per request for efficiency (fewer round-trips).
 """
 from typing import Any
 
-# Match API DISCOVERIES_MAX_ITEMS (Workers Paid: 1000 queries/request)
-DISCOVERIES_MAX_ITEMS = 200
+# Match API DISCOVERIES_MAX_ITEMS (reduced for D1 CPU stability under 6-worker concurrency)
+DISCOVERIES_MAX_ITEMS = 150
 
 
 def _chunk_discoveries(discoveries: dict[str, Any]) -> list[dict[str, Any]]:

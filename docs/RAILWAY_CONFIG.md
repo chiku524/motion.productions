@@ -336,7 +336,22 @@ For the most efficient workflow and fastest registry completion:
 
 **Alternative:** Add 2nd Explorer for 2× static (color/sound) throughput instead of Balanced-2. Choose based on which registry (static vs dynamic) you want to grow faster.
 
-**Batch limits (Workers Paid):** Discoveries 200/request, linguistic 100/request, interpretations 50/request. Fewer HTTP round-trips = more efficient.
+**Batch limits (Workers Paid):** Discoveries 150/request, linguistic 100/request, interpretations 50/request. Fewer HTTP round-trips = more efficient.
+
+### 8.5 D1 stability & cost-saving (avoid wasted Railway compute)
+
+D1 is single-threaded and has a CPU time limit per operation. With 6 workers, too many concurrent requests cause `D1_ERROR: D1 DB exceeded its CPU time limit`. Failed requests waste Railway compute (retries) and lost discoveries (video work not persisted).
+
+**Enforced minimums (in code):**
+
+- **Pace (delay between runs):** Min 3 seconds. Webapp and API enforce this. With 6 workers, lower delays = more D1 overload.
+- **Batch size:** 150 discoveries/request (reduced from 200 for stability).
+
+**If errors persist:**
+
+1. **Increase Pace:** Set 5–10s in the webapp loop controls. Fewer requests/min = more stable.
+2. **Run 4 workers:** Disable Balanced-2 and Sound temporarily. Explorer, Exploiter, Balanced, Interpretation still give strong coverage. Re-enable when D1 errors drop.
+3. **Check Cloudflare logs:** Workers → Logs to see which endpoints fail most (for-creation, discoveries, loop/progress).
 
 ---
 

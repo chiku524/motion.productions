@@ -327,7 +327,8 @@ def run() -> None:
             time.sleep(30)
             continue
 
-        delay_seconds = loop_config.get("delay_seconds") or (args.delay if args.delay is not None else float(os.environ.get("LOOP_DELAY_SECONDS", "0")) or 0)
+        raw_delay = loop_config.get("delay_seconds") or (args.delay if args.delay is not None else float(os.environ.get("LOOP_DELAY_SECONDS", "0")) or 0)
+        delay_seconds = max(3, float(raw_delay))  # min 3s to reduce D1 overload with multiple workers
         override = os.environ.get("LOOP_EXPLOIT_RATIO_OVERRIDE")
         override_active = override is not None and override != ""
         exploit_ratio = float(override) if override_active else loop_config.get("exploit_ratio", DEFAULT_EXPLOIT_RATIO)

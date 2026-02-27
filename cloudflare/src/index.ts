@@ -336,9 +336,10 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           }
         }
         const duration = typeof config.duration_seconds === "number" ? config.duration_seconds : 1;
+        const ds = typeof config.delay_seconds === "number" ? config.delay_seconds : 30;
         return json({
           enabled: config.enabled !== false,
-          delay_seconds: typeof config.delay_seconds === "number" ? config.delay_seconds : 30,
+          delay_seconds: Math.max(3, ds),
           exploit_ratio: typeof config.exploit_ratio === "number" ? config.exploit_ratio : 0.7,
           duration_seconds: Math.max(1, Math.min(60, duration)),
         });
@@ -370,7 +371,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           }
         }
         if (typeof body.enabled === "boolean") current.enabled = body.enabled;
-        if (typeof body.delay_seconds === "number") current.delay_seconds = Math.max(0, Math.min(600, body.delay_seconds));
+        if (typeof body.delay_seconds === "number") current.delay_seconds = Math.max(3, Math.min(600, body.delay_seconds));
         if (typeof body.exploit_ratio === "number") current.exploit_ratio = Math.max(0, Math.min(1, body.exploit_ratio));
         if (typeof body.duration_seconds === "number") current.duration_seconds = Math.max(1, Math.min(60, body.duration_seconds));
         await kv.put("loop_config", JSON.stringify(current));
