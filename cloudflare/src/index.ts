@@ -31,6 +31,14 @@ function uuid() {
   return crypto.randomUUID();
 }
 
+/** Derive D1 database (with read replica when available). Used by helpers that run outside handleApi's scope. */
+function getDb(env: Env): D1Database {
+  const primaryDb = env.DB;
+  return (primaryDb as D1Database & { withSession?: (b: string) => D1Database }).withSession?.(
+    "first-unconstrained"
+  ) ?? primaryDb;
+}
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     if (request.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -2256,6 +2264,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
 }
 
 async function resolveUniqueBlendName(env: Env, base: string): Promise<string> {
+  const db = getDb(env);
   let candidate = base;
   for (let i = 0; i < 100; i++) {
     const inReserve = await db.prepare("SELECT name FROM name_reserve WHERE name = ?").bind(candidate).first();
@@ -2362,6 +2371,7 @@ function rgbToSemanticHint(r: number, g: number, b: number): string {
 /** Cascade oldName→newName to prompts and sources when backfilling registry names. */
 async function cascadeNameUpdate(env: Env, oldName: string, newName: string): Promise<void> {
   if (!oldName || oldName === newName) return;
+  const db = getDb(env);
   const like = "%" + oldName.replace(/[%_]/g, "\\$&") + "%";
   const tables: { table: string; col: string }[] = [
     { table: "learning_runs", col: "prompt" },
@@ -2437,6 +2447,7 @@ function isGibberishPrompt(prompt: string, strict = false): boolean {
 }
 
 async function generateUniqueName(env: Env): Promise<string> {
+  const db = getDb(env);
   for (let attempt = 0; attempt < 50; attempt++) {
     const seed = Math.floor(Math.random() * 1000000) + attempt * 7919;
     const word = inventSemanticWord(seed);
@@ -2454,6 +2465,7 @@ async function generateUniqueName(env: Env): Promise<string> {
 }
 
 async function logEvent(env: Env, eventType: string, jobId: string | null, payload: Record<string, unknown> | null): Promise<void> {
+  const db = getDb(env);
   const id = crypto.randomUUID();
   await db.prepare("INSERT INTO events (id, event_type, job_id, payload_json) VALUES (?, ?, ?, ?)")
     .bind(id, eventType, jobId, payload ? JSON.stringify(payload) : null)
