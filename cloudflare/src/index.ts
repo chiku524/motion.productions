@@ -549,7 +549,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       const backfillBody = JSON.stringify({ prompts });
       if (env.MOTION_KV) {
         try {
-          await env.MOTION_KV.put(backfillCacheKey, backfillBody, { expirationTtl: 90 });
+          await env.MOTION_KV.put(backfillCacheKey, backfillBody, { expirationTtl: 120 });
         } catch { /* ignore */ }
       }
       return new Response(backfillBody, { headers: { "Content-Type": "application/json" } });
@@ -796,7 +796,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         const report = aggregateLearningRuns(rows.results || []);
         if (env.MOTION_KV) {
           try {
-            await env.MOTION_KV.put("learning:stats", JSON.stringify(report), { expirationTtl: 60 });
+            await env.MOTION_KV.put("learning:stats", JSON.stringify(report), { expirationTtl: 120 });
           } catch {
             /* ignore KV write failure */
           }
@@ -817,9 +817,9 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
 
     // POST /api/knowledge/discoveries — batch record discoveries (D1)
     // Supports: static_colors, static_sound (per-frame) + colors, blends, motion, etc. (dynamic/whole-video)
-    // Workers Paid: 1000 queries/request. ~3 queries/item. Max 150 items to reduce D1 CPU load under concurrency.
+    // Reduced to 50 items to stay under D1 CPU limit under 6-worker concurrency.
     if (path === "/api/knowledge/discoveries" && request.method === "POST") {
-      const DISCOVERIES_MAX_ITEMS = 100;
+      const DISCOVERIES_MAX_ITEMS = 50;
       let body: {
         static_colors?: Array<{ key: string; r: number; g: number; b: number; brightness?: number; luminance?: number; contrast?: number; saturation?: number; chroma?: number; hue?: number; color_variance?: number; opacity?: number; depth_breakdown?: Record<string, unknown>; source_prompt?: string; name?: string }>;
         static_sound?: Array<{ key: string; amplitude?: number; weight?: number; strength_pct?: number; tone?: string; timbre?: string; depth_breakdown?: Record<string, unknown>; source_prompt?: string; name?: string }>;
@@ -1149,9 +1149,9 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
     // GET /api/knowledge/for-creation — learned colors and motion for creation (closes the loop)
     if (path === "/api/knowledge/for-creation" && request.method === "GET") {
       try {
-      const limit = Math.min(parseInt(new URL(request.url).searchParams.get("limit") || "200", 10), 2000);
-      const interpLimitParam = new URL(request.url).searchParams.get("interpretation_limit") || "100";
-      const interpLimit = Math.min(parseInt(interpLimitParam, 10), 500);
+      const limit = Math.min(parseInt(new URL(request.url).searchParams.get("limit") || "100", 10), 1000);
+      const interpLimitParam = new URL(request.url).searchParams.get("interpretation_limit") || "80";
+      const interpLimit = Math.min(parseInt(interpLimitParam, 10), 300);
       const cacheKey = `knowledge:for-creation:${limit}:${interpLimit}`;
       if (env.MOTION_KV) {
         const cached = await env.MOTION_KV.get(cacheKey);
@@ -1282,7 +1282,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       const body = JSON.stringify(payload);
       if (env.MOTION_KV) {
         try {
-          await env.MOTION_KV.put(cacheKey, body, { expirationTtl: 120 });
+          await env.MOTION_KV.put(cacheKey, body, { expirationTtl: 180 });
         } catch { /* ignore KV write failure */ }
       }
       return new Response(body, { headers: { "Content-Type": "application/json" } });
@@ -2168,7 +2168,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       const progressBody = JSON.stringify(progressPayload);
       if (env.MOTION_KV) {
         try {
-          await env.MOTION_KV.put(progressCacheKey, progressBody, { expirationTtl: 90 });
+          await env.MOTION_KV.put(progressCacheKey, progressBody, { expirationTtl: 120 });
         } catch { /* ignore KV write failure */ }
       }
       return new Response(progressBody, { headers: { "Content-Type": "application/json" } });

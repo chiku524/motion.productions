@@ -339,7 +339,7 @@ For the most efficient workflow and fastest registry completion:
 
 **Alternative:** Add 2nd Explorer for 2× static (color/sound) throughput instead of Balanced-2. Choose based on which registry (static vs dynamic) you want to grow faster.
 
-**Batch limits (Workers Paid):** Discoveries 100/request, linguistic 100/request, interpretations 50/request. Fewer HTTP round-trips = more efficient.
+**Batch limits (Workers Paid):** Discoveries 50/request (reduced for D1 CPU stability), linguistic 100/request, interpretations 50/request. Fewer HTTP round-trips = more efficient. KV TTLs: learning/stats 120s, for-creation 180s, loop/progress 120s, backfill-prompts 120s.
 
 ### 8.5 D1 stability & cost-saving (avoid wasted Railway compute)
 
@@ -374,3 +374,56 @@ D1 is single-threaded and has a CPU time limit per operation. With 6 workers, to
 - Env source of truth: `config/workflows.yaml`
 - Loop behavior: `docs/INTENDED_LOOP.md`, `docs/AUTOMATION.md`
 - Deploy (Cloudflare + DB): `docs/DEPLOY_CLOUDFLARE.md`
+
+---
+
+## 10. Post-deploy operational checklist
+
+Use after code changes to ensure deploy, workers, and data quality are correct.
+
+### 10.1 Deploy the Cloudflare Worker
+
+The Worker merges **learned_lighting**, **learned_composition**, **learned_graphics**, **learned_temporal**, **learned_technical** into GET /api/registries. (1) Confirm GitHub Actions deploy completed. (2) Optional manual: `cd cloudflare && npm run deploy`.
+
+### 10.2 Set LOOP_EXTRACTION_FOCUS=window on Balanced worker
+
+Railway → Balanced service → Variables: **`LOOP_EXTRACTION_FOCUS`** = **`window`**, **`API_BASE`** = `https://motion.productions`. Redeploy. Verify logs show **Growth [window]**.
+
+### 10.3 Run backfill_registry_names.py (fix numeric names)
+
+```bash
+python scripts/backfill_registry_names.py --api-base https://motion.productions --timeout 300
+```
+
+Use `--table learned_blends` for one large table. Verify: re-export registries and confirm no numeric-suffix names.
+
+### 10.4 Run color_sweep.py when API is stable
+
+```bash
+python scripts/color_sweep.py --api-base https://motion.productions --steps 5 --limit 150
+```
+
+Verify: GET /api/registries/coverage and check **static_colors_coverage_pct**.
+
+### 10.5 Confirm sound_loop deployed and POSTing
+
+Railway: 5th service with **`RAILWAY_START_SCRIPT`** = **`sound_loop`**, **`API_BASE`** set. Verify logs show `Sound-only worker started` and `[N] sound discovery: +M`. API check: `curl -s "https://motion.productions/api/knowledge/for-creation" | jq '.static_sound | length'` (should be > 0).
+
+### 10.6 Run registry export analysis
+
+```bash
+python scripts/registry_export_analysis.py
+```
+
+Or with specific files: `python scripts/registry_export_analysis.py "json registry exports/motion-registries-2026-02-21.json"`. Review tone leakage, depth coverage, loop_progress.
+
+### Quick reference
+
+| Task | Action |
+|------|--------|
+| Deploy Worker | GitHub Actions → Deploy to Cloudflare |
+| Balanced = window | Set `LOOP_EXTRACTION_FOCUS=window`, redeploy |
+| Backfill names | `python scripts/backfill_registry_names.py --api-base https://motion.productions --timeout 300` |
+| Color sweep | `python scripts/color_sweep.py --api-base https://motion.productions` |
+| Sound worker | 5th service, `RAILWAY_START_SCRIPT=sound_loop` |
+| Registry analysis | `python scripts/registry_export_analysis.py` |
