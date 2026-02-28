@@ -176,6 +176,7 @@ API_BASE=https://motion.productions
 LOOP_EXTRACTION_FOCUS=frame
 LOOP_EXPLOIT_RATIO_OVERRIDE=0
 LOOP_WORKFLOW_TYPE=explorer
+LOOP_WORKER_OFFSET_SECONDS=0
 ```
 
 **Exploiter (frame-focused, 100% exploit)**
@@ -185,6 +186,7 @@ API_BASE=https://motion.productions
 LOOP_EXTRACTION_FOCUS=frame
 LOOP_EXPLOIT_RATIO_OVERRIDE=1
 LOOP_WORKFLOW_TYPE=exploiter
+LOOP_WORKER_OFFSET_SECONDS=5
 ```
 
 **Balanced (window-focused, UI-controlled)**
@@ -192,6 +194,7 @@ LOOP_WORKFLOW_TYPE=exploiter
 ```env
 API_BASE=https://motion.productions
 LOOP_EXTRACTION_FOCUS=window
+LOOP_WORKER_OFFSET_SECONDS=10
 # Do not set LOOP_EXPLOIT_RATIO_OVERRIDE — uses webapp Loop controls
 LOOP_WORKFLOW_TYPE=main
 ```
@@ -347,14 +350,22 @@ D1 is single-threaded and has a CPU time limit per operation. With 6 workers, to
 - **Pace (delay between runs):** Min 3 seconds. Webapp and API enforce this. With 6 workers, lower delays = more D1 overload.
 - **Batch size:** 100 discoveries/request (reduced for D1 CPU stability).
 
+**Workflow improvements (continuous progress):**
+
+- **LOOP_WORKER_OFFSET_SECONDS:** Per-worker startup stagger (e.g. Explorer=0, Exploiter=5, Balanced=10). Prevents all workers from hitting D1 at once. Set per service in Railway env vars.
+- **D1-aware retry:** On `D1_ERROR` or CPU time limit, the API client uses longer backoff (10s, 15s, 20s…) before retry instead of 2s, giving D1 time to reset.
+- **Extended jitter:** 0–8s jitter on D1-heavy endpoints (knowledge/for-creation, discoveries, learning/stats) spreads concurrent requests.
+- **Discovery recording retry:** If discovery run recording fails with 5xx, the loop retries once after 12s so progress is still recorded.
+
 **D1 Read Replication (recommended):** Enable in Cloudflare Dashboard → **D1** → your database → **Settings** → **Read Replication** → Enable. The Worker uses the Sessions API (`withSession("first-unconstrained")`) to spread reads across replicas; writes still go to the primary. This reduces CPU load on the primary and helps avoid the CPU time limit.
 
 **If errors persist:**
 
 1. **Enable Read Replication** (above) if not already on.
-2. **Increase Pace:** Set 5–10s in the webapp loop controls. Fewer requests/min = more stable.
-3. **Run 4 workers:** Disable Balanced-2 and Sound temporarily. Explorer, Exploiter, Balanced, Interpretation still give strong coverage. Re-enable when D1 errors drop.
-4. **Check Cloudflare logs:** Workers → Logs to see which endpoints fail most (for-creation, discoveries, loop/progress).
+2. **Set LOOP_WORKER_OFFSET_SECONDS** per service (Explorer=0, Exploiter=5, Balanced=10, Balanced-2=15) to stagger startup.
+3. **Increase Pace:** Set 5–10s in the webapp loop controls. Fewer requests/min = more stable.
+4. **Run 4 workers:** Disable Balanced-2 and Sound temporarily. Explorer, Exploiter, Balanced, Interpretation still give strong coverage. Re-enable when D1 errors drop.
+5. **Check Cloudflare logs:** Workers → Logs to see which endpoints fail most (for-creation, discoveries, loop/progress).
 
 ---
 

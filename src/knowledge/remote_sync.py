@@ -116,9 +116,10 @@ def post_discoveries(
         return {}
     merged: dict[str, Any] = {"status": "recorded", "results": {}}
     for chunk in chunks:
-        # Worker may take a while under load; use 90s to reduce read timeouts
+        # Worker may take a while under load; use 90s to reduce read timeouts.
+        # D1-heavy: extra retries with longer backoff on D1_ERROR (api_client handles that)
         resp = api_request_with_retry(
-            api_base, "POST", "/api/knowledge/discoveries", data=chunk, timeout=90
+            api_base, "POST", "/api/knowledge/discoveries", data=chunk, timeout=90, max_retries=5
         )
         merged["truncated"] = merged.get("truncated", False) or resp.get("truncated", False)
         res = resp.get("results", {})

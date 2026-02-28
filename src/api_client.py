@@ -23,6 +23,11 @@ _API_HEADERS = {
 # Retry config: only retry on transient failures
 DEFAULT_MAX_RETRIES = 3
 DEFAULT_BACKOFF_SECONDS = 2.0
+# D1 CPU limit errors need longer recovery before retry
+D1_BACKOFF_BASE_SECONDS = 10.0
+D1_BACKOFF_INCREMENT = 5.0
+# Jitter window for D1-heavy endpoints (spread concurrent workers)
+D1_JITTER_MAX_SECONDS = 8.0
 
 
 class APIError(Exception):
@@ -76,7 +81,7 @@ def api_request(
         or (method == "POST" and "/api/knowledge/discoveries" in path)
     )
     if needs_jitter:
-        time.sleep(random.uniform(0, 4))
+        time.sleep(random.uniform(0, D1_JITTER_MAX_SECONDS))
     headers = dict(_API_HEADERS)
     if raw_body is not None:
         body = raw_body
@@ -102,7 +107,20 @@ def api_request(
             retryable = status and (500 <= status < 600 or status == 429) and attempt < max_retries
             if retryable:
                 delay = backoff_seconds
-                if status == 429:
+                is_d1_error = err_body and (
+                    "D1_ERROR" in err_body
+                    or "D1 DB exceeded" in err_body
+                    or "CPU time limit" in err_body
+                    or "Network connection lost" in err_body
+                )
+                if is_d1_error:
+                    # D1 needs time to reset; longer backoff avoids retry storm
+                    delay = D1_BACKOFF_BASE_SECONDS + attempt * D1_BACKOFF_INCREMENT
+                    logger.warning(
+                        "API %s %s → D1 error (attempt %s), retrying in %.1fs",
+                        method, path, attempt + 1, delay,
+                    )
+                elif status == 429:
                     if e.response and "Retry-After" in e.response.headers:
                         try:
                             delay = float(e.response.headers["Retry-After"])
@@ -111,7 +129,9 @@ def api_request(
                     # Exponential backoff for 429: 3s, 5s, 8s, 12s...
                     else:
                         delay = backoff_seconds + attempt * 2.0
-                logger.warning("API %s %s → %s (attempt %s), retrying in %.1fs", method, path, status, attempt + 1, delay)
+                    logger.warning("API %s %s → %s (attempt %s), retrying in %.1fs", method, path, status, attempt + 1, delay)
+                else:
+                    logger.warning("API %s %s → %s (attempt %s), retrying in %.1fs", method, path, status, attempt + 1, delay)
                 time.sleep(delay)
                 continue
             msg = f"API {method} {path} failed: {e}"

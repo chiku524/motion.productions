@@ -11,6 +11,10 @@
 #   3. Optional: LOOP_STATIC_FOCUS = color | sound | both (when frame: grow only colors, only sounds, or both).
 # Set LOOP_EXTRACTION_FOCUS so that 2 workers do frame and 1 does window.
 #
+# LOOP_WORKER_OFFSET_SECONDS: Stagger worker startup to reduce D1 contention. Set per service:
+#   Explorer=0, Exploiter=5, Balanced=10, Balanced-2=15, etc. Prevents all workers from hitting
+#   D1 simultaneously at loop start.
+#
 # Recommended: Explorer + Exploiter = frame (2 frame workers). Balanced = window (1 window worker).
 # For a pure-colors frame worker set LOOP_STATIC_FOCUS=color; pure sounds also have the dedicated sound workflow.
 
@@ -22,12 +26,14 @@ workflows:
       LOOP_EXPLOIT_RATIO_OVERRIDE: "0"
       LOOP_WORKFLOW_TYPE: "explorer"
       LOOP_EXTRACTION_FOCUS: "frame"
+      LOOP_WORKER_OFFSET_SECONDS: "0"
 
   balanced:
     description: "Window-focused — uses webapp config (exploit/explore ratio); per-window extraction + dynamic + narrative"
     env:
       API_BASE: https://motion.productions
       LOOP_EXTRACTION_FOCUS: "window"
+      LOOP_WORKER_OFFSET_SECONDS: "10"
       # LOOP_WORKFLOW_TYPE: "main"  # optional, for badge on site
 
   exploiter:
@@ -37,6 +43,7 @@ workflows:
       LOOP_EXPLOIT_RATIO_OVERRIDE: "1"
       LOOP_WORKFLOW_TYPE: "exploiter"
       LOOP_EXTRACTION_FOCUS: "frame"
+      LOOP_WORKER_OFFSET_SECONDS: "5"
 
   interpretation:
     description: "Interpretation only — no create/render; fills interpretation registry (D1) for main pipeline"

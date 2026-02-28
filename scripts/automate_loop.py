@@ -312,6 +312,19 @@ def run() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     state = _load_state(args.api_base)
+
+    # Per-worker offset: stagger startup so multiple workers don't hit D1 simultaneously
+    worker_offset = 0
+    try:
+        raw = os.environ.get("LOOP_WORKER_OFFSET_SECONDS", "")
+        if raw:
+            worker_offset = max(0, min(60, int(float(raw))))
+    except (ValueError, TypeError):
+        pass
+    if worker_offset > 0:
+        log_structured("info", msg="Worker stagger", offset_seconds=worker_offset)
+        time.sleep(worker_offset)
+
     print("Starting self-feeding loop (config from API; respects webapp controls)")
     print(f"State: run_count={state['run_count']}, good_prompts={len(state.get('good_prompts', []))}, recent={len(state.get('recent_prompts', []))}")
     print("Each output triggers the next run. Toggle loop in webapp to pause.\n")
@@ -425,6 +438,7 @@ def run() -> None:
                 args.api_base, "POST", f"/api/jobs/{job_id}/upload",
                 raw_body=body, content_type="video/mp4",
                 timeout=120,
+                max_retries=5,
             )
             run_succeeded = True
 
@@ -555,14 +569,21 @@ def run() -> None:
                     print(f"  (discoveries sync: {e})")
 
             # Guaranteed discovery run recording — ensures diagnostics show ✓ disc even when
-            # post_all_discoveries or grow_and_sync failed or threw before recording
+            # post_all_discoveries or grow_and_sync failed or threw before recording.
+            # Retry once after delay on D1/5xx so progress is recorded under load.
             try:
                 from src.knowledge.remote_sync import post_discoveries
                 post_discoveries(args.api_base, {"job_id": job_id})
-            except APIError as e:
-                logger.warning("Missing discovery (job_id=%s): post_discoveries failed status=%s — %s", job_id, e.status_code, e)
-            except Exception as e:
-                logger.warning("Missing discovery (job_id=%s): post_discoveries — %s", job_id, e)
+            except (APIError, Exception) as e:
+                if isinstance(e, APIError) and e.status_code and 500 <= e.status_code < 600:
+                    logger.info("Discovery recording failed (D1/5xx), retrying in 12s: %s", e)
+                    time.sleep(12)
+                    try:
+                        post_discoveries(args.api_base, {"job_id": job_id})
+                    except Exception as e2:
+                        logger.warning("Missing discovery (job_id=%s): post_discoveries retry — %s", job_id, e2)
+                else:
+                    logger.warning("Missing discovery (job_id=%s): post_discoveries — %s", job_id, e)
 
             try:
                 # Explicit retries to reduce "missing learning" from transient 5xx/429/connection (audit §1.2)
