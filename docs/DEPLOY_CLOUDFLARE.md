@@ -90,6 +90,8 @@ python scripts/run_d1_migrations.py --local
 
 The script retries up to 5 times with exponential backoff (30s → 45s → …) if D1 returns "exceeded its CPU time limit" (code 7429). Heavy migrations (e.g. multiple `ALTER TABLE` in one file) are split into one-statement files under `cloudflare/migrations/` to stay under the per-query CPU limit.
 
+**Note:** D1's SQLite does not support `ADD COLUMN IF NOT EXISTS`. Migrations use plain `ADD COLUMN`. If a migration fails with **"duplicate column name"**, that column was already added (e.g. by a previous partial run). You can mark that migration as applied by inserting its name into the `d1_migrations` table via the D1 dashboard or `wrangler d1 execute ... --remote`, then re-run the migration script.
+
 Or run Wrangler directly from the **`cloudflare/`** directory:
 
 ```bash
