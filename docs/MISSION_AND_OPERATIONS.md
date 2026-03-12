@@ -2,7 +2,7 @@
 
 **Purpose:** Align the `motion.productions` project with a clear mission, five optimization areas, and a codebase audit for 100% precision, data completeness, and prompt interpretation readiness.
 
-**Reference:** REGISTRY_FOUNDATION.md, REGISTRY_REVIEW_AND_IMPROVEMENT_PLAN.md.
+**Reference:** REGISTRY_FOUNDATION.md, REGISTRY_AND_WORKFLOW_IMPROVEMENTS.md.
 
 ---
 
@@ -20,7 +20,7 @@
 
 | Action | How |
 |--------|-----|
-| **Monitor extraction focus** | Use **`LOOP_EXTRACTION_FOCUS`** (not `LCXP_EXTRACTION_FOCUS`) on each worker. See **RAILWAY_CONFIG.md** §8 and **REGISTRY_REVIEW_AND_IMPROVEMENT_PLAN.md**. |
+| **Monitor extraction focus** | Use **`LOOP_EXTRACTION_FOCUS`** (not `LCXP_EXTRACTION_FOCUS`) on each worker. See **RAILWAY_CONFIG.md** §8 and **REGISTRY_AND_WORKFLOW_IMPROVEMENTS.md**. |
 | **Verify logs** | Explorer/Exploiter (frame): expect `Growth [frame]`. Balanced (window): expect `Growth [window]`. Wrong or unset env → `Growth [all]`. |
 | **Eliminate missing learning/discovery** | Investigate every `Missing discovery (job_id=...)` and `Missing learning (job_id=...)` in logs; fix POST/sync so successful runs always contribute. |
 | **Backfill propagation** | Backfill scripts replace gibberish names with semantic ones; **cascade** must propagate new names to prompts, **sources_json**, and **blend JSON** so no reference to the old name remains. |
@@ -94,7 +94,7 @@ Interpret worker: queue, backfill, generation, linguistic growth (logs: `[cycle]
 
 ## Reference
 
-- **Living plan:** REGISTRY_REVIEW_AND_IMPROVEMENT_PLAN.md
+- **Living plan:** REGISTRY_AND_WORKFLOW_IMPROVEMENTS.md
 - **Verification:** PRECISION_VERIFICATION_CHECKLIST.md
 - **Env:** **`LOOP_EXTRACTION_FOCUS`** — RAILWAY_CONFIG.md §8.1 (exact name; not LCXP).
 - **Logging:** `Growth [frame]`, `Growth [window]`, `Missing learning (job_id=...)`, `Missing discovery (job_id=...)`.

@@ -83,11 +83,9 @@ Migrations apply **all** pending migration files (current and any added in the f
 ```bash
 # Remote (production)
 python scripts/run_d1_migrations.py
-# or: bash scripts/run_d1_migrations.sh
 
 # Local (development)
 python scripts/run_d1_migrations.py --local
-# or: bash scripts/run_d1_migrations.sh --local
 ```
 
 Or run Wrangler directly from the **`cloudflare/`** directory:
@@ -188,3 +186,23 @@ The app uses D1 and KV for learning:
 - **“Zone not found” / route errors** — Ensure **motion.productions** is added as a site in Cloudflare and the zone is active. Deploy without `routes` first (comment them out) and use the `workers.dev` URL.
 - **D1 “database not found”** — Run `npx wrangler d1 migrations apply motion-productions-db --remote` after the first deploy. If you created the DB manually, ensure `database_id` in `wrangler.jsonc` matches.
 - **R2 404 on download** — Confirm the job status is `completed` and that upload was successful (check Worker logs or R2 in the dashboard).
+
+## Security (Cloudflare Dashboard)
+
+### Critical — Managed Rules (WAF)
+
+**Risk:** No WAF protection against SQLi, XSS, and known CVEs.
+
+**Fix:** Cloudflare Dashboard → zone **motion.productions** → **Security** → **WAF** → enable **Cloudflare Managed Ruleset** (OWASP Core Ruleset, SQLi, XSS). Optionally enable **Cloudflare OWASP Core Ruleset** if listed.
+
+### Moderate — Block AI Bots
+
+**Security** → **Bots** → turn **Block AI bots** On to block known AI crawlers (GPTBot, ClaudeBot, etc.).
+
+### Moderate — Bot settings from previous plan
+
+**Security** → **Bots** — If you changed plans, turn off any options marked "from previous plan" or no longer supported. Re-test the site after changes.
+
+### Security.txt
+
+The Worker serves `/.well-known/security.txt` and `/security.txt` with `mailto:security@motion.productions` and expiry 2026-12-31. Edit `cloudflare/src/index.ts` (search for `security.txt`) to change.

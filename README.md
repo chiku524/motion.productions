@@ -6,7 +6,9 @@ Create and produce videos from text, script, or prompt — driven by base knowle
 - **Core foundation and loop:** [docs/INTENDED_LOOP.md](./docs/INTENDED_LOOP.md) — base knowledge, extraction, creation, learning loop
 - **Architecture:** [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) — procedural engine, interpreter & learning
 - **Automation & deployment:** [docs/AUTOMATION.md](./docs/AUTOMATION.md) — automate_loop, Railway/Render
-- **Deploy to Cloudflare:** [docs/DEPLOY_CLOUDFLARE.md](./docs/DEPLOY_CLOUDFLARE.md)
+- **Deploy to Cloudflare:** [docs/DEPLOY_CLOUDFLARE.md](./docs/DEPLOY_CLOUDFLARE.md) (includes security)
+- **Railway services & ops:** [docs/RAILWAY_CONFIG.md](./docs/RAILWAY_CONFIG.md) — env vars, workflows, post-deploy checklist
+- **Registry improvements:** [docs/REGISTRY_AND_WORKFLOW_IMPROVEMENTS.md](./docs/REGISTRY_AND_WORKFLOW_IMPROVEMENTS.md)
 - **Brand kit:** [docs/BRAND.md](./docs/BRAND.md)
 
 ---
@@ -112,7 +114,9 @@ motion.productions/
 │   ├── INTENDED_LOOP.md        # Core: foundation, loop, extraction, creation
 │   ├── ARCHITECTURE.md         # Procedural engine, interpreter & learning
 │   ├── AUTOMATION.md           # Scripts, Railway/Render deployment
-│   ├── DEPLOY_CLOUDFLARE.md    # Cloudflare Worker deploy
+│   ├── DEPLOY_CLOUDFLARE.md    # Cloudflare Worker deploy (+ security)
+│   ├── RAILWAY_CONFIG.md       # Railway services, env, post-deploy checklist
+│   ├── REGISTRY_AND_WORKFLOW_IMPROVEMENTS.md  # Improvement plans & reports
 │   └── BRAND.md                # Brand kit
 ├── output/                     # Generated videos
 ├── src/
@@ -152,7 +156,9 @@ motion.productions/
 │   ├── automate_loop.py        # Self-feeding loop (Railway/Render)
 │   ├── automate.py             # Interval-based automation
 │   ├── learn_report.py         # Learning report (local JSONL)
-│   └── learn_from_api.py       # Fetch events/feedback, produce suggestions
+│   ├── learn_from_api.py       # Fetch events/feedback, produce suggestions
+│   ├── color_sweep.py          # Batch static color coverage (operational)
+│   └── registry_export_analysis.py  # Validate export JSON (operational)
 └── requirements.txt
 ```
 

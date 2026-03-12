@@ -286,7 +286,7 @@ def _build_pure_color_pool(
     combines pixels (captured at extraction as temporal blend → new pure or dynamic).
     Pool = origin primitives + static_colors (per-frame discovered) + learned_colors (whole-video).
     Creation biasing: underused colors (lower count) get higher multiplicity in the pool
-    so they are picked more often, breaking the high-count feedback loop (REGISTRY_REVIEW).
+    so they are picked more often, breaking the high-count feedback loop (REGISTRY_AND_WORKFLOW_IMPROVEMENTS).
     """
     pool: list[tuple[int, int, int]] = []
     seen: set[tuple[int, int, int]] = set()

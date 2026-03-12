@@ -3,7 +3,7 @@
 #
 # §2.6 Parallel workers: Run Explorer and Exploiter together so completion (coverage) and quality
 # (precision) improve in parallel. Both POST to the same API; Explorer fills registry gaps,
-# Exploiter reinforces good prompts. See docs/WORKFLOW_EFFICIENCY_AND_REGISTRY_COMPLETION.md.
+# Exploiter reinforces good prompts. See docs/REGISTRY_AND_WORKFLOW_IMPROVEMENTS.md.
 #
 # Two dimensions:
 #   1. Prompt choice: explorer (100% explore) | exploiter (100% exploit) | balanced (UI ratio).

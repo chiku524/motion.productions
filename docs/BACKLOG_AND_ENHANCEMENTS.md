@@ -56,4 +56,4 @@ Merged from **ENHANCEMENTS_AND_OPTIMIZATIONS** (seven steps) and **WORKFLOW_IMPR
 | High counts / repetition | repetition_score; Exploiter discovery cap (implemented) |
 | Missing learning | job_id in POST /api/learning; retries in automate_loop |
 
-See **PRECISION_VERIFICATION_CHECKLIST.md** and **REGISTRY_REVIEW_AND_IMPROVEMENT_PLAN.md** for ongoing verification.
+See **PRECISION_VERIFICATION_CHECKLIST.md** and **REGISTRY_AND_WORKFLOW_IMPROVEMENTS.md** for ongoing verification.

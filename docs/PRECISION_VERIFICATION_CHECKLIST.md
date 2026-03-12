@@ -1,6 +1,6 @@
 # Precision verification checklist
 
-Use this checklist to verify that workflows and registries align with the **refined mission** (100% precision, comprehensive data acquisition, robust prompt interpretation). See **REGISTRY_REVIEW_AND_IMPROVEMENT_PLAN.md** (refined mission section) and **MISSION_AND_OPERATIONS.md**.
+Use this checklist to verify that workflows and registries align with the **refined mission** (100% precision, comprehensive data acquisition, robust prompt interpretation). See **REGISTRY_AND_WORKFLOW_IMPROVEMENTS.md** (Part I) and **MISSION_AND_OPERATIONS.md**.
 
 ---
 
