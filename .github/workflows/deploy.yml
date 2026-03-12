@@ -21,30 +21,17 @@ jobs:
           cache: "npm"
           cache-dependency-path: cloudflare/package-lock.json
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
       - name: Install dependencies
         working-directory: cloudflare
         run: npm ci || npm install
 
       - name: Run D1 migrations
-        working-directory: cloudflare
-        run: |
-          set +e
-          for i in 1 2 3; do
-            echo "Migration attempt $i of 3..."
-            npx wrangler d1 migrations apply motion-productions-db --remote
-            code=$?
-            if [ $code -eq 0 ]; then
-              echo "Migrations applied successfully"
-              exit 0
-            fi
-            if [ $i -lt 3 ]; then
-              echo "D1 CPU limit or transient error (exit $code), waiting 20s before retry..."
-              sleep 20
-            else
-              echo "Migrations failed after 3 attempts"
-              exit $code
-            fi
-          done
+        run: python scripts/run_d1_migrations.py
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

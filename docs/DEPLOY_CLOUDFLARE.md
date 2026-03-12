@@ -81,12 +81,14 @@ The Worker uses the D1 Sessions API (`withSession("first-unconstrained")`) so re
 Migrations apply **all** pending migration files (current and any added in the future). From the **project root**:
 
 ```bash
-# Remote (production)
+# Remote (production) — uses retries and backoff on D1 CPU limit (7429)
 python scripts/run_d1_migrations.py
 
 # Local (development)
 python scripts/run_d1_migrations.py --local
 ```
+
+The script retries up to 5 times with exponential backoff (30s → 45s → …) if D1 returns "exceeded its CPU time limit" (code 7429). Heavy migrations (e.g. multiple `ALTER TABLE` in one file) are split into one-statement files under `cloudflare/migrations/` to stay under the per-query CPU limit.
 
 Or run Wrangler directly from the **`cloudflare/`** directory:
 
