@@ -11,7 +11,7 @@ learning_log.jsonl
 data/automation_state.json
 
 # Local registry cache (recreated at runtime; D1 is source of truth when API is used)
-knowledge/
+/knowledge/
 
 # Python
 __pycache__/
@@ -43,3 +43,6 @@ nul
 # Cloudflare local dev
 cloudflare/.wrangler/
 cloudflare/node_modules/
+
+# JSON registry exports (ephemeral snapshots; keep schema doc)
+json registry exports/*.json

@@ -1,8 +1,8 @@
 """
 Origins: primitives of every film/video aspect. Base knowledge.
 Every aspect that resides within filmmaking/video-making has its origins here.
+All values are known-to-man primitives for maximum registry completion.
 """
-from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -19,7 +19,7 @@ COLOR_ORIGINS = {
 
 
 # -----------------------------------------------------------------------------
-# LIGHTING — primitives: key, fill, rim, ambient, temperature
+# LIGHTING — primitives: key, fill, rim, ambient, temperature (known-to-man)
 # -----------------------------------------------------------------------------
 LIGHTING_ORIGINS = {
     "key_intensity": [0.5, 0.75, 1.0, 1.25],
@@ -32,7 +32,7 @@ LIGHTING_ORIGINS = {
 
 
 # -----------------------------------------------------------------------------
-# MOTION — primitives: speed, smoothness, directionality, rhythm
+# MOTION — primitives: speed, smoothness, directionality, rhythm (known-to-man)
 # -----------------------------------------------------------------------------
 MOTION_ORIGINS = {
     "speed": ["static", "slow", "medium", "fast"],
@@ -44,9 +44,7 @@ MOTION_ORIGINS = {
 
 
 # -----------------------------------------------------------------------------
-# CAMERA — primitives: pan, tilt, dolly, crane, zoom, static + roll, truck, pedestal, arc, tracking
-# Publicly documented film taxonomy (StudioBinder, CineTechBench, MovieLabs)
-# See docs/MOVIELABS_TAXONOMY_AUDIT.md for ontology alignment
+# CAMERA — primitives: full film/video taxonomy (StudioBinder, CineTechBench, MovieLabs)
 # -----------------------------------------------------------------------------
 CAMERA_ORIGINS = {
     "motion_type": [
@@ -73,7 +71,7 @@ CAMERA_ORIGINS = {
 
 
 # -----------------------------------------------------------------------------
-# COMPOSITION — primitives: framing, balance, symmetry
+# COMPOSITION — primitives: framing, balance, symmetry (known-to-man)
 # -----------------------------------------------------------------------------
 COMPOSITION_ORIGINS = {
     "framing": ["wide", "medium", "close", "extreme_close", "pov"],
@@ -85,7 +83,7 @@ COMPOSITION_ORIGINS = {
 
 
 # -----------------------------------------------------------------------------
-# TEMPORAL — primitives: pacing, cut frequency, shot length
+# TEMPORAL — primitives: pacing, cut frequency, shot length, story beats
 # -----------------------------------------------------------------------------
 TEMPORAL_ORIGINS = {
     "pacing": [0.5, 0.75, 1.0, 1.25, 1.5],
@@ -96,7 +94,7 @@ TEMPORAL_ORIGINS = {
 
 
 # -----------------------------------------------------------------------------
-# TRANSITIONS — primitives: cut, fade, dissolve, wipe
+# TRANSITIONS — primitives: cut, fade, dissolve, wipe (known-to-man)
 # -----------------------------------------------------------------------------
 TRANSITION_ORIGINS = {
     "type": ["cut", "fade", "dissolve", "wipe"],
@@ -117,11 +115,16 @@ GRAPHICS_ORIGINS = {
 
 
 # -----------------------------------------------------------------------------
-# AUDIO — primitives: tempo, mood, intensity, silence
+# AUDIO — primitives: tempo, mood, presence (known-to-man semantic audio)
 # -----------------------------------------------------------------------------
 AUDIO_ORIGINS = {
     "tempo": ["slow", "medium", "fast"],
-    "mood": ["neutral", "calm", "tense", "uplifting", "dark"],
+    "mood": [
+        "neutral", "calm", "tense", "uplifting", "dark",
+        "dramatic", "peaceful", "chaotic", "soft", "harsh",
+        "dreamy", "bright", "energetic", "moody", "melancholy",
+        "intense", "playful", "suspenseful", "hopeful", "ominous",
+    ],
     "intensity": [0.0, 0.25, 0.5, 0.75, 1.0],
     "presence": ["silence", "ambient", "music", "sfx", "full"],
 }
@@ -129,25 +132,55 @@ AUDIO_ORIGINS = {
 
 # -----------------------------------------------------------------------------
 # NARRATIVE — primitives: genre, tone, style, settings, themes, scene_type, plots
+# Full known-to-man set for film/video/content.
 # -----------------------------------------------------------------------------
 NARRATIVE_ORIGINS = {
-    "genre": ["general", "documentary", "thriller", "ad", "tutorial", "educational", "explainer", "drama", "horror", "comedy", "fantasy", "experimental"],
-    "tone": ["neutral", "dreamy", "dark", "bright", "calm", "energetic", "moody", "uplifting", "tense", "peaceful"],
-    "style": ["cinematic", "abstract", "minimal", "realistic", "anime"],
+    "genre": [
+        "general", "documentary", "thriller", "ad", "tutorial", "educational",
+        "explainer", "drama", "horror", "comedy", "fantasy", "experimental",
+        "music", "cinematic", "abstract", "minimal", "sci-fi", "vlog",
+        "news", "sports", "interview", "podcast", "narrative", "corporate",
+    ],
+    "tone": [
+        "neutral", "dreamy", "dark", "bright", "calm", "energetic", "moody",
+        "uplifting", "tense", "peaceful", "dramatic", "chaotic", "soft", "harsh",
+        "melancholy", "hopeful", "ominous", "playful", "serious", "ironic",
+    ],
+    "style": [
+        "cinematic", "abstract", "minimal", "realistic", "anime",
+        "noir", "retro", "vintage", "modern", "corporate", "artistic",
+    ],
     "tension_curve": ["flat", "slow_build", "standard", "immediate"],
-    "settings": ["general", "urban", "nature", "interior", "exterior", "studio", "outdoor", "abstract", "city", "forest", "night", "day", "ocean", "indoor"],
-    "themes": ["general", "transformation", "conflict", "journey", "identity", "connection", "loss", "hope", "nature", "love", "war", "time", "light", "motion"],
-    "scene_type": ["establishing", "closeup", "wide", "medium", "dialogue", "action", "montage", "b-roll", "pov", "aerial"],
+    "settings": [
+        "general", "urban", "nature", "interior", "exterior", "studio",
+        "outdoor", "abstract", "city", "forest", "night", "day", "ocean",
+        "indoor", "neutral", "golden_hour", "noir", "documentary", "moody",
+        "neon", "desert", "mountain", "beach", "space", "underwater",
+    ],
+    "themes": [
+        "general", "transformation", "conflict", "journey", "identity",
+        "connection", "loss", "hope", "nature", "love", "war", "time",
+        "light", "motion", "default", "neon", "night", "fire", "ocean",
+        "dreamy", "warm_sunset", "mono", "forest", "urban", "shadow",
+    ],
+    "scene_type": [
+        "establishing", "closeup", "wide", "medium", "dialogue", "action",
+        "montage", "b-roll", "pov", "aerial", "insert", "master", "two_shot",
+        "over_shoulder", "dolly", "tracking", "static",
+    ],
 }
 
 
 # -----------------------------------------------------------------------------
-# TECHNICAL — primitives: resolution, fps, aspect
+# TECHNICAL — primitives: resolution, fps, aspect (known-to-man)
 # -----------------------------------------------------------------------------
 TECHNICAL_ORIGINS = {
-    "resolution": [(256, 256), (512, 512), (720, 480), (1280, 720), (1920, 1080)],
-    "fps": [12, 24, 30, 60],
-    "aspect_ratio": ["1:1", "16:9", "4:3", "9:16"],
+    "resolution": [
+        (256, 256), (512, 512), (720, 480), (720, 576),
+        (1280, 720), (1920, 1080), (3840, 2160), (4096, 2160),
+    ],
+    "fps": [12, 15, 24, 25, 30, 50, 60, 120],
+    "aspect_ratio": ["1:1", "16:9", "4:3", "9:16", "21:9", "2.39:1"],
 }
 
 

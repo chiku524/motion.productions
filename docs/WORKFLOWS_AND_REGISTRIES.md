@@ -38,7 +38,7 @@ All registries fit the **overall mission**: record every element of a complete v
 
 Each file is **human-readable JSON**: `_meta` describes the registry and aspect; `entries` holds the recorded values; `count` is the number of entries.
 
-**D1 migrations:** From repo root run `python scripts/run_d1_migrations.py` (or `bash scripts/run_d1_migrations.sh`). See [DEPLOY_CLOUDFLARE.md](DEPLOY_CLOUDFLARE.md).
+**D1 migrations:** From repo root run `python scripts/run_d1_migrations.py`. See [DEPLOY_CLOUDFLARE.md](DEPLOY_CLOUDFLARE.md).
 
 ---
 
@@ -68,7 +68,7 @@ Each file is **human-readable JSON**: `_meta` describes the registry and aspect;
 | **Color** | R, G, B, opacity, depth_breakdown | Pure color per frame (dominant RGB). Pure blends record depth % = weights of other pure colors. **Every color primitive** is seeded: black, white, red, green, blue, yellow, cyan, magenta, orange, purple, pink, aqua, brown, navy, teal, lime, olive, maroon, coral, gold, violet, indigo, salmon, crimson, beige, tan, ivory, silver, gray, etc. |
 | **Sound** | noise, strength_pct, amplitude, tone, timbre, depth_breakdown | **Origin/primitive** values = silence, rumble, tone, hiss. The **mesh** (this registry) holds primitives + discovered blends. Each discovery for one instant frame is a **blend of primitives** (depth_breakdown = origin_noises weights); recorded in the registry. low/mid/high are measurements. Kick, snare, melody, etc. → **dynamic** audio_semantic. |
 
-**Primitives:** `STATIC_COLOR_PRIMITIVES` (60+ named colors) and `STATIC_SOUND_PRIMITIVES` (silence + rumble/tone/hiss at strength bands) in `static_registry.py`; seeded at start of `grow_all_from_video()` via `ensure_static_primitives_seeded()`.
+**Primitives:** `STATIC_COLOR_PRIMITIVES` (full CSS named colors, 140+) and `STATIC_SOUND_PRIMITIVES` (silence + rumble/tone/hiss at multiple strength bands) in `static_registry.py`; seeded at start of `grow_all_from_video()` via `ensure_static_primitives_seeded()`.
 
 **Code:** `src/knowledge/static_registry.py`, `extract_static_per_frame()`, `ensure_static_color_in_registry()`, `ensure_static_sound_in_registry()`.
 
@@ -89,7 +89,7 @@ Each file is **human-readable JSON**: `_meta` describes the registry and aspect;
 | **Transition** | type, duration | Cut, fade, dissolve, wipe between segments; novel values added. |
 | **Depth** | parallax_strength, layer_count | Depth/realism over the window; novel values added. |
 
-**Primitives:** Gradient, camera, transition, and audio_semantic (one per presence: silence, ambient, music, sfx, full) origins are seeded at start of `grow_all_from_video()` via `ensure_dynamic_primitives_seeded()`. Motion/lighting/composition/etc. are discovery-only (no discrete origin list seeded).
+**Primitives:** Gradient, camera, transition, and audio_semantic (one per presence) are seeded at start of `grow_all_from_video()` via `ensure_dynamic_primitives_seeded()`. **Motion, lighting, composition, time, temporal, technical, and depth** are also seeded from origins so every known primitive exists in the registry; discovery adds novel blends on top.
 
 **Code:** `extract_dynamic_per_window()` (gradient_direction + camera inference + lighting, etc.), `grow_all_from_video()`. Whole-video composites in `learned_blends`.
 
@@ -337,5 +337,6 @@ Exploiter always picks from good_prompts → same motion/sound/color. Balanced w
 - **[LOOP_STANDARDS.md](LOOP_STANDARDS.md)** — Set algorithms and functions for interpretation loop (language standard) and video loop (MP4 aspects); both grow from origin/primitive + extracted values.
 - [NAME_GENERATOR.md](NAME_GENERATOR.md) — Algorithm for sensible, semantic or name-like short names.
 - [MP4_ASPECTS.md](MP4_ASPECTS.md) — Every aspect of a complete MP4; frame/window model.
-- [RAILWAY_CONFIG.md](RAILWAY_CONFIG.md) — Service config, env vars, deploy steps for Explorer, Exploiter, Balanced, Interpretation, Sound.
+- [RAILWAY_CONFIG.md](RAILWAY_CONFIG.md) — Service config, env vars, deploy steps, post-deploy checklist.
+- [REGISTRY_AND_WORKFLOW_IMPROVEMENTS.md](REGISTRY_AND_WORKFLOW_IMPROVEMENTS.md) — Consolidated improvement plans and reports.
 - [ALGORITHMS_AND_FUNCTIONS_AUDIT.md](ALGORITHMS_AND_FUNCTIONS_AUDIT.md) — Audit of extraction, growth, and registry functions.

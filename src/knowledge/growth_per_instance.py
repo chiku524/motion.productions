@@ -267,25 +267,83 @@ def ensure_static_primitives_seeded(config: dict[str, Any] | None = None) -> Non
 
 def ensure_dynamic_primitives_seeded(config: dict[str, Any] | None = None) -> None:
     """
-    Seed dynamic registry with origin primitives (gradient, camera, transition, audio_semantic)
-    so every known non-pure origin exists for depth and workflow. Idempotent.
+    Seed dynamic registry with all origin primitives so every known non-pure value exists.
+    Covers: gradient, camera, transition, audio_semantic, motion, lighting, composition,
+    time, temporal, technical, depth. Idempotent.
     """
     origins = get_all_origins()
+    # Gradient
     for gtype in (origins.get("graphics") or {}).get("gradient_type", ["vertical", "horizontal", "radial", "angled"]):
         window = {"gradient": {"gradient_type": gtype, "strength": 0.0}}
         ensure_dynamic_gradient_in_registry(window, config=config)
-    for mtype in (origins.get("camera") or {}).get("motion_type", ["static", "pan", "tilt", "dolly", "crane", "zoom", "zoom_out", "handheld"]):
+    # Camera: full motion_type list from origins
+    camera_origins = origins.get("camera") or {}
+    for mtype in camera_origins.get("motion_type", ["static", "pan", "tilt", "dolly", "crane", "zoom", "zoom_out", "handheld", "roll", "truck", "pedestal", "arc", "tracking", "birds_eye", "whip_pan", "rotate"]):
         window = {"camera": {"motion_type": mtype, "speed": "medium"}}
         ensure_dynamic_camera_in_registry(window, config=config)
+    # Transition
     for ttype in (origins.get("transition") or {}).get("type", ["cut", "fade", "dissolve", "wipe"]):
         window = {"transition": {"type": ttype, "duration_seconds": 0.0}}
         ensure_dynamic_transition_in_registry(window, config=config)
-    # Audio semantic: one canonical entry per presence (role) so origins are seeded
+    # Audio semantic: one per presence
     audio_origins = origins.get("audio") or {}
     for presence in audio_origins.get("presence", ["silence", "ambient", "music", "sfx", "full"]):
         role = "ambient" if presence in ("silence", "ambient") else ("music" if presence == "music" else "sfx" if presence == "sfx" else "music")
         window = {"audio_semantic": {"role": role, "mood": "neutral", "tempo": "medium", "presence": presence}}
         ensure_dynamic_audio_semantic_in_registry(window, config=config)
+    # Motion: speed (level) + rhythm primitives
+    motion_origins = origins.get("motion") or {}
+    level_by_speed = {"static": 0.0, "slow": 5.0, "medium": 12.0, "fast": 25.0}
+    for speed in motion_origins.get("speed", ["static", "slow", "medium", "fast"]):
+        level = level_by_speed.get(speed, 12.0)
+        window = {"motion": {"level": level, "trend": "steady", "direction": "neutral", "rhythm": "steady"}}
+        ensure_dynamic_motion_in_registry(window, config=config)
+    for rhythm in motion_origins.get("rhythm", ["steady", "pulsing", "wave", "random"]):
+        window = {"motion": {"level": 12.0, "trend": rhythm, "direction": "neutral", "rhythm": rhythm}}
+        ensure_dynamic_motion_in_registry(window, config=config)
+    # Lighting: contrast_ratio primitives (flat/normal/high/chiaroscuro)
+    lighting_origins = origins.get("lighting") or {}
+    for ratio in lighting_origins.get("contrast_ratio", ["flat", "normal", "high", "chiaroscuro"]):
+        contrast = 25 if ratio == "flat" else (50 if ratio == "normal" else (75 if ratio == "high" else 90))
+        window = {"lighting": {"brightness": 125, "contrast": contrast, "saturation": 1.0}}
+        ensure_dynamic_lighting_in_registry(window, config=config)
+    # Composition: balance primitives
+    comp_origins = origins.get("composition") or {}
+    balance_centers = [
+        (0.2, 0.5, 0.5),   # left_heavy
+        (0.5, 0.5, 0.5),   # balanced
+        (0.8, 0.5, 0.5),   # right_heavy
+        (0.5, 0.2, 0.5),   # top_heavy
+        (0.5, 0.8, 0.5),   # bottom_heavy
+    ]
+    for cx, cy, lb in balance_centers:
+        window = {"composition": {"center_x": cx, "center_y": cy, "luminance_balance": lb}}
+        ensure_dynamic_composition_in_registry(window, config=config)
+    # Time: duration + fps primitives
+    time_durations = [1.0, 2.0, 5.0, 10.0]
+    time_fps = [24.0, 30.0]
+    for duration in time_durations:
+        for fps in time_fps:
+            window = {"time": {"duration": duration, "fps": fps}}
+            ensure_dynamic_time_in_registry(window, config=config)
+    # Temporal: duration + trend
+    temporal_origins = origins.get("temporal") or {}
+    for duration in temporal_origins.get("shot_length_seconds", [1.0, 2.0, 4.0, 6.0, 10.0]):
+        window = {"time": {"duration": duration}, "motion": {"trend": "steady"}}
+        ensure_dynamic_temporal_in_registry(window, config=config)
+    # Technical: resolution + fps
+    tech_origins = origins.get("technical") or {}
+    for res in tech_origins.get("resolution", [(512, 512), (1280, 720), (1920, 1080)]):
+        w, h = res[0], res[1]
+        for fps in tech_origins.get("fps", [24, 30]):
+            window = {"time": {"fps": float(fps)}}
+            ensure_dynamic_technical_in_registry(window, width=w, height=h, fps=float(fps), config=config)
+    # Depth: parallax_strength + layer_count
+    depth_origins = origins.get("depth") or {}
+    for para in depth_origins.get("parallax_strength", [0.0, 0.05, 0.1, 0.2]):
+        for layers in depth_origins.get("layer_count", [1, 2, 3, 4]):
+            window = {"depth": {"parallax_strength": para, "layer_count": layers}}
+            ensure_dynamic_depth_in_registry(window, config=config)
 
 
 def ensure_static_sound_in_registry(
@@ -448,6 +506,7 @@ def ensure_dynamic_motion_in_registry(
         "motion_trend": motion_trend,
         "motion_direction": motion.get("direction", "neutral"),
         "motion_rhythm": motion.get("rhythm", "steady"),
+        "depth_breakdown": compute_motion_depth(motion_level, motion_trend),
     }
     api = {
         "key": key,
@@ -490,14 +549,16 @@ def ensure_dynamic_lighting_in_registry(
     brightness = float(lighting.get("brightness", 128))
     contrast = float(lighting.get("contrast", 50))
     saturation = float(lighting.get("saturation", 1.0))
+    depth = compute_lighting_depth(brightness, contrast, saturation)
+    payload = {**dict(lighting), "depth_breakdown": depth}
     api = {
         "key": key,
         "brightness": brightness,
         "contrast": contrast,
         "saturation": saturation,
-        "depth_breakdown": compute_lighting_depth(brightness, contrast, saturation),
+        "depth_breakdown": depth,
     }
-    return _ensure_dynamic_in_registry("lighting", key, dict(lighting), source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache)
+    return _ensure_dynamic_in_registry("lighting", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache)
 
 
 def ensure_dynamic_composition_in_registry(
@@ -514,14 +575,16 @@ def ensure_dynamic_composition_in_registry(
     cx = float(comp.get("center_x", 0.5))
     cy = float(comp.get("center_y", 0.5))
     lb = float(comp.get("luminance_balance", 0.5))
+    depth = compute_composition_depth(cx, cy, lb)
+    payload = {**dict(comp), "depth_breakdown": depth}
     api = {
         "key": key,
         "center_x": cx,
         "center_y": cy,
         "luminance_balance": lb,
-        "depth_breakdown": compute_composition_depth(cx, cy, lb),
+        "depth_breakdown": depth,
     }
-    return _ensure_dynamic_in_registry("composition", key, dict(comp), source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache)
+    return _ensure_dynamic_in_registry("composition", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache)
 
 
 def ensure_dynamic_graphics_in_registry(
@@ -538,14 +601,16 @@ def ensure_dynamic_graphics_in_registry(
     ed = float(graphics.get("edge_density", 0))
     sv = float(graphics.get("spatial_variance", 0))
     busy = float(graphics.get("busyness", 0))
+    depth = compute_graphics_depth(ed, sv, busy)
+    payload = {**dict(graphics), "depth_breakdown": depth}
     api = {
         "key": key,
         "edge_density": ed,
         "spatial_variance": sv,
         "busyness": busy,
-        "depth_breakdown": compute_graphics_depth(ed, sv, busy),
+        "depth_breakdown": depth,
     }
-    return _ensure_dynamic_in_registry("graphics", key, dict(graphics), source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache)
+    return _ensure_dynamic_in_registry("graphics", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache)
 
 
 def ensure_dynamic_temporal_in_registry(
@@ -562,12 +627,13 @@ def ensure_dynamic_temporal_in_registry(
     motion = window.get("motion", {})
     duration = float(time_dict.get("duration", 5))
     motion_trend = str(motion.get("trend", "steady"))
-    payload = {"duration": duration, "motion_trend": motion_trend}
+    depth = compute_temporal_depth(duration, motion_trend)
+    payload = {"duration": duration, "motion_trend": motion_trend, "depth_breakdown": depth}
     api = {
         "key": key,
         "duration": payload["duration"],
         "motion_trend": payload["motion_trend"],
-        "depth_breakdown": compute_temporal_depth(duration, motion_trend),
+        "depth_breakdown": depth,
     }
     return _ensure_dynamic_in_registry("temporal", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache)
 
@@ -589,13 +655,14 @@ def ensure_dynamic_technical_in_registry(
     w = int(width or 512)
     h = int(height or 512)
     key = _technical_key(window, width=w, height=h, fps=f)
-    payload = {"width": w, "height": h, "fps": f}
+    depth = compute_technical_depth(w, h, f)
+    payload = {"width": w, "height": h, "fps": f, "depth_breakdown": depth}
     api = {
         "key": key,
         "width": w,
         "height": h,
         "fps": f,
-        "depth_breakdown": compute_technical_depth(w, h, f),
+        "depth_breakdown": depth,
     }
     return _ensure_dynamic_in_registry("technical", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache)
 
@@ -614,13 +681,13 @@ def ensure_dynamic_gradient_in_registry(
         return None
     key = _gradient_key(grad)
     gradient_type = grad.get("gradient_type", "angled")
-    payload = {"gradient_type": gradient_type, "strength": grad.get("strength", 0)}
-    # depth_breakdown: single primitive = gradient type (REGISTRY_FOUNDATION)
+    depth = {gradient_type: 1.0}
+    payload = {"gradient_type": gradient_type, "strength": grad.get("strength", 0), "depth_breakdown": depth}
     api = {
         "key": key,
         "gradient_type": payload["gradient_type"],
         "strength": payload["strength"],
-        "depth_breakdown": {gradient_type: 1.0},
+        "depth_breakdown": depth,
     }
     return _ensure_dynamic_in_registry("gradient", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache)
 
@@ -639,13 +706,13 @@ def ensure_dynamic_camera_in_registry(
         return None
     key = _camera_key(cam)
     motion_type = cam.get("motion_type", "static")
-    payload = {"motion_type": motion_type, "speed": cam.get("speed", "medium")}
-    # depth_breakdown: single primitive = motion_type (CAMERA_ORIGINS)
+    depth = {motion_type: 1.0}
+    payload = {"motion_type": motion_type, "speed": cam.get("speed", "medium"), "depth_breakdown": depth}
     api = {
         "key": key,
         "motion_type": payload["motion_type"],
         "speed": payload["speed"],
-        "depth_breakdown": {motion_type: 1.0},
+        "depth_breakdown": depth,
     }
     return _ensure_dynamic_in_registry("camera", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache)
 
@@ -663,8 +730,10 @@ def ensure_dynamic_transition_in_registry(
     if not trans or not trans.get("type"):
         return None
     key = _transition_key(trans)
-    payload = {"type": trans.get("type", "cut"), "duration_seconds": trans.get("duration_seconds", trans.get("duration", 0))}
-    api = {"key": key, "type": payload["type"], "duration_seconds": payload["duration_seconds"]}
+    ttype = trans.get("type", "cut")
+    depth = {ttype: 1.0}
+    payload = {"type": ttype, "duration_seconds": trans.get("duration_seconds", trans.get("duration", 0)), "depth_breakdown": depth}
+    api = {"key": key, "type": payload["type"], "duration_seconds": payload["duration_seconds"], "depth_breakdown": depth}
     return _ensure_dynamic_in_registry("transition", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache)
 
 
@@ -681,8 +750,11 @@ def ensure_dynamic_depth_in_registry(
     if not dep:
         return None
     key = _depth_key(dep)
-    payload = {"parallax_strength": dep.get("parallax_strength", 0), "layer_count": dep.get("layer_count", 1)}
-    api = {"key": key, "parallax_strength": payload["parallax_strength"], "layer_count": payload["layer_count"]}
+    parallax = dep.get("parallax_strength", 0)
+    layers = dep.get("layer_count", 1)
+    depth = {"parallax_strength": round(float(parallax), 3), "layer_count": int(layers)}
+    payload = {"parallax_strength": parallax, "layer_count": layers, "depth_breakdown": depth}
+    api = {"key": key, "parallax_strength": payload["parallax_strength"], "layer_count": payload["layer_count"], "depth_breakdown": depth}
     return _ensure_dynamic_in_registry("depth", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache)
 
 

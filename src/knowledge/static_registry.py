@@ -11,6 +11,7 @@ from typing import Any
 
 # -----------------------------------------------------------------------------
 # COLOR PRIMITIVES — every pure color known (origin values). R, G, B, opacity only.
+# Full set of CSS named colors (sRGB) so the loop can blend from all known-to-man primitives.
 # Brightness/luminance/contrast/saturation are dynamic (per-window), not static.
 # -----------------------------------------------------------------------------
 def _rgb(r: int, g: int, b: int) -> dict[str, Any]:
@@ -18,82 +19,148 @@ def _rgb(r: int, g: int, b: int) -> dict[str, Any]:
 
 
 STATIC_COLOR_PRIMITIVES = [
-    _rgb(0, 0, 0),           # black
-    _rgb(255, 255, 255),     # white
-    _rgb(255, 0, 0),         # red
-    _rgb(0, 255, 0),         # green (lime)
-    _rgb(0, 0, 255),         # blue
-    _rgb(255, 255, 0),       # yellow
-    _rgb(0, 255, 255),       # cyan / aqua
-    _rgb(255, 0, 255),       # magenta / fuchsia
-    _rgb(255, 165, 0),       # orange
-    _rgb(128, 0, 128),       # purple
-    _rgb(255, 192, 203),     # pink
-    _rgb(75, 0, 130),        # indigo
-    _rgb(238, 130, 238),     # violet
-    _rgb(102, 51, 153),      # rebeccapurple
-    _rgb(147, 112, 219),     # mediumpurple
-    _rgb(218, 112, 214),     # orchid
-    _rgb(255, 105, 180),     # hotpink
-    _rgb(255, 20, 147),      # deeppink
-    _rgb(199, 21, 133),      # mediumvioletred
-    _rgb(255, 0, 255),       # fuchsia
-    _rgb(128, 0, 0),         # maroon
-    _rgb(139, 0, 0),         # darkred
-    _rgb(220, 20, 60),       # crimson
-    _rgb(178, 34, 34),       # firebrick
-    _rgb(205, 92, 92),       # indianred
-    _rgb(255, 99, 71),       # tomato
-    _rgb(255, 69, 0),        # orangered
-    _rgb(255, 127, 80),      # coral
-    _rgb(255, 140, 0),       # darkorange
-    _rgb(255, 215, 0),       # gold
-    _rgb(184, 134, 11),      # darkgoldenrod
-    _rgb(210, 180, 140),     # tan
-    _rgb(139, 69, 19),       # saddlebrown
-    _rgb(160, 82, 45),       # sienna
-    _rgb(210, 105, 30),      # chocolate
-    _rgb(205, 133, 63),      # peru
-    _rgb(165, 42, 42),       # brown
-    _rgb(128, 128, 0),       # olive
-    _rgb(85, 107, 47),       # darkolivegreen
-    _rgb(107, 142, 35),      # olivedrab
-    _rgb(34, 139, 34),       # forestgreen
-    _rgb(0, 128, 0),         # green
-    _rgb(0, 255, 127),       # springgreen
-    _rgb(46, 139, 87),       # seagreen
-    _rgb(60, 179, 113),      # mediumseagreen
-    _rgb(0, 206, 209),       # darkturquoise
-    _rgb(0, 255, 255),       # aqua (cyan)
-    _rgb(0, 191, 255),       # deepskyblue
-    _rgb(30, 144, 255),      # dodgerblue
-    _rgb(70, 130, 180),      # steelblue
-    _rgb(0, 0, 128),         # navy
-    _rgb(25, 25, 112),       # midnightblue
-    _rgb(65, 105, 225),      # royalblue
-    _rgb(106, 90, 205),      # slateblue
-    _rgb(72, 61, 139),       # darkslateblue
-    _rgb(230, 230, 250),     # lavender
-    _rgb(216, 191, 216),     # thistle
-    _rgb(221, 160, 221),     # plum
-    _rgb(238, 232, 170),     # palegoldenrod
-    _rgb(245, 245, 220),     # beige
-    _rgb(255, 248, 220),     # cornsilk
-    _rgb(255, 250, 205),     # lemonchiffon
-    _rgb(255, 255, 224),     # lightyellow
-    _rgb(240, 255, 240),     # honeydew
-    _rgb(245, 255, 250),     # mintcream
-    _rgb(240, 255, 255),     # azure
-    _rgb(255, 250, 250),     # snow
-    _rgb(245, 245, 245),     # whitesmoke
-    _rgb(220, 220, 220),     # gainsboro
-    _rgb(211, 211, 211),     # lightgray
-    _rgb(169, 169, 169),     # darkgray
-    _rgb(128, 128, 128),     # gray
-    _rgb(105, 105, 105),     # dimgray
-    _rgb(47, 79, 79),        # darkslategray
-    _rgb(112, 128, 144),     # slategray
-    _rgb(192, 192, 192),     # silver
+    # Core 16 + extended CSS/SVG/X11 named colors (alphabetical for maintainability)
+    _rgb(240, 248, 255),    # aliceblue
+    _rgb(250, 235, 215),    # antiquewhite
+    _rgb(0, 255, 255),      # aqua / cyan
+    _rgb(127, 255, 212),    # aquamarine
+    _rgb(240, 255, 255),    # azure
+    _rgb(245, 245, 220),    # beige
+    _rgb(255, 228, 196),    # bisque
+    _rgb(0, 0, 0),          # black
+    _rgb(255, 235, 205),    # blanchedalmond
+    _rgb(0, 0, 255),        # blue
+    _rgb(138, 43, 226),     # blueviolet
+    _rgb(165, 42, 42),      # brown
+    _rgb(222, 184, 135),    # burlywood
+    _rgb(95, 158, 160),     # cadetblue
+    _rgb(127, 255, 0),      # chartreuse
+    _rgb(210, 105, 30),     # chocolate
+    _rgb(255, 127, 80),     # coral
+    _rgb(100, 149, 237),    # cornflowerblue
+    _rgb(255, 248, 220),    # cornsilk
+    _rgb(220, 20, 60),      # crimson
+    _rgb(0, 255, 255),      # cyan
+    _rgb(0, 0, 139),        # darkblue
+    _rgb(0, 139, 139),      # darkcyan
+    _rgb(184, 134, 11),     # darkgoldenrod
+    _rgb(169, 169, 169),    # darkgray / darkgrey
+    _rgb(0, 100, 0),        # darkgreen
+    _rgb(189, 183, 107),    # darkkhaki
+    _rgb(139, 0, 139),      # darkmagenta
+    _rgb(85, 107, 47),      # darkolivegreen
+    _rgb(255, 140, 0),      # darkorange
+    _rgb(153, 50, 204),     # darkorchid
+    _rgb(139, 0, 0),        # darkred
+    _rgb(233, 150, 122),    # darksalmon
+    _rgb(143, 188, 143),    # darkseagreen
+    _rgb(72, 61, 139),      # darkslateblue
+    _rgb(47, 79, 79),       # darkslategray / darkslategrey
+    _rgb(0, 206, 209),      # darkturquoise
+    _rgb(148, 0, 211),      # darkviolet
+    _rgb(255, 20, 147),     # deeppink
+    _rgb(0, 191, 255),      # deepskyblue
+    _rgb(105, 105, 105),    # dimgray / dimgrey
+    _rgb(30, 144, 255),     # dodgerblue
+    _rgb(178, 34, 34),      # firebrick
+    _rgb(255, 250, 240),    # floralwhite
+    _rgb(34, 139, 34),      # forestgreen
+    _rgb(255, 0, 255),      # fuchsia / magenta
+    _rgb(220, 220, 220),    # gainsboro
+    _rgb(248, 248, 255),    # ghostwhite
+    _rgb(255, 215, 0),      # gold
+    _rgb(218, 165, 32),     # goldenrod
+    _rgb(0, 128, 0),        # green
+    _rgb(173, 255, 47),     # greenyellow
+    _rgb(128, 128, 128),    # gray / grey
+    _rgb(240, 255, 240),    # honeydew
+    _rgb(255, 105, 180),    # hotpink
+    _rgb(205, 92, 92),      # indianred
+    _rgb(75, 0, 130),       # indigo
+    _rgb(255, 255, 240),    # ivory
+    _rgb(240, 230, 140),    # khaki
+    _rgb(230, 230, 250),    # lavender
+    _rgb(255, 240, 245),    # lavenderblush
+    _rgb(124, 252, 0),      # lawngreen
+    _rgb(255, 250, 205),    # lemonchiffon
+    _rgb(173, 216, 230),    # lightblue
+    _rgb(240, 128, 128),    # lightcoral
+    _rgb(224, 255, 255),    # lightcyan
+    _rgb(250, 250, 210),    # lightgoldenrodyellow
+    _rgb(211, 211, 211),    # lightgray / lightgrey
+    _rgb(144, 238, 144),    # lightgreen
+    _rgb(255, 182, 193),    # lightpink
+    _rgb(255, 160, 122),    # lightsalmon
+    _rgb(32, 178, 170),     # lightseagreen
+    _rgb(135, 206, 250),    # lightskyblue
+    _rgb(119, 136, 153),    # lightslategray / lightslategrey
+    _rgb(176, 196, 222),    # lightsteelblue
+    _rgb(255, 255, 224),    # lightyellow
+    _rgb(0, 255, 0),        # lime
+    _rgb(50, 205, 50),      # limegreen
+    _rgb(250, 240, 230),    # linen
+    _rgb(255, 0, 255),      # magenta
+    _rgb(128, 0, 0),       # maroon
+    _rgb(102, 205, 170),    # mediumaquamarine
+    _rgb(0, 0, 205),       # mediumblue
+    _rgb(186, 85, 211),     # mediumorchid
+    _rgb(147, 112, 219),    # mediumpurple
+    _rgb(60, 179, 113),     # mediumseagreen
+    _rgb(123, 104, 238),    # mediumslateblue
+    _rgb(0, 250, 154),      # mediumspringgreen
+    _rgb(72, 209, 204),     # mediumturquoise
+    _rgb(199, 21, 133),     # mediumvioletred
+    _rgb(25, 25, 112),      # midnightblue
+    _rgb(245, 255, 250),    # mintcream
+    _rgb(255, 228, 225),    # mistyrose
+    _rgb(255, 228, 181),    # moccasin
+    _rgb(255, 222, 173),    # navajowhite
+    _rgb(0, 0, 128),        # navy
+    _rgb(253, 245, 230),    # oldlace
+    _rgb(128, 128, 0),      # olive
+    _rgb(107, 142, 35),     # olivedrab
+    _rgb(255, 165, 0),      # orange
+    _rgb(255, 69, 0),       # orangered
+    _rgb(218, 112, 214),    # orchid
+    _rgb(238, 232, 170),    # palegoldenrod
+    _rgb(152, 251, 152),    # palegreen
+    _rgb(175, 238, 238),    # paleturquoise
+    _rgb(219, 112, 147),    # palevioletred
+    _rgb(255, 239, 213),    # papayawhip
+    _rgb(255, 218, 185),    # peachpuff
+    _rgb(205, 133, 63),     # peru
+    _rgb(255, 192, 203),    # pink
+    _rgb(221, 160, 221),    # plum
+    _rgb(176, 224, 230),    # powderblue
+    _rgb(128, 0, 128),      # purple
+    _rgb(102, 51, 153),     # rebeccapurple
+    _rgb(255, 0, 0),        # red
+    _rgb(188, 143, 143),    # rosybrown
+    _rgb(65, 105, 225),     # royalblue
+    _rgb(139, 69, 19),      # saddlebrown
+    _rgb(250, 128, 114),    # salmon
+    _rgb(244, 164, 96),     # sandybrown
+    _rgb(46, 139, 87),      # seagreen
+    _rgb(255, 245, 238),    # seashell
+    _rgb(160, 82, 45),      # sienna
+    _rgb(192, 192, 192),    # silver
+    _rgb(135, 206, 235),    # skyblue
+    _rgb(106, 90, 205),     # slateblue
+    _rgb(112, 128, 144),    # slategray / slategrey
+    _rgb(255, 250, 250),    # snow
+    _rgb(0, 255, 127),      # springgreen
+    _rgb(70, 130, 180),     # steelblue
+    _rgb(210, 180, 140),    # tan
+    _rgb(0, 128, 128),      # teal
+    _rgb(216, 191, 216),    # thistle
+    _rgb(255, 99, 71),      # tomato
+    _rgb(64, 224, 208),     # turquoise
+    _rgb(238, 130, 238),    # violet
+    _rgb(245, 222, 179),    # wheat
+    _rgb(255, 255, 255),    # white
+    _rgb(245, 245, 245),    # whitesmoke
+    _rgb(255, 255, 0),      # yellow
+    _rgb(154, 205, 50),     # yellowgreen
 ]
 
 # -----------------------------------------------------------------------------
@@ -122,20 +189,14 @@ def _snd(noise: str, strength_pct: float, tone_measurement: str = "") -> dict[st
 
 
 # Minimal primitive set (origin values): silence + strength bands per noise (rumble/tone/hiss).
-# These are seeded into the mesh; discovered blends (primitives combined for one instant)
-# are added by the loop and recorded in the same registry.
+# Full coverage: silence plus 0.1–0.9 step 0.1 for each of rumble, tone, hiss (known-to-man pure sounds).
 STATIC_SOUND_PRIMITIVES = [
     _snd("silence", 0.0, "silent"),
-    _snd("rumble", 0.25, "low"),
-    _snd("rumble", 0.5, "low"),
-    _snd("rumble", 0.75, "low"),
-    _snd("tone", 0.25, "mid"),
-    _snd("tone", 0.5, "mid"),
-    _snd("tone", 0.75, "mid"),
-    _snd("hiss", 0.25, "high"),
-    _snd("hiss", 0.5, "high"),
-    _snd("hiss", 0.75, "high"),
 ]
+for noise in ("rumble", "tone", "hiss"):
+    tone_measurement = "low" if noise == "rumble" else ("mid" if noise == "tone" else "high")
+    for pct in (0.1, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.7, 0.75, 0.8, 0.9):
+        STATIC_SOUND_PRIMITIVES.append(_snd(noise, pct, tone_measurement))
 
 # All aspects in STATIC: pure elements only. Depth % = weights of other pure elements (pure blends).
 STATIC_ASPECTS = [
