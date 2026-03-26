@@ -17,4 +17,5 @@ ENV NODE_ENV=production
 # Fly.io / Railway set PORT; local default still works via VIDEO_AI_RENDER_PORT
 EXPOSE 8788
 
-CMD ["npm", "run", "start"]
+# Run tsx via node (PID 1). npm as PID 1 often mishandles SIGTERM during Railway health checks / restarts.
+CMD ["node", "node_modules/tsx/dist/cli.mjs", "src/render/server.ts"]

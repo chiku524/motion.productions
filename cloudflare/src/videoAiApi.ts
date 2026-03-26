@@ -16,6 +16,12 @@ function json<T>(data: T, status = 200) {
   });
 }
 
+function d1Err(e: unknown, status = 500) {
+  const detail = e instanceof Error ? e.message : String(e);
+  const safe = detail.slice(0, 500);
+  return json({ error: "Database error", detail: safe }, status);
+}
+
 export type VideoAiEnv = {
   OPENAI_API_KEY?: string;
   OPENAI_MODEL?: string;
@@ -337,8 +343,8 @@ export async function handleVideoAiApi(
       )
         .bind(jobId)
         .first<JobRow>();
-    } catch {
-      return json({ error: "Database error" }, 500);
+    } catch (e) {
+      return d1Err(e);
     }
     if (!row) return json({ error: "Not found" }, 404);
     const payload: Record<string, unknown> = {
@@ -362,8 +368,8 @@ export async function handleVideoAiApi(
       row = await env.DB.prepare(`SELECT status, output_key FROM video_ai_jobs WHERE id = ?`)
         .bind(jobId)
         .first<{ status: string; output_key: string }>();
-    } catch {
-      return json({ error: "Database error" }, 500);
+    } catch (e) {
+      return d1Err(e);
     }
     if (!row) return json({ error: "Not found" }, 404);
     if (row.status !== "completed") {

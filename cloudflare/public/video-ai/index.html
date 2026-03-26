@@ -162,6 +162,11 @@
       const jobBtn = $("jobBtn");
       let lastRecipe = null;
 
+      function apiErr(data, fallback) {
+        if (!data || typeof data !== "object") return fallback;
+        return [data.error, data.detail].filter(Boolean).join(": ") || fallback;
+      }
+
       function setStatus(t) {
         statusEl.textContent = t || "";
       }
@@ -250,7 +255,7 @@
             body: JSON.stringify({ recipe: lastRecipe }),
           });
           const data = await res.json();
-          if (!res.ok) throw new Error(data.error || res.statusText);
+          if (!res.ok) throw new Error(apiErr(data, res.statusText));
           const jobId = data.jobId;
           const pollUrl = data.pollUrl || `/video-ai/api/jobs/${jobId}`;
           setStatus(`Job ${jobId} queued. Waiting for render…`);
@@ -259,7 +264,7 @@
             await new Promise((r) => setTimeout(r, 2000));
             const st = await fetch(pollUrl);
             const j = await st.json();
-            if (!st.ok) throw new Error(j.error || st.statusText);
+            if (!st.ok) throw new Error(apiErr(j, st.statusText));
             if (j.status === "completed") {
               const dl = j.downloadUrl || `/video-ai/api/jobs/${jobId}/download`;
               const a = document.createElement("a");
@@ -270,7 +275,7 @@
               break;
             }
             if (j.status === "failed") {
-              throw new Error(j.error || "Job failed");
+              throw new Error(apiErr(j, "Job failed"));
             }
             setStatus(`Job ${jobId}: ${j.status}…`);
           }
