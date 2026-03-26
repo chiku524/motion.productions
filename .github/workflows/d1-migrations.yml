@@ -1,0 +1,52 @@
+# Run remote D1 migrations when the database can accept them (avoids 7429 blocking every main deploy).
+# Default push deploy sets SKIP_D1_REMOTE_BATCH; use this workflow from Actions → "Run workflow".
+name: D1 migrations (remote)
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "batch = wrangler migrations apply (fast if DB is small/quiet); one-by-one = long pauses between files (large DB)"
+        required: true
+        default: one-by-one
+        type: choice
+        options:
+          - one-by-one
+          - batch
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: cloudflare/package-lock.json
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Wrangler (cloudflare)
+        working-directory: cloudflare
+        run: npm ci || npm install
+
+      - name: Run D1 migrations (one-by-one)
+        if: ${{ github.event.inputs.mode == 'one-by-one' }}
+        run: python scripts/run_d1_migrations.py --one-by-one --remote --delay 120
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Run D1 migrations (batch)
+        if: ${{ github.event.inputs.mode == 'batch' }}
+        run: python scripts/run_d1_migrations.py --remote --max-attempts 8
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

@@ -35,7 +35,8 @@ jobs:
         working-directory: video-ai
         run: npm ci || npm install
 
-      # Remote batch apply hits D1 CPU 7429 on large production DB; apply manually / one-by-one / dashboard.
+      # Remote batch apply often hits D1 CPU 7429 on large production DB. To apply pending migrations when
+      # the DB is quiet, run workflow "D1 migrations (remote)" (workflow_dispatch) — do not set SKIP there.
       - name: Run D1 migrations
         run: python scripts/run_d1_migrations.py
         env:
