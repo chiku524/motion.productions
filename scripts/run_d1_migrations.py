@@ -22,9 +22,13 @@ Usage:
       # records nine 0012_/0016_ files; use only if those columns already exist, then apply 0020 (batch or --only).
   python scripts/run_d1_migrations.py --remote --record-depth-breakdown-preset --record-delay 120 --max-attempts 8
       # large remote D1 may return 7429 between INSERTs; increase delay and retries.
+
+  # CI: remote batch apply often fails with 7429 on very large DBs — skip and deploy Worker anyway:
+  SKIP_D1_REMOTE_BATCH=1 python scripts/run_d1_migrations.py --remote
 """
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -447,6 +451,15 @@ def main() -> None:
                 allow_initial=args.allow_initial,
             )
         )
+
+    skip_batch = os.environ.get("SKIP_D1_REMOTE_BATCH", "").strip().lower()
+    if target == "--remote" and skip_batch in ("1", "true", "yes"):
+        print(
+            "SKIP_D1_REMOTE_BATCH: skipping remote `wrangler d1 migrations apply` (avoids D1 CPU 7429 on large DBs). "
+            "Run migrations from a workstation or D1 dashboard; video_ai_jobs may be created by the Worker at runtime.",
+            file=sys.stderr,
+        )
+        return
 
     delay = INITIAL_DELAY_SEC
     last_result = None
