@@ -5,4 +5,5 @@ tmp/
 *.mp4
 .env
 .env.*
+!.env.example
 worker-configuration.d.ts

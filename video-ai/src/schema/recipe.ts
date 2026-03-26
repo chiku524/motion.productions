@@ -26,12 +26,42 @@ export const SceneSchema = z.object({
     .optional(),
 });
 
+const narrationVoice = z.enum([
+  "alloy",
+  "echo",
+  "fable",
+  "onyx",
+  "nova",
+  "shimmer",
+]);
+
 export const VideoRecipeSchema = z.object({
   meta: z.object({
     width: z.number().int().min(320).max(3840),
     height: z.number().int().min(320).max(3840),
     fps: z.number().int().min(12).max(60).default(30),
     title: z.string().max(200).optional(),
+    /** Optional audio bed + voiceover (render service needs OPENAI_API_KEY for narration). */
+    audio: z
+      .object({
+        /** Public HTTPS URL to an audio file (e.g. mp3/aac/wav) looped under the video. */
+        backgroundMusicUrl: z.string().url().optional(),
+        /** 0–1, default 0.22 in the renderer. */
+        backgroundMusicVolume: z.number().min(0).max(1).optional(),
+        /** OpenAI TTS; spoken over the full video (trimmed to video length). */
+        narration: z
+          .object({
+            text: z.string().min(1).max(4096),
+            voice: narrationVoice.optional(),
+          })
+          .optional(),
+      })
+      .optional()
+      .refine(
+        (a) =>
+          !a?.backgroundMusicUrl || a.backgroundMusicUrl.startsWith("https://"),
+        { message: "backgroundMusicUrl must be https://" },
+      ),
   }),
   scenes: z.array(SceneSchema).min(1).max(80),
 });
