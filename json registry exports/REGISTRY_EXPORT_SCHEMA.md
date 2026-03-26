@@ -8,9 +8,9 @@ Exports from the **Export JSON** action on the registries page produce a JSON fi
 
 - **exported_at** — ISO 8601 timestamp (e.g. `2026-02-21T16:22:36.140Z`).
 - **exported_schema_version** (optional) — Integer; `2` indicates this export includes `loop_progress` and `coverage_snapshot`. Omitted in older exports.
-- **registries** — Object with `pure_static`, `blended_dynamic`, and `semantic_narrative`.
+- **registries** — Object with `pure_static`, `blended_dynamic`, `semantic_narrative`, plus `interpretation` and `linguistic` when returned by the API.
 - **loop_progress** (optional) — Learning loop stats: `last_n`, `total_runs`, `precision_pct`, `target_pct`, `runs_with_learning`, `discovery_rate_pct`, `repetition_score`. Present when `exported_schema_version >= 2`.
-- **coverage_snapshot** (optional) — At-a-glance progress toward 100% registry completion; e.g. `static_colors_coverage_pct`, and other category coverage metrics. Present when `exported_schema_version >= 2`.
+- **coverage_snapshot** (optional) — At-a-glance progress; e.g. `static_colors_coverage_pct` (vs ~28k quantized cells), `narrative_min_coverage_pct`, `static_sound_coverage_pct`, `plots_coverage_pct`, `style_coverage_pct`, `narrative_plots_style_min_coverage_pct`, `primitive_color_catalog_size`. Present when `exported_schema_version >= 2`.
 
 ## Key format (canonical)
 
@@ -22,16 +22,16 @@ Exports from the **Export JSON** action on the registries page produce a JSON fi
 ## pure_static
 
 - **primitives**
-  - **color_primaries** — Array of `{ name, r, g, b }` (the 16 base colors).
+  - **color_primaries** — Array of `{ name, r, g, b }` (full CSS named-color set synced from `static_registry.py` / `scripts/gen_color_primaries_ts.py`; ~139 unique sRGB primaries).
   - **sound_primaries** — Array of strings (e.g. silence, rumble, tone, hiss).
 - **discoveries**
   - **colors** — Array of:
     - **key** — `"r,g,b"`.
     - **r, g, b, name, count, depth_pct**.
-    - **depth_breakdown** — Object mapping **color primitive names only** (black, white, red, green, blue, yellow, cyan, magenta, orange, purple, pink, brown, navy, gray, olive, teal) to contribution percentages (0–100).
+    - **depth_breakdown** — Object mapping **color primitive names** (CSS / catalog names from the primitive set) to contribution percentages (0–100).
     - **opacity_pct** (optional) — 0–100 when the discovery had an opacity component.
     - **theme_breakdown** (optional) — When the blend was computed from theme/preset names (e.g. ocean, default, night, forest, warm_sunset, fire, dreamy, neon), those contributions appear here instead of in `depth_breakdown`. This keeps `depth_breakdown` strictly for color primitives.
-  - **sound** — Array of `{ key, name, count, strength_pct?, depth_breakdown? }`. **strength_pct** = amplitude/weight of the sound in that instant (0–100%). The four primitives (silence, rumble, tone, hiss) are always present (count 0 if never recorded). Display names are normalized (e.g. `sound_` prefix stripped).
+  - **sound** — Array of `{ key, name, count, strength_pct?, depth_breakdown? }`. **strength_pct** = amplitude/weight of the sound in that instant (0–100%). The four primitives appear only when **count > 0**; otherwise they are listed only under `primitives.sound_primaries`. Display names are normalized (e.g. `sound_` prefix stripped).
 
 ## Depth (one concept)
 
@@ -43,7 +43,7 @@ Exports from the **Export JSON** action on the registries page produce a JSON fi
 - **discoveries**
   - **colors** — Same shape as pure_static discoveries (key = `"r,g,b"`, **depth_breakdown** = primaries only, optional **opacity_pct**, **theme_breakdown**). Whole-video dominant color (one per video).
   - **colors_from_blends** — Color-domain entries from learned_blends (same shape as other blend rows).
-  - **motion, gradient, camera, sound** — Per-domain discovery lists with **name**, **key**, **depth_pct**, **depth_breakdown**.
+  - **motion, gradient, camera, sound** — Per-domain discovery lists with **name**, **key**, **depth_pct**, **depth_breakdown**. **motion** is **deduplicated by key** (one row per `profile_key`, keeping the highest **count**).
   - **lighting, composition, graphics, temporal, technical** — Domain-specific blend lists (from learned_blends); only present when non-empty.
   - **blends** — **Fallback only**: entries that could not be labeled under a single category (e.g. full_blend, narrative).
 

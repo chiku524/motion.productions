@@ -13,6 +13,7 @@ Usage:
 """
 import json
 import logging
+import os
 import sys
 import time
 from pathlib import Path
@@ -42,6 +43,8 @@ def baseline_state() -> dict:
         "duration_base": 6.0,
         "exploit_count": 0,
         "explore_count": 0,
+        "interpretation_streak": 0,
+        "interpretation_recent_buckets": [],
     }
 
 
@@ -58,15 +61,38 @@ def is_good_outcome(analysis: dict) -> bool:
     )
 
 
+def _interpretation_bucket(item: dict) -> str:
+    """Bucket key for diversity (genre | palette | motion)."""
+    inst = item.get("instruction") if isinstance(item.get("instruction"), dict) else {}
+    g = str(inst.get("genre") or "").strip().lower()[:32]
+    p = str(inst.get("palette_name") or "").strip().lower()[:32]
+    m = str(inst.get("motion_type") or "").strip().lower()[:32]
+    return f"{g}|{p}|{m}" if (g or p or m) else "default"
+
+
+def _pick_interpretation_diverse(candidates: list[dict], state: dict) -> dict:
+    """Prefer interpretation prompts whose bucket is under-represented in recent runs."""
+    recent = list(state.get("interpretation_recent_buckets", [])[-10:])
+
+    def sort_key(c: dict) -> tuple[int, float]:
+        b = _interpretation_bucket(c)
+        return (recent.count(b), secure_random())
+
+    ranked = sorted(candidates, key=sort_key)
+    pool_size = max(1, min(len(ranked), max(3, len(ranked) // 3)))
+    pool = ranked[:pool_size]
+    return secure_choice(pool)
+
+
 def pick_prompt(
     state: dict,
     exploit_ratio: float = DEFAULT_EXPLOIT_RATIO,
     knowledge: dict | None = None,
     coverage: dict | None = None,
-) -> tuple[str, bool]:
+) -> tuple[str, bool, dict]:
     """
     Exploit (good prompts) vs explore (new) based on exploit_ratio.
-    Returns (prompt, is_exploit) so loop can track exploit_count / explore_count.
+    Returns (prompt, is_exploit, meta) where meta includes source and optional interpretation_bucket.
     """
     from src.automation import generate_procedural_prompt
     from src.automation.prompt_gen import generate_targeted_narrative_prompt
@@ -79,22 +105,36 @@ def pick_prompt(
         candidates = [p for p in good if p not in recent]
         chosen = secure_choice(candidates) if candidates else secure_choice(good)
         if chosen:
-            return (chosen, True)
-    # When exploring: 20% use targeted narrative prompt to fill missing genre/mood/themes (§2.4)
-    if coverage and secure_random() < 0.20:
+            return (chosen, True, {"source": "exploit_good"})
+    # When exploring: targeted narrative to fill gaps; higher rate when plots/style coverage is thin (§2.4)
+    narr = (coverage or {}).get("narrative") or {}
+    p_cov = float((narr.get("plots") or {}).get("coverage_pct") or 100)
+    s_cov = float((narr.get("style") or {}).get("coverage_pct") or 100)
+    ps_min = float((coverage or {}).get("narrative_plots_style_min_coverage_pct") or min(p_cov, s_cov))
+    thin_plots_style = ps_min < 85
+    targeted_rate = 0.34 if thin_plots_style else 0.20
+    if coverage and secure_random() < targeted_rate:
         targeted = generate_targeted_narrative_prompt(coverage, avoid=recent)
         if targeted:
             logger.info("Targeted narrative prompt (fill gaps): %s", targeted[:60] + ("..." if len(targeted) > 60 else ""))
-            return (targeted, False)
-    if interpretation_prompts and secure_random() < 0.45:
+            return (targeted, False, {"source": "targeted_narrative"})
+    interp_streak = int(state.get("interpretation_streak", 0))
+    max_interp_streak = int(os.environ.get("LOOP_INTERPRETATION_STREAK_MAX", "5"))
+    if (
+        interpretation_prompts
+        and secure_random() < 0.45
+        and interp_streak < max(1, max_interp_streak)
+    ):
         candidates = [p for p in interpretation_prompts if isinstance(p, dict) and p.get("prompt") and p["prompt"] not in recent]
         if candidates:
-            return (secure_choice(candidates)["prompt"], False)
+            chosen = _pick_interpretation_diverse(candidates, state)
+            bucket = _interpretation_bucket(chosen)
+            return (chosen["prompt"], False, {"source": "interpretation", "interpretation_bucket": bucket})
     fallback = (
         generate_procedural_prompt(avoid=recent, knowledge=knowledge, coverage=coverage, instructive_ratio=0.65)
         or (secure_choice(good) if good else generate_procedural_prompt(knowledge=knowledge, coverage=coverage, instructive_ratio=0.65))
     )
-    return (fallback or "", False)
+    return (fallback or "", False, {"source": "procedural"})
 
 
 def _load_coverage(api_base: str) -> dict | None:
@@ -118,6 +158,8 @@ def _load_state(api_base: str) -> dict:
             "duration_base": float(s.get("duration_base", 6.0)),
             "exploit_count": int(s.get("exploit_count", 0)),
             "explore_count": int(s.get("explore_count", 0)),
+            "interpretation_streak": int(s.get("interpretation_streak", 0)),
+            "interpretation_recent_buckets": list(s.get("interpretation_recent_buckets", []))[-12:],
         }
     except APIError as e:
         logger.warning("GET /api/loop/state failed (status=%s, path=%s): %s — using baseline state", e.status_code, e.path, e)
@@ -175,6 +217,9 @@ def _get_discovery_adjusted_exploit_ratio(
             base_ratio = min(base_ratio, 0.5)
         if narrative_min is not None and narrative_min < 50 and not override_active:
             base_ratio = min(base_ratio, 0.5)
+        ps_min = coverage.get("narrative_plots_style_min_coverage_pct")
+        if ps_min is not None and ps_min < 70 and not override_active:
+            base_ratio = min(base_ratio, 0.45)
 
     # High repetition → reduce exploit
     if repetition is not None and repetition > 0.35 and total_runs >= 5:
@@ -383,7 +428,18 @@ def run() -> None:
 
         if coverage is None and args.api_base:
             coverage = _load_coverage(args.api_base)
-        prompt, is_exploit = pick_prompt(state, exploit_ratio=exploit_ratio, knowledge=knowledge, coverage=coverage)
+        prompt, is_exploit, prompt_meta = pick_prompt(
+            state, exploit_ratio=exploit_ratio, knowledge=knowledge, coverage=coverage
+        )
+        if prompt_meta.get("source") == "interpretation":
+            state["interpretation_streak"] = int(state.get("interpretation_streak", 0)) + 1
+            b = prompt_meta.get("interpretation_bucket")
+            if isinstance(b, str) and b:
+                rb = list(state.get("interpretation_recent_buckets", []))
+                rb.append(b)
+                state["interpretation_recent_buckets"] = rb[-12:]
+        else:
+            state["interpretation_streak"] = 0
         if not prompt:
             state["recent_prompts"] = []
             continue

@@ -68,7 +68,7 @@ Each file is **human-readable JSON**: `_meta` describes the registry and aspect;
 | **Color** | R, G, B, opacity, depth_breakdown | Pure color per frame (dominant RGB). Pure blends record depth % = weights of other pure colors. **Every color primitive** is seeded: black, white, red, green, blue, yellow, cyan, magenta, orange, purple, pink, aqua, brown, navy, teal, lime, olive, maroon, coral, gold, violet, indigo, salmon, crimson, beige, tan, ivory, silver, gray, etc. |
 | **Sound** | noise, strength_pct, amplitude, tone, timbre, depth_breakdown | **Origin/primitive** values = silence, rumble, tone, hiss. The **mesh** (this registry) holds primitives + discovered blends. Each discovery for one instant frame is a **blend of primitives** (depth_breakdown = origin_noises weights); recorded in the registry. low/mid/high are measurements. Kick, snare, melody, etc. → **dynamic** audio_semantic. |
 
-**Primitives:** `STATIC_COLOR_PRIMITIVES` (full CSS named colors, 140+) and `STATIC_SOUND_PRIMITIVES` (silence + rumble/tone/hiss at multiple strength bands) in `static_registry.py`; seeded at start of `grow_all_from_video()` via `ensure_static_primitives_seeded()`.
+**Primitives:** `STATIC_COLOR_PRIMITIVES` (full CSS named colors, 140+) and `STATIC_SOUND_PRIMITIVES` (silence + rumble/tone/hiss at multiple strength bands) in `static_registry.py`; seeded at start of `grow_all_from_video()` via `ensure_static_primitives_seeded()`. After editing color primitives, regenerate the Worker catalog: `python scripts/gen_color_primaries_ts.py` (or `npm run gen:color-primaries` from `cloudflare/`).
 
 **Code:** `src/knowledge/static_registry.py`, `extract_static_per_frame()`, `ensure_static_color_in_registry()`, `ensure_static_sound_in_registry()`.
 
@@ -232,7 +232,7 @@ Each workflow is one **continuous loop** that repeats the same steps. Only **pro
 - **Script:** `scripts/interpret_loop.py` (fourth Railway service).
 - **What it does:** Polls `GET /api/interpret/queue` for pending prompts; runs `interpret_user_prompt(prompt)`; stores the result with `PATCH /api/interpret/:id`. Optionally backfills prompts from the jobs table that don't yet have an interpretation and stores them via `POST /api/interpretations`.
 - **Storage:** User prompts and full instruction payloads (palette, motion, gradient, camera, audio, etc.) are stored in **D1** (`interpretations` table). No R2 (no video). KV is used for loop config/state as for other workers.
-- **Integration with main pipeline:** `GET /api/knowledge/for-creation` returns `interpretation_prompts` (list of `{ prompt, instruction }`). The main loop's `pick_prompt()` uses `knowledge["interpretation_prompts"]` when exploring: with 35% probability it picks one of these pre-interpreted user prompts so the creation phase has more user-like prompts to work with.
+- **Integration with main pipeline:** `GET /api/knowledge/for-creation` returns `interpretation_prompts` (list of `{ prompt, instruction }`). The main loop's `pick_prompt()` uses `knowledge["interpretation_prompts"]` when exploring: with 45% probability it may pick one of these. **Diversity:** prompts are chosen with bias toward under-used `(genre|palette|motion)` buckets from recent runs (`interpretation_recent_buckets` in loop state). After **5** consecutive interpretation-sourced prompts (`interpretation_streak`), the loop skips interpretation until a procedural/targeted run resets the streak. Override cap with **`LOOP_INTERPRETATION_STREAK_MAX`** (default `5`).
 
 ### Sound-only (Workflow E — pure sound discovery, no video)
 

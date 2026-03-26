@@ -45,6 +45,16 @@ workflows:
       LOOP_EXTRACTION_FOCUS: "frame"
       LOOP_WORKER_OFFSET_SECONDS: "5"
 
+  # Window + high explore: grows blends, gradient/camera depth, technical/temporal rows (pairs with frame workers).
+  window_explorer:
+    description: "Window-focused — 75% explore; per-window dynamic + narrative; fills thin blended_dynamic slices"
+    env:
+      API_BASE: https://motion.productions
+      LOOP_EXPLOIT_RATIO_OVERRIDE: "0.25"
+      LOOP_WORKFLOW_TYPE: "window_explorer"
+      LOOP_EXTRACTION_FOCUS: "window"
+      LOOP_WORKER_OFFSET_SECONDS: "20"
+
   interpretation:
     description: "Interpretation only — no create/render; fills interpretation registry (D1) for main pipeline"
     # Start command from railway.toml (railway_start.py); this env selects interpret_loop.py

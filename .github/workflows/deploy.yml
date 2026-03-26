@@ -42,3 +42,31 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: cloudflare
+
+  # Optional: deploy video-ai/ to Railway via CLI. Skip if you use Railway’s GitHub integration
+  # with Root Directory set to "video-ai" (to avoid double deploy). Enable by setting repo variable
+  # RAILWAY_VIDEO_AI_GHA_ENABLE=true and secrets RAILWAY_TOKEN, RAILWAY_VIDEO_AI_PROJECT_ID, RAILWAY_VIDEO_AI_SERVICE_NAME.
+  railway-video-ai:
+    runs-on: ubuntu-latest
+    name: Deploy Video AI (Railway)
+    if: ${{ vars.RAILWAY_VIDEO_AI_GHA_ENABLE == 'true' }}
+    needs: deploy
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: railway up (video-ai)
+        working-directory: video-ai
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          set -e
+          railway up -c -d \
+            -p "${{ secrets.RAILWAY_VIDEO_AI_PROJECT_ID }}" \
+            -s "${{ secrets.RAILWAY_VIDEO_AI_SERVICE_NAME }}"

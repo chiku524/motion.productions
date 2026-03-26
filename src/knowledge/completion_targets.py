@@ -6,7 +6,8 @@ See docs/REGISTRY_AND_WORKFLOW_IMPROVEMENTS.md.
 from typing import Any
 
 # Static color: key = quantized RGB (tolerance 25 → 11 steps per channel) + opacity (21 steps)
-# 11^3 * 21 ≈ 27_951
+# 11^3 * 21 ≈ 27_951 — this is the *cell space* for static_colors_coverage_pct (distinct keys / cells).
+# Named CSS primaries live in static_registry.STATIC_COLOR_PRIMITIVES; Worker syncs via gen_color_primaries_ts.py.
 STATIC_COLOR_ESTIMATED_CELLS = 11 * 11 * 11 * 21  # 27_951
 
 # Static sound: 4 primitives (silence, rumble, tone, hiss). "Complete" = all four present in discoveries.

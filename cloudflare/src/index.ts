@@ -168,7 +168,7 @@ export default {
       return Response.redirect(new URL("/video-ai/", request.url).toString(), 302);
     }
 
-    const videoAiResponse = await handleVideoAiApi(request, env, path);
+    const videoAiResponse = await handleVideoAiApi(request, env, path, ctx);
     if (videoAiResponse) return videoAiResponse;
 
     // API routes

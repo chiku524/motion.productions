@@ -6,6 +6,7 @@ API and storage for **motion.productions**: Worker (API), D1 (jobs), R2 (videos)
 
 ```bash
 npm install
+npm run gen:color-primaries   # sync CSS color list from ../src/knowledge/static_registry.py
 npx wrangler login
 npx wrangler d1 migrations apply motion-productions-db --remote
 npx wrangler deploy

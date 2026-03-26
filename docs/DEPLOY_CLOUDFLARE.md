@@ -90,7 +90,36 @@ python scripts/run_d1_migrations.py --local
 
 The script retries up to 5 times with exponential backoff (30s → 45s → …) if D1 returns "exceeded its CPU time limit" (code 7429). Heavy migrations (e.g. multiple `ALTER TABLE` in one file) are split into one-statement files under `cloudflare/migrations/` to stay under the per-query CPU limit.
 
+**If a single migration still hits the CPU limit** (e.g. one `ALTER TABLE` on a very large table like `static_colors`), run migrations **one at a time** with a long pause between each so D1 can recover:
+
+```bash
+python scripts/run_d1_migrations.py --one-by-one --remote --start-after 0011_learned_gradient_camera.sql
+```
+
+This applies each pending migration file via `wrangler d1 execute --file`, records it in `d1_migrations`, then waits 120 seconds (configurable with `--delay N`) before the next.
+
+**If even one ALTER still fails with 7429**, the table is too large for D1’s per-query CPU budget. You can:
+
+1. **Shrink the table, then migrate** – Delete old rows in small batches so the ALTER runs under the limit. Use `python scripts/trim_static_colors_for_migration.py --remote --dry-run` to see the current row count, then run without `--dry-run` with e.g. `--keep 50000` to keep the newest 50k rows (deletes in batches). If deletes hit the CPU limit, try `--batch-size 1000`. Then re-run the one-by-one migration.
+2. **Apply the ALTER in the Cloudflare D1 dashboard** – In **D1 → your database → Console**, run the single statement from the failing migration file (e.g. `ALTER TABLE static_colors ADD COLUMN depth_breakdown_json TEXT;`). If it succeeds, mark the migration applied: `INSERT INTO d1_migrations (name) VALUES ('0012_1_static_colors_depth.sql');` Then continue with the rest via the script or dashboard.
+
+If the script reports "No applied migrations found" and tries to run from `0000_initial.sql`, it will abort to avoid re-running the initial migration on an existing DB. Use `--start-after 0011_learned_gradient_camera.sql` to run only 0012_1 and later (the depth/strength migrations), or `--allow-initial` only if the DB is truly empty.
+
+**`wrangler d1 migrations apply` fails immediately with 7429** — Wrangler still has to reconcile pending migrations; the first pending file may be a heavy `ALTER` on `static_colors`. You can **apply specific small migrations only** (e.g. temporal/technical depth columns) without running the full queue:
+
+```bash
+python scripts/run_d1_migrations.py --one-by-one --remote --only 0018_learned_temporal_depth.sql,0019_learned_technical_depth.sql --delay 60
+```
+
+If recording fails with **`UNIQUE constraint failed: d1_migrations.name`**, the migration name is already in `d1_migrations` (e.g. an earlier failed `ALTER` was still recorded). Re-run with `--only` for the **remaining** files only. The migration script uses **`INSERT OR IGNORE`** and re-checks `d1_migrations` so duplicate inserts are treated as success.
+
+**7429 on a no-op `SELECT 1` migration** — On very large remote databases, Wrangler can hit D1 CPU **7429** even for **`SELECT 1`** (`d1 execute --file` or `--command`). For migrations that are **only** comments + `SELECT 1` (e.g. **0018** / **0019**), `scripts/run_d1_migrations.py` **skips remote execute** and only **`INSERT`s into `d1_migrations`** (schema for those is **Worker-managed**). For local D1, it still runs `SELECT 1` via `--command`. If **`INSERT` into `d1_migrations` also fails with 7429**, add the row in the **D1 dashboard** SQL console, then continue.
+
+Resolve the blocking pending migrations separately (trim `static_colors`, D1 dashboard, or one-by-one from `--start-after 0011_...`). After that, `npx wrangler d1 migrations apply motion-productions-db --remote` may succeed again.
+
 **Note:** D1's SQLite does not support `ADD COLUMN IF NOT EXISTS`. Migrations use plain `ADD COLUMN`. If a migration fails with **"duplicate column name"**, that column was already added (e.g. by a previous partial run). You can mark that migration as applied by inserting its name into the `d1_migrations` table via the D1 dashboard or `wrangler d1 execute ... --remote`, then re-run the migration script.
+
+Migrations **`0018_learned_temporal_depth.sql`** and **`0019_learned_technical_depth.sql`** are **no-op** `SELECT 1` files (ordering + marking applied). **`learned_dynamic_meta`** and its indexes are created at **runtime in the Worker** (`ensureLearnedDynamicMetaTable` in `cloudflare/src/index.ts`) because remote migration **import** can still hit D1 CPU limit **7429** on very large databases even for `CREATE TABLE`. Temporal/technical **depth_breakdown** is stored in `learned_dynamic_meta` (`aspect` = `temporal` | `technical`, `profile_key`, `depth_breakdown_json`). The Worker reads/writes that table; `learned_temporal` / `learned_technical` rows stay unchanged. **Deploy the Worker** after pulling this change so production creates the table on first use.
 
 Or run Wrangler directly from the **`cloudflare/`** directory:
 
@@ -102,9 +131,10 @@ npx wrangler d1 migrations apply motion-productions-db --local   # for local D1
 
 ### 5. Deploy the Worker
 
-From `cloudflare/`:
+**Important:** Wrangler config lives in **`cloudflare/wrangler.jsonc`**. Running `wrangler deploy` from the **repo root** fails with *Missing entry-point*. Always deploy from `cloudflare/`:
 
 ```bash
+cd cloudflare
 npx wrangler deploy
 ```
 

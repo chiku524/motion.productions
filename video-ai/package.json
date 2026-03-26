@@ -5,6 +5,7 @@
   "description": "Side project: prompt → recipe JSON → MP4 (Cloudflare Worker + Node/FFmpeg render)",
   "type": "module",
   "scripts": {
+    "start": "tsx src/render/server.ts",
     "dev:worker": "wrangler dev",
     "dev:render": "tsx watch src/render/server.ts",
     "render": "tsx src/render/server.ts",
@@ -12,14 +13,15 @@
     "cf-typegen": "wrangler types"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.758.0",
     "@hono/node-server": "^1.13.8",
     "hono": "^4.7.4",
+    "tsx": "^4.19.3",
     "zod": "^3.24.2"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250317.0",
     "@types/node": "^22.13.10",
-    "tsx": "^4.19.3",
     "typescript": "^5.8.2",
     "wrangler": "^4.63.0"
   },

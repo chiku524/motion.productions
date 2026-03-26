@@ -127,8 +127,8 @@
       <p class="back"><a href="/">← Motion home</a></p>
       <h1>Video AI lab</h1>
       <p class="lead">
-        Experimental side project: prompt → recipe JSON on this Worker (<code>/video-ai/api/</code>) → MP4 via FFmpeg
-        render service. See <code>video-ai/README.md</code> in the repo.
+        Experimental side project: prompt → recipe JSON on this Worker (<code>/video-ai/api/</code>) → MP4 via FFmpeg.
+        Use <strong>Queue job (R2)</strong> for async renders (recipe + output in R2, status in D1), or <strong>Render MP4 (sync)</strong> to stream through the Worker.
       </p>
 
       <form id="f">
@@ -146,7 +146,8 @@
         </div>
         <div class="actions">
           <button type="submit" id="planBtn">Plan (recipe)</button>
-          <button type="button" id="renderBtn" disabled>Render MP4</button>
+          <button type="button" id="renderBtn" disabled>Render MP4 (sync)</button>
+          <button type="button" id="jobBtn" disabled>Queue job (R2)</button>
         </div>
       </form>
 
@@ -158,6 +159,7 @@
       const statusEl = $("status");
       const outEl = $("out");
       const renderBtn = $("renderBtn");
+      const jobBtn = $("jobBtn");
       let lastRecipe = null;
 
       function setStatus(t) {
@@ -175,6 +177,7 @@
         const maxDurationSec = Number($("max").value || 120);
         outEl.hidden = true;
         renderBtn.disabled = true;
+        jobBtn.disabled = true;
         lastRecipe = null;
         setStatus("Planning…");
         $("planBtn").disabled = true;
@@ -190,6 +193,7 @@
           outEl.textContent = JSON.stringify({ source: data.source, recipe: data.recipe }, null, 2);
           outEl.hidden = false;
           renderBtn.disabled = false;
+          jobBtn.disabled = false;
           setStatus(`Recipe ready (${data.source}).`);
         } catch (e) {
           setStatus(String(e.message || e));
@@ -234,8 +238,54 @@
         }
       }
 
+      async function queueJob() {
+        if (!lastRecipe) return;
+        setStatus("Queueing job…");
+        jobBtn.disabled = true;
+        renderBtn.disabled = true;
+        try {
+          const res = await fetch("/video-ai/api/jobs", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ recipe: lastRecipe }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || res.statusText);
+          const jobId = data.jobId;
+          const pollUrl = data.pollUrl || `/video-ai/api/jobs/${jobId}`;
+          setStatus(`Job ${jobId} queued. Waiting for render…`);
+          const deadline = Date.now() + 30 * 60 * 1000;
+          while (Date.now() < deadline) {
+            await new Promise((r) => setTimeout(r, 2000));
+            const st = await fetch(pollUrl);
+            const j = await st.json();
+            if (!st.ok) throw new Error(j.error || st.statusText);
+            if (j.status === "completed") {
+              const dl = j.downloadUrl || `/video-ai/api/jobs/${jobId}/download`;
+              const a = document.createElement("a");
+              a.href = dl;
+              a.download = "video-ai-output.mp4";
+              a.click();
+              setStatus("Render finished — download started.");
+              break;
+            }
+            if (j.status === "failed") {
+              throw new Error(j.error || "Job failed");
+            }
+            setStatus(`Job ${jobId}: ${j.status}…`);
+          }
+          if (Date.now() >= deadline) setStatus("Timed out waiting for job (30 min).");
+        } catch (e) {
+          setStatus(String(e.message || e));
+        } finally {
+          jobBtn.disabled = false;
+          renderBtn.disabled = !!lastRecipe;
+        }
+      }
+
       $("f").addEventListener("submit", plan);
       renderBtn.addEventListener("click", render);
+      jobBtn.addEventListener("click", queueJob);
     </script>
   </body>
 </html>

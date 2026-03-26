@@ -1,0 +1,8 @@
+node_modules
+.wrangler
+tmp
+*.mp4
+.env
+.env.*
+README.md
+public

@@ -666,8 +666,12 @@ async function loadRegistries() {
         const cov = prog.coverage_snapshot;
         if (cov && (typeof cov.static_colors_coverage_pct === 'number' || typeof cov.narrative_min_coverage_pct === 'number')) {
           const parts = [];
-          if (typeof cov.static_colors_coverage_pct === 'number') parts.push(`color ${cov.static_colors_coverage_pct}%`);
+          if (typeof cov.static_colors_coverage_pct === 'number') parts.push(`cells ${cov.static_colors_coverage_pct}%`);
           if (typeof cov.narrative_min_coverage_pct === 'number') parts.push(`narrative ${cov.narrative_min_coverage_pct}%`);
+          if (typeof cov.plots_coverage_pct === 'number' && typeof cov.style_coverage_pct === 'number') {
+            parts.push(`plot/style ${Math.round(Math.min(cov.plots_coverage_pct, cov.style_coverage_pct))}%`);
+          }
+          if (typeof cov.primitive_color_catalog_size === 'number') parts.push(`primaries ${cov.primitive_color_catalog_size}`);
           if (parts.length) text += ` · Registry: ${parts.join(', ')}`;
         }
         registriesPrecision.textContent = text;

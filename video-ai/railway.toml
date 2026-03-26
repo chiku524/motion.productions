@@ -1,0 +1,18 @@
+# Railway: connect this GitHub repo in the Railway dashboard and set Root Directory to `video-ai`
+# so pushes to the default branch trigger builds from this folder (config-as-code: this file + railway.json).
+# Alternatively enable GitHub Actions (see .github/workflows/deploy.yml job railway-video-ai).
+# Non-secret defaults below; set secrets in the dashboard: VIDEO_AI_RENDER_SECRET, VIDEO_AI_R2_ACCESS_KEY_ID,
+# VIDEO_AI_R2_SECRET_ACCESS_KEY, OPENAI_API_KEY (if using narration/TTS). Worker needs VIDEO_AI_RENDER_URL = this service URL.
+# Railway sets PORT automatically.
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
+
+[variables]
+VIDEO_AI_R2_BUCKET = "motion-productions-videos"
+VIDEO_AI_R2_ACCOUNT_ID = "10374f367672f4d19db430601db0926b"
+VIDEO_AI_WORKER_ORIGIN = "https://motion.productions,https://www.motion.productions"

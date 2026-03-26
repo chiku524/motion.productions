@@ -60,11 +60,26 @@ _MODS_TENSION = list(KEYWORD_TO_TENSION.keys())
 # Audio: tempo, mood, presence
 _MODS_AUDIO = list(KEYWORD_TO_AUDIO_TEMPO.keys()) + list(KEYWORD_TO_AUDIO_MOOD.keys()) + list(KEYWORD_TO_AUDIO_PRESENCE.keys())
 _MODS_AUDIO = list(dict.fromkeys(m for m in _MODS_AUDIO if m not in SUBJECTS_BASE))
+# Technical / temporal cues — widen learned_technical and learned_temporal registry coverage
+_MODS_TECHNICAL_TEMPORAL = [
+    "4K clarity",
+    "1080p",
+    "portrait framing",
+    "landscape framing",
+    "slow motion",
+    "time-lapse",
+    "macro detail",
+    "deep focus",
+    "rack focus",
+    "golden hour timing",
+    "long take",
+]
+_MODS_TECHNICAL_TEMPORAL = [m for m in _MODS_TECHNICAL_TEMPORAL if m not in SUBJECTS_BASE]
 
 MODIFIERS_BASE = (
     _MODS_MOTION + _MODS_INTENSITY + _MODS_GRADIENT + _MODS_CAMERA + _MODS_SHAPE
     + _MODS_LIGHTING + _MODS_GENRE + _MODS_STYLE + _MODS_SHOT + _MODS_TRANSITION
-    + _MODS_PACING + _MODS_COMPOSITION + _MODS_TENSION + _MODS_AUDIO
+    + _MODS_PACING + _MODS_COMPOSITION + _MODS_TENSION + _MODS_AUDIO + _MODS_TECHNICAL_TEMPORAL
 )
 MODIFIERS_BASE = [m for m in MODIFIERS_BASE if m not in SUBJECTS_BASE]
 MODIFIERS_BASE = list(dict.fromkeys(MODIFIERS_BASE))  # dedupe preserve order
@@ -421,6 +436,8 @@ def generate_procedural_prompt(
     avoid = avoid or set()
     static_color_coverage = (coverage or {}).get("static_colors_coverage_pct")
     bias_palette_diversity = static_color_coverage is not None and static_color_coverage < 25
+    # When static color space coverage is tiny, also bias a technical/temporal modifier (fills technical/temporal tables)
+    bias_technical_modifier = static_color_coverage is not None and static_color_coverage < 8
 
     # Build subject and modifier pools (static + dynamic from knowledge)
     if subjects is not None and modifiers is not None:
@@ -437,7 +454,9 @@ def generate_procedural_prompt(
         return None
 
     # §2.7: When static color coverage is low, prefer lighting/gradient mods to widen color discovery
-    def _pick_diverse_mods(n: int, bias_audio: bool = False, bias_lighting: bool = False) -> list[str]:
+    def _pick_diverse_mods(
+        n: int, bias_audio: bool = False, bias_lighting: bool = False, bias_technical: bool = False
+    ) -> list[str]:
         chosen: list[str] = []
         pool = list(mod_pool)
         if bias_audio and _MODS_AUDIO:
@@ -448,6 +467,11 @@ def generate_procedural_prompt(
             lighting_candidates = [m for m in _MODS_LIGHTING if m in pool and m not in chosen]
             if lighting_candidates:
                 first = secure_choice(lighting_candidates)
+                chosen.append(first)
+        if bias_technical and _MODS_TECHNICAL_TEMPORAL:
+            tech_candidates = [m for m in _MODS_TECHNICAL_TEMPORAL if m in pool and m not in chosen]
+            if tech_candidates:
+                first = secure_choice(tech_candidates)
                 chosen.append(first)
         for _ in range(n - len(chosen)):
             if not pool:
@@ -496,6 +520,7 @@ def generate_procedural_prompt(
     max_attempts = 200
     bias_audio = secure_random() < 0.18
     bias_lighting = bias_palette_diversity and secure_random() < 0.4  # §2.7: more lighting mods when color coverage low
+    bias_technical = bias_technical_modifier and secure_random() < 0.35
     # Manus AI Priority 5: when color coverage low, bias subject toward warm/green to reduce cool-tone skew
     bias_warm_green = bias_palette_diversity and WARM_GREEN_SUBJECTS and secure_random() < 0.35
     use_instructive = instructive_ratio > 0 and secure_random() < instructive_ratio
@@ -509,7 +534,9 @@ def generate_procedural_prompt(
 
     for _ in range(max_attempts):
         sub = secure_choice(WARM_GREEN_SUBJECTS) if bias_warm_green else secure_choice(sub_pool)
-        mods = _pick_diverse_mods(3, bias_audio=bias_audio, bias_lighting=bias_lighting)
+        mods = _pick_diverse_mods(
+            3, bias_audio=bias_audio, bias_lighting=bias_lighting, bias_technical=bias_technical
+        )
         mod1 = mods[0] if mods else secure_choice(mod_pool)
         mod2 = mods[1] if len(mods) > 1 else mod1
         mod3 = mods[2] if len(mods) > 2 else mod2
