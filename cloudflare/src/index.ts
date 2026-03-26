@@ -3,11 +3,19 @@
  * Uses: D1 (jobs), R2 (video files), KV (optional cache/config)
  */
 
+import { COLOR_PRIMARIES_FOR_API, COLOR_PRIMITIVE_NAMES } from "./colorPrimaries.generated";
+import { handleVideoAiApi } from "./videoAiApi";
+
 export interface Env {
   DB: D1Database;
   VIDEOS: R2Bucket;
   MOTION_KV: KVNamespace;
   ASSETS: Fetcher;
+  /** Video AI lab (/video-ai) — optional OpenAI + render proxy */
+  OPENAI_API_KEY?: string;
+  OPENAI_MODEL?: string;
+  VIDEO_AI_RENDER_URL?: string;
+  VIDEO_AI_RENDER_SECRET?: string;
 }
 
 const corsHeaders = {
@@ -29,6 +37,94 @@ function err(message: string, status = 400) {
 
 function uuid() {
   return crypto.randomUUID();
+}
+
+/** Opacity may be stored as 0–1, 0–100, or mis-scaled (e.g. 10000); normalize to 0–100 for UI/export. */
+function normalizeOpacityToPercent(v: unknown): number {
+  if (typeof v !== "number" || !Number.isFinite(v)) return 0;
+  if (v <= 1) return Math.round(v * 100);
+  if (v <= 100) return Math.round(v);
+  if (v <= 10000) return Math.min(100, Math.round(v / 100));
+  return 100;
+}
+
+/** True after we have confirmed the table exists in this isolate (cheap probe) or finished DDL. */
+let learnedDynamicMetaTableReady = false;
+
+/**
+ * Ensure learned_dynamic_meta exists without relying on wrangler migration import (large remote D1 DBs can hit CPU 7429 during import even for CREATE TABLE).
+ * DDL runs in the Worker in separate statements; migrations 0018/0019 are no-op SELECT 1 for apply ordering only.
+ */
+async function ensureLearnedDynamicMetaTable(db: D1Database): Promise<void> {
+  if (learnedDynamicMetaTableReady) return;
+  try {
+    await db.prepare("SELECT 1 FROM learned_dynamic_meta LIMIT 1").first();
+    learnedDynamicMetaTableReady = true;
+    return;
+  } catch {
+    /* table missing or unreadable */
+  }
+  try {
+    await db
+      .prepare(
+        `CREATE TABLE IF NOT EXISTS learned_dynamic_meta (
+          aspect TEXT NOT NULL,
+          profile_key TEXT NOT NULL,
+          depth_breakdown_json TEXT,
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          PRIMARY KEY (aspect, profile_key)
+        )`,
+      )
+      .run();
+  } catch {
+    /* retry on next request */
+  }
+  try {
+    await db
+      .prepare(
+        "CREATE INDEX IF NOT EXISTS idx_learned_dynamic_meta_aspect ON learned_dynamic_meta(aspect)",
+      )
+      .run();
+  } catch {
+    /* non-fatal */
+  }
+  try {
+    await db
+      .prepare(
+        "CREATE INDEX IF NOT EXISTS idx_learned_dynamic_meta_profile ON learned_dynamic_meta(profile_key)",
+      )
+      .run();
+  } catch {
+    /* non-fatal */
+  }
+  try {
+    await db.prepare("SELECT 1 FROM learned_dynamic_meta LIMIT 1").first();
+    learnedDynamicMetaTableReady = true;
+  } catch {
+    /* leave false so a later request retries DDL */
+  }
+}
+
+/** Temporal/technical depth: avoid ALTER on large learned_* tables (D1 CPU 7429); use learned_dynamic_meta. */
+async function upsertLearnedDynamicMeta(
+  db: D1Database,
+  aspect: string,
+  profileKey: string,
+  depthJson: string | null,
+): Promise<void> {
+  if (!depthJson) return;
+  await ensureLearnedDynamicMetaTable(db);
+  try {
+    await db
+      .prepare(
+        `INSERT INTO learned_dynamic_meta (aspect, profile_key, depth_breakdown_json, updated_at) VALUES (?, ?, ?, datetime('now'))
+         ON CONFLICT(aspect, profile_key) DO UPDATE SET depth_breakdown_json = excluded.depth_breakdown_json, updated_at = datetime('now')`,
+      )
+      .bind(aspect, profileKey, depthJson)
+      .run();
+  } catch {
+    /* constraint / transient D1 */
+  }
 }
 
 /** Derive D1 database (with read replica when available). Used by helpers that run outside handleApi's scope. */
@@ -66,6 +162,14 @@ export default {
         },
       });
     }
+
+    // Video AI side project: canonical URL with trailing slash
+    if (path === "/video-ai") {
+      return Response.redirect(new URL("/video-ai/", request.url).toString(), 302);
+    }
+
+    const videoAiResponse = await handleVideoAiApi(request, env, path);
+    if (videoAiResponse) return videoAiResponse;
 
     // API routes
     if (path.startsWith("/api/")) {
@@ -955,14 +1059,19 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       for (const m of body.motion || []) {
         if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
         const existing = await db.prepare("SELECT id FROM learned_motion WHERE profile_key = ?").bind(m.key).first();
+        const motionDepthJson =
+          m.depth_breakdown && typeof m.depth_breakdown === "object" ? JSON.stringify(m.depth_breakdown) : null;
         if (existing) {
           await db.prepare("UPDATE learned_motion SET count = count + 1 WHERE profile_key = ?").bind(m.key).run();
+          if (motionDepthJson) {
+            await db.prepare("UPDATE learned_motion SET depth_breakdown_json = ? WHERE profile_key = ?").bind(motionDepthJson, m.key).run();
+          }
         } else {
           const name = await generateUniqueName(env);
           await db.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
           await db.prepare(
             "INSERT INTO learned_motion (id, profile_key, motion_level, motion_std, motion_trend, motion_direction, motion_rhythm, count, sources_json, name, depth_breakdown_json) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)"
-          ).bind(uuid(), m.key, m.motion_level, m.motion_std, m.motion_trend, m.motion_direction ?? "neutral", m.motion_rhythm ?? "steady", m.source_prompt ? JSON.stringify([m.source_prompt.slice(0, 80)]) : null, name, m.depth_breakdown ? JSON.stringify(m.depth_breakdown) : null).run();
+          ).bind(uuid(), m.key, m.motion_level, m.motion_std, m.motion_trend, m.motion_direction ?? "neutral", m.motion_rhythm ?? "steady", m.source_prompt ? JSON.stringify([m.source_prompt.slice(0, 80)]) : null, name, motionDepthJson).run();
         }
         results.motion++;
         itemsProcessed++;
@@ -1014,6 +1123,8 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       }
       for (const t of body.temporal || []) {
         if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
+        const depthJson =
+          t.depth_breakdown && typeof t.depth_breakdown === "object" ? JSON.stringify(t.depth_breakdown) : null;
         const existing = await db.prepare("SELECT id FROM learned_temporal WHERE profile_key = ?").bind(t.key).first();
         if (existing) {
           await db.prepare("UPDATE learned_temporal SET count = count + 1 WHERE profile_key = ?").bind(t.key).run();
@@ -1022,13 +1133,18 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           await db.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
           await db.prepare(
             "INSERT INTO learned_temporal (id, profile_key, duration, motion_trend, count, sources_json, name) VALUES (?, ?, ?, ?, 1, ?, ?)"
-          ).bind(uuid(), t.key, t.duration, t.motion_trend, t.source_prompt ? JSON.stringify([t.source_prompt.slice(0, 80)]) : null, name).run();
+          )
+            .bind(uuid(), t.key, t.duration, t.motion_trend, t.source_prompt ? JSON.stringify([t.source_prompt.slice(0, 80)]) : null, name)
+            .run();
         }
+        await upsertLearnedDynamicMeta(db, "temporal", t.key, depthJson);
         results.temporal++;
         itemsProcessed++;
       }
       for (const t of body.technical || []) {
         if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
+        const depthJson =
+          t.depth_breakdown && typeof t.depth_breakdown === "object" ? JSON.stringify(t.depth_breakdown) : null;
         const existing = await db.prepare("SELECT id FROM learned_technical WHERE profile_key = ?").bind(t.key).first();
         if (existing) {
           await db.prepare("UPDATE learned_technical SET count = count + 1 WHERE profile_key = ?").bind(t.key).run();
@@ -1037,8 +1153,11 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           await db.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
           await db.prepare(
             "INSERT INTO learned_technical (id, profile_key, width, height, fps, count, sources_json, name) VALUES (?, ?, ?, ?, ?, 1, ?, ?)"
-          ).bind(uuid(), t.key, t.width, t.height, t.fps, t.source_prompt ? JSON.stringify([t.source_prompt.slice(0, 80)]) : null, name).run();
+          )
+            .bind(uuid(), t.key, t.width, t.height, t.fps, t.source_prompt ? JSON.stringify([t.source_prompt.slice(0, 80)]) : null, name)
+            .run();
         }
+        await upsertLearnedDynamicMeta(db, "technical", t.key, depthJson);
         results.technical++;
         itemsProcessed++;
       }
@@ -1554,10 +1673,16 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         }
       }
 
+      const plotsCov = narrative["plots"]?.coverage_pct ?? 0;
+      const styleCov = narrative["style"]?.coverage_pct ?? 0;
+      const narrativePlotsStyleMinCoveragePct = Math.min(plotsCov, styleCov);
+
       const coverage = {
         static_colors_count: staticColorsCount,
         static_colors_estimated_cells: STATIC_COLOR_ESTIMATED_CELLS,
+        /** Progress vs full quantized RGB×opacity cell space (~28k); low values are normal without dense sweep. */
         static_colors_coverage_pct: staticColorsCoveragePct,
+        primitive_color_catalog_size: COLOR_PRIMARIES_FOR_API.length,
         static_sound_count: staticSoundCount,
         static_sound_has_silence: soundPrimitives.has("silence"),
         static_sound_has_rumble: soundPrimitives.has("rumble"),
@@ -1569,6 +1694,9 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         narrative_min_coverage_pct: narrativeAspects.length
           ? Math.min(...narrativeAspects.map((a) => narrative[a]?.coverage_pct ?? 0))
           : 0,
+        narrative_plots_style_min_coverage_pct: narrativePlotsStyleMinCoveragePct,
+        plots_coverage_pct: plotsCov,
+        style_coverage_pct: styleCov,
       };
       const coverageBody = JSON.stringify(coverage);
       if (env.MOTION_KV) {
@@ -1582,27 +1710,11 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
     // GET /api/registries — pure (STATIC) vs non-pure (DYNAMIC + NARRATIVE); depth % vs primitives always
     // Pure = single frame/pixel (static). Non-pure = multi-frame blends (gradient, motion, camera → dynamic).
     if (path === "/api/registries" && request.method === "GET") {
+      await ensureLearnedDynamicMetaTable(db);
       const regLimit = Math.min(parseInt(new URL(request.url).searchParams.get("limit") || "200", 10), 500);
-      // Pure primitives — must match static_registry.py and REGISTRY_FOUNDATION (full origin set for UI)
+      // Pure primitives — synced from static_registry.py via scripts/gen_color_primaries_ts.py
       const staticPrimitives = {
-        color_primaries: [
-          { name: "black", r: 0, g: 0, b: 0 },
-          { name: "white", r: 255, g: 255, b: 255 },
-          { name: "red", r: 255, g: 0, b: 0 },
-          { name: "green", r: 0, g: 255, b: 0 },
-          { name: "blue", r: 0, g: 0, b: 255 },
-          { name: "yellow", r: 255, g: 255, b: 0 },
-          { name: "cyan", r: 0, g: 255, b: 255 },
-          { name: "magenta", r: 255, g: 0, b: 255 },
-          { name: "orange", r: 255, g: 165, b: 0 },
-          { name: "purple", r: 128, g: 0, b: 128 },
-          { name: "pink", r: 255, g: 192, b: 203 },
-          { name: "brown", r: 165, g: 42, b: 42 },
-          { name: "navy", r: 0, g: 0, b: 128 },
-          { name: "gray", r: 128, g: 128, b: 128 },
-          { name: "olive", r: 128, g: 128, b: 0 },
-          { name: "teal", r: 0, g: 128, b: 128 },
-        ],
+        color_primaries: [...COLOR_PRIMARIES_FOR_API],
         sound_primaries: ["silence", "rumble", "tone", "hiss"],
       };
       // Blended canonical — must match origins.py (gradient_type, camera motion_type, motion speed+rhythm, audio tempo/mood/presence)
@@ -1618,10 +1730,6 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         return i > 0 ? key.slice(0, i) : key;
       };
       // Color primitives only (depth_breakdown must reference these; theme/preset names go to theme_breakdown; opacity to opacity_pct)
-      const COLOR_PRIMITIVES = new Set([
-        "black", "white", "red", "green", "blue", "yellow", "cyan", "magenta", "orange", "purple",
-        "pink", "brown", "navy", "gray", "olive", "teal",
-      ]);
       type DepthSplit = { depth_breakdown: Record<string, number>; opacity_pct?: number; theme_breakdown?: Record<string, number> };
       const splitDepthBreakdown = (raw: Record<string, number> | null): DepthSplit => {
         const depth_breakdown: Record<string, number> = {};
@@ -1629,9 +1737,12 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         const theme_breakdown: Record<string, number> = {};
         if (!raw || typeof raw !== "object") return { depth_breakdown };
         for (const [k, v] of Object.entries(raw)) {
+          if (k === "opacity") {
+            opacity_pct = normalizeOpacityToPercent(v);
+            continue;
+          }
           const num = typeof v === "number" ? (v <= 1 ? Math.round(v * 100) : Math.round(v)) : 0;
-          if (k === "opacity") opacity_pct = num;
-          else if (COLOR_PRIMITIVES.has(k)) depth_breakdown[k] = num;
+          if (COLOR_PRIMITIVE_NAMES.has(k)) depth_breakdown[k] = num;
           else theme_breakdown[k] = num;
         }
         const out: DepthSplit = { depth_breakdown };
@@ -1881,27 +1992,53 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         const t = await db.prepare(
           "SELECT profile_key, name FROM learned_temporal ORDER BY count DESC LIMIT ?"
         ).bind(regLimit).all<{ profile_key: string; name: string }>();
-        learnedTemporalRows = (t.results || []).map((r) => ({
-          name: r.name || r.profile_key,
-          key: r.profile_key,
-          depth_pct: 0,
-          depth_breakdown: {} as Record<string, number>,
-        }));
+        const temporalMetaByKey = new Map<string, string>();
+        try {
+          const meta = await db.prepare(
+            "SELECT profile_key, depth_breakdown_json FROM learned_dynamic_meta WHERE aspect = ?"
+          )
+            .bind("temporal")
+            .all<{ profile_key: string; depth_breakdown_json: string | null }>();
+          for (const row of meta.results || []) {
+            if (row.depth_breakdown_json) temporalMetaByKey.set(row.profile_key, row.depth_breakdown_json);
+          }
+        } catch {
+          /* learned_dynamic_meta missing until migration 0018 */
+        }
+        learnedTemporalRows = (t.results || []).map((r) => {
+          const raw = temporalMetaByKey.get(r.profile_key);
+          const depths = raw ? (JSON.parse(raw) as Record<string, unknown>) : null;
+          const { depth_pct, depth_breakdown } = depthFromBlendDepths(depths);
+          return { name: r.name || r.profile_key, key: r.profile_key, depth_pct, depth_breakdown };
+        });
       } catch {
-        // table may not exist
+        // learned_temporal may not exist
       }
       try {
         const tech = await db.prepare(
           "SELECT profile_key, name FROM learned_technical ORDER BY count DESC LIMIT ?"
         ).bind(regLimit).all<{ profile_key: string; name: string }>();
-        learnedTechnicalRows = (tech.results || []).map((r) => ({
-          name: r.name || r.profile_key,
-          key: r.profile_key,
-          depth_pct: 0,
-          depth_breakdown: {} as Record<string, number>,
-        }));
+        const technicalMetaByKey = new Map<string, string>();
+        try {
+          const meta = await db.prepare(
+            "SELECT profile_key, depth_breakdown_json FROM learned_dynamic_meta WHERE aspect = ?"
+          )
+            .bind("technical")
+            .all<{ profile_key: string; depth_breakdown_json: string | null }>();
+          for (const row of meta.results || []) {
+            if (row.depth_breakdown_json) technicalMetaByKey.set(row.profile_key, row.depth_breakdown_json);
+          }
+        } catch {
+          /* learned_dynamic_meta missing until migration 0018 */
+        }
+        learnedTechnicalRows = (tech.results || []).map((r) => {
+          const raw = technicalMetaByKey.get(r.profile_key);
+          const depths = raw ? (JSON.parse(raw) as Record<string, unknown>) : null;
+          const { depth_pct, depth_breakdown } = depthFromBlendDepths(depths);
+          return { name: r.name || r.profile_key, key: r.profile_key, depth_pct, depth_breakdown };
+        });
       } catch {
-        // table may not exist
+        // learned_technical may not exist
       }
       const nonGca = (blends.results || []).filter((b) => b.domain !== "gradient" && b.domain !== "camera" && b.domain !== "audio");
       const blendsByDomain: Record<string, typeof nonGca> = {};
@@ -1919,13 +2056,22 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       const motionFromLearned = (learnedMotion.results || []).map((r) => ({ key: r.profile_key, name: r.name || r.profile_key, trend: r.motion_trend, count: r.count }));
       const motionFromBlends = motionBlendsFromBlends.map((b) => ({ key: b.key, name: b.name, trend: "—" as const, count: 0 }));
       const motionKeysPresent = new Set([...motionFromLearned.map((m) => m.key), ...motionFromBlends.map((b) => b.key)]);
-      const motionWithCanonical = [...motionFromLearned, ...motionFromBlends];
+      const motionWithCanonicalRaw = [...motionFromLearned, ...motionFromBlends];
       for (const canonical of dynamicCanonical.motion) {
         if (!motionKeysPresent.has(canonical)) {
           motionKeysPresent.add(canonical);
-          motionWithCanonical.push({ key: canonical, name: canonical, trend: "—", count: 0 });
+          motionWithCanonicalRaw.push({ key: canonical, name: canonical, trend: "—", count: 0 });
         }
       }
+      // One row per motion key: keep highest count (learned beats placeholder; dedupes blend duplicates).
+      const motionByKey = new Map<string, (typeof motionWithCanonicalRaw)[0]>();
+      for (const m of motionWithCanonicalRaw) {
+        const prev = motionByKey.get(m.key);
+        const c = typeof m.count === "number" ? m.count : 0;
+        const pc = prev && typeof prev.count === "number" ? prev.count : 0;
+        if (!prev || c > pc) motionByKey.set(m.key, m);
+      }
+      const motionWithCanonical = [...motionByKey.values()];
       const staticPayload = {
         colors: ensureUniqueColorNames((staticColors.results || []).map((r) => {
             let depth_pct: number;
@@ -1939,12 +2085,18 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
                 const oc = stored.origin_colors as Record<string, number> | undefined;
                 if (oc && typeof oc === "object") {
                   for (const [k, v] of Object.entries(oc)) {
-                    raw[k] = typeof v === "number" ? (v <= 1 ? Math.round(v * 100) : Math.round(v)) : 0;
+                    if (k === "opacity") {
+                      raw[k] = normalizeOpacityToPercent(v);
+                    } else {
+                      raw[k] = typeof v === "number" ? (v <= 1 ? Math.round(v * 100) : Math.round(v)) : 0;
+                    }
                   }
                 }
                 for (const [k, v] of Object.entries(stored)) {
                   if (k === "origin_colors") continue;
-                  if (typeof v === "number") raw[k] = k === "opacity" ? Math.round(v * 100) : (v <= 1 ? Math.round(v * 100) : Math.round(v));
+                  if (typeof v === "number") {
+                    raw[k] = k === "opacity" ? normalizeOpacityToPercent(v) : (v <= 1 ? Math.round(v * 100) : Math.round(v));
+                  }
                 }
                 const split = splitDepthBreakdown(raw);
                 depth_breakdown = split.depth_breakdown;
@@ -1978,14 +2130,8 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
               const depth_breakdown = r.depth_breakdown_json ? (JSON.parse(r.depth_breakdown_json) as Record<string, unknown>) : undefined;
               return { key: r.sound_key, name: stripSoundPrefix(r.name), count: r.count, strength_pct: r.strength_pct ?? undefined, depth_breakdown };
             });
-            const keysPresent = new Set(fromDb.map((s) => s.key));
-            for (const key of SOUND_PRIMITIVES) {
-              if (!keysPresent.has(key)) {
-                keysPresent.add(key);
-                fromDb.push({ key, name: key, count: 0, strength_pct: undefined, depth_breakdown: undefined });
-              }
-            }
-            return fromDb;
+            // Omit zero-count primitive rows — they duplicate static_primitives.sound_primaries in export/UI.
+            return fromDb.filter((s) => !(SOUND_PRIMITIVES.includes(s.key) && (s.count ?? 0) === 0));
           })(),
       };
       const dynamicPayload = {
@@ -1999,7 +2145,8 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
                 const stored = JSON.parse(r.depth_breakdown_json) as Record<string, number>;
                 const raw: Record<string, number> = {};
                 for (const [k, v] of Object.entries(stored)) {
-                  raw[k] = typeof v === "number" ? (v <= 1 ? Math.round(v * 100) : Math.round(v)) : 0;
+                  if (typeof v !== "number") continue;
+                  raw[k] = k === "opacity" ? normalizeOpacityToPercent(v) : (v <= 1 ? Math.round(v * 100) : Math.round(v));
                 }
                 const split = splitDepthBreakdown(raw);
                 depth_breakdown = split.depth_breakdown;
@@ -2117,7 +2264,15 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       }
 
       // Lightweight coverage snapshot for UI and export (avoids separate /api/registries/coverage call)
-      let coverage_snapshot: { static_colors_coverage_pct?: number; narrative_min_coverage_pct?: number; static_sound_coverage_pct?: number } | null = null;
+      let coverage_snapshot: {
+        static_colors_coverage_pct?: number;
+        narrative_min_coverage_pct?: number;
+        static_sound_coverage_pct?: number;
+        plots_coverage_pct?: number;
+        style_coverage_pct?: number;
+        narrative_plots_style_min_coverage_pct?: number;
+        primitive_color_catalog_size?: number;
+      } | null = null;
       try {
         const sc = await db.prepare("SELECT COUNT(*) as c FROM static_colors").first<{ c: number }>();
         const staticCount = sc?.c ?? 0;
@@ -2143,9 +2298,23 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         } catch {
           /* static_sound may not exist */
         }
+        let plotsPct = 0;
+        let stylePct = 0;
+        try {
+          const pr = await db.prepare("SELECT COUNT(DISTINCT entry_key) as c FROM narrative_entries WHERE aspect = 'plots'").first<{ c: number }>();
+          const sr = await db.prepare("SELECT COUNT(DISTINCT entry_key) as c FROM narrative_entries WHERE aspect = 'style'").first<{ c: number }>();
+          plotsPct = pr?.c != null ? Math.round((100 * pr.c) / 4 * 100) / 100 : 0;
+          stylePct = sr?.c != null ? Math.round((100 * sr.c) / 5 * 100) / 100 : 0;
+        } catch {
+          /* optional */
+        }
         coverage_snapshot = {
           static_colors_coverage_pct: staticPct,
           narrative_min_coverage_pct: minNarrativePct,
+          plots_coverage_pct: Math.min(100, plotsPct),
+          style_coverage_pct: Math.min(100, stylePct),
+          narrative_plots_style_min_coverage_pct: Math.min(100, plotsPct, stylePct),
+          primitive_color_catalog_size: COLOR_PRIMARIES_FOR_API.length,
           ...(staticSoundPct !== undefined ? { static_sound_coverage_pct: staticSoundPct } : {}),
         };
       } catch {

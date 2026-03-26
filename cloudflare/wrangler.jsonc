@@ -14,6 +14,9 @@
   "d1_databases": [{ "binding": "DB", "database_name": "motion-productions-db", "database_id": "7c6e61ce-c4ae-474b-b303-7eb8641f0747" }],
   "r2_buckets": [{ "binding": "VIDEOS", "bucket_name": "motion-productions-videos" }],
   "assets": { "directory": "./public", "binding": "ASSETS" },
+  "vars": {
+    "OPENAI_MODEL": "gpt-4o-mini"
+  },
   "observability": {
     "enabled": false,
     "head_sampling_rate": 1,

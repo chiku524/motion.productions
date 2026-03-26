@@ -1,0 +1,29 @@
+{
+  "name": "@motion/video-ai",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Side project: prompt → recipe JSON → MP4 (Cloudflare Worker + Node/FFmpeg render)",
+  "type": "module",
+  "scripts": {
+    "dev:worker": "wrangler dev",
+    "dev:render": "tsx watch src/render/server.ts",
+    "render": "tsx src/render/server.ts",
+    "typecheck": "tsc --noEmit",
+    "cf-typegen": "wrangler types"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.8",
+    "hono": "^4.7.4",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250317.0",
+    "@types/node": "^22.13.10",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2",
+    "wrangler": "^4.63.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

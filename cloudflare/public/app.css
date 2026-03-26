@@ -89,6 +89,20 @@ body {
   color: var(--color-text-muted);
   font-size: 0.875rem;
 }
+.header-spacer {
+  flex: 1;
+  min-width: 0;
+}
+.header-link {
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.header-link:hover {
+  color: var(--color-text);
+  text-decoration: underline;
+}
 
 .main {
   flex: 1;

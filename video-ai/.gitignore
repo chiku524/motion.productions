@@ -1,0 +1,8 @@
+node_modules/
+.wrangler/
+dist/
+tmp/
+*.mp4
+.env
+.env.*
+worker-configuration.d.ts

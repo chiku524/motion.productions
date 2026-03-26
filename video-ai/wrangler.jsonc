@@ -1,0 +1,14 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "video-ai",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2025-03-01",
+  "workers_dev": true,
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS"
+  },
+  "vars": {
+    "OPENAI_MODEL": "gpt-4o-mini"
+  }
+}
