@@ -2,13 +2,12 @@
 # https://docs.railway.app/config-as-code
 # Uses Dockerfile when present; Root Directory must be repo root (not cloudflare/)
 #
-# Start command is unified here; which script runs is controlled per service by RAILWAY_START_SCRIPT:
-#   - unset or "automate_loop" → Explorer / Exploiter / Balanced (python scripts/automate_loop.py)
-#   - "sound_loop"            → Sound workflow (python scripts/sound_loop.py)
-#   - "interpret_loop"         → Interpretation (python scripts/interpret_loop.py)
+# Do NOT set deploy.startCommand here: it applies to every service in the project, including
+# non-Python images (e.g. Dockerfile.video-ai / Video AI render), and overrides Dockerfile CMD.
+# Python workers use Dockerfile CMD → railway_start.py; per-service script = RAILWAY_START_SCRIPT env.
+#   - unset or "automate_loop" → automate_loop.py
+#   - "sound_loop"             → sound_loop.py
+#   - "interpret_loop"         → interpret_loop.py
 
 [build]
 builder = "DOCKERFILE"
-
-[deploy]
-startCommand = "python scripts/railway_start.py"

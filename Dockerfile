@@ -13,4 +13,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-CMD ["python", "scripts/automate_loop.py"]
+# Default process for Railway when no global startCommand is set (see railway.toml).
+# Render overrides this per service via render.yaml dockerCommand.
+CMD ["python", "scripts/railway_start.py"]
