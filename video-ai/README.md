@@ -114,6 +114,10 @@ Railway often **ignores “Dockerfile” in the UI** and runs **Railpack** inste
 
 6. **Deploy** and open **Build logs**. You want **`FROM node:22-bookworm-slim`** (Docker). If you see **`Railpack`** at the top, use **Method B**.
 
+7. **Settings → Deploy → Custom Start Command:** leave **empty** (use Dockerfile / `railway.toml`) or set exactly  
+   `node node_modules/tsx/dist/cli.mjs src/render/server.ts`.  
+   If deploy logs show `> npm run start` / `npm error signal SIGTERM`, Railway is still running **`npm start`** as PID 1 — fix the start command or switch to **Dockerfile** builder (Method A/B).
+
 #### Method B — Repo root + `Dockerfile.video-ai` (when Railpack keeps winning)
 
 Some projects hit a Railway quirk: the UI flips back to **Railpack** even after choosing Dockerfile. Build from the **monorepo root** and point at the alternate Dockerfile (same image as `video-ai/Dockerfile`, FFmpeg included).

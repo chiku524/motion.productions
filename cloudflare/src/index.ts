@@ -105,6 +105,37 @@ async function ensureLearnedDynamicMetaTable(db: D1Database): Promise<void> {
   }
 }
 
+/** True after learned_colors.depth_breakdown_json is readable (ALTER may run once per isolate; wrangler 0017 is no-op on large D1). */
+let learnedColorsDepthReady = false;
+let learnedColorsDepthAlterAttempted = false;
+
+/** Returns true if learned_colors.depth_breakdown_json can be queried (column exists). */
+async function ensureLearnedColorsDepthColumn(db: D1Database): Promise<boolean> {
+  if (learnedColorsDepthReady) return true;
+  try {
+    await db.prepare("SELECT depth_breakdown_json FROM learned_colors LIMIT 1").first();
+    learnedColorsDepthReady = true;
+    return true;
+  } catch {
+    /* no column or unreadable */
+  }
+  if (!learnedColorsDepthAlterAttempted) {
+    learnedColorsDepthAlterAttempted = true;
+    try {
+      await db.prepare("ALTER TABLE learned_colors ADD COLUMN depth_breakdown_json TEXT").run();
+    } catch {
+      /* duplicate column, D1 7429, etc. */
+    }
+  }
+  try {
+    await db.prepare("SELECT depth_breakdown_json FROM learned_colors LIMIT 1").first();
+    learnedColorsDepthReady = true;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Temporal/technical depth: avoid ALTER on large learned_* tables (D1 CPU 7429); use learned_dynamic_meta. */
 async function upsertLearnedDynamicMeta(
   db: D1Database,
@@ -1008,6 +1039,15 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
           itemsProcessed++;
         }
       }
+      if ((body.colors || []).length > 0) {
+        const depthOk = await ensureLearnedColorsDepthColumn(db);
+        if (!depthOk) {
+          return json(
+            { error: "learned_colors.depth_breakdown_json is not available yet (D1 ALTER pending). Retry later or add the column in the D1 dashboard." },
+            503,
+          );
+        }
+      }
       for (const c of body.colors || []) {
         if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
         const existing = await db.prepare("SELECT id, name, count FROM learned_colors WHERE color_key = ?").bind(c.key).first();
@@ -1575,6 +1615,18 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         return err("Invalid JSON");
       }
       const updates = body.updates || [];
+      if (updates.some((u) => u.table === "learned_colors")) {
+        const depthOk = await ensureLearnedColorsDepthColumn(db);
+        if (!depthOk) {
+          return json(
+            {
+              error:
+                "learned_colors.depth_breakdown_json is not available yet (D1 ALTER pending). Retry later or add the column in the D1 dashboard.",
+            },
+            503,
+          );
+        }
+      }
       const dryRun = new URL(request.url).searchParams.get("dry_run") === "1";
       let updated = 0;
       const depthTables: Record<string, string> = {
@@ -1711,6 +1763,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
     // Pure = single frame/pixel (static). Non-pure = multi-frame blends (gradient, motion, camera → dynamic).
     if (path === "/api/registries" && request.method === "GET") {
       await ensureLearnedDynamicMetaTable(db);
+      const learnedColorsDepthOk = await ensureLearnedColorsDepthColumn(db);
       const regLimit = Math.min(parseInt(new URL(request.url).searchParams.get("limit") || "200", 10), 500);
       // Pure primitives — synced from static_registry.py via scripts/gen_color_primaries_ts.py
       const staticPrimitives = {
@@ -1784,9 +1837,30 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       const staticSound = await db.prepare(
         "SELECT sound_key, name, count, depth_breakdown_json, strength_pct FROM static_sound ORDER BY count DESC LIMIT ?"
       ).bind(regLimit).all<{ sound_key: string; name: string; count: number; depth_breakdown_json: string | null; strength_pct: number | null }>();
-      const learnedColors = await db.prepare(
-        "SELECT color_key, r, g, b, name, count, depth_breakdown_json FROM learned_colors ORDER BY count DESC LIMIT ?"
-      ).bind(regLimit).all<{ color_key: string; r: number; g: number; b: number; name: string; count: number; depth_breakdown_json: string | null }>();
+      const learnedColors = learnedColorsDepthOk
+        ? await db
+            .prepare(
+              "SELECT color_key, r, g, b, name, count, depth_breakdown_json FROM learned_colors ORDER BY count DESC LIMIT ?",
+            )
+            .bind(regLimit)
+            .all<{
+              color_key: string;
+              r: number;
+              g: number;
+              b: number;
+              name: string;
+              count: number;
+              depth_breakdown_json: string | null;
+            }>()
+        : await db
+            .prepare(
+              "SELECT color_key, r, g, b, name, count FROM learned_colors ORDER BY count DESC LIMIT ?",
+            )
+            .bind(regLimit)
+            .all<{ color_key: string; r: number; g: number; b: number; name: string; count: number }>()
+            .then((r) => ({
+              results: (r.results || []).map((row) => ({ ...row, depth_breakdown_json: null as string | null })),
+            }));
       const learnedMotion = await db.prepare(
         "SELECT profile_key, motion_trend, name, count FROM learned_motion ORDER BY count DESC LIMIT ?"
       ).bind(regLimit).all<{ profile_key: string; motion_trend: string; name: string | null; count: number }>();

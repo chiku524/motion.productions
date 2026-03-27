@@ -17,4 +17,5 @@ COPY video-ai/src ./src
 ENV NODE_ENV=production
 EXPOSE 8788
 
-CMD ["npx", "tsx", "src/render/server.ts"]
+# Same as video-ai/Dockerfile: node as PID 1 (not npm/npx) for clean SIGTERM + health checks.
+CMD ["node", "node_modules/tsx/dist/cli.mjs", "src/render/server.ts"]

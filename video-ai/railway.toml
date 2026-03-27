@@ -9,6 +9,10 @@ builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
 
 [deploy]
+# Force Node as PID 1 (not `npm start`). Nixpacks/Railpack defaults break SIGTERM + health checks.
+startCommand = "node node_modules/tsx/dist/cli.mjs src/render/server.ts"
+healthcheckPath = "/health"
+healthcheckTimeout = 120
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 3
 

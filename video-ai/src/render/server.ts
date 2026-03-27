@@ -17,6 +17,8 @@ app.use(
 );
 
 app.get("/health", (c) => c.json({ ok: true, service: "video-ai-render" }));
+// Some platforms probe `/` before custom health paths exist in the UI.
+app.get("/", (c) => c.json({ ok: true, service: "video-ai-render" }));
 
 app.post("/render", async (c) => {
   const secret = process.env.VIDEO_AI_RENDER_SECRET;
@@ -152,5 +154,10 @@ app.post("/jobs", async (c) => {
 
 const port = Number(process.env.PORT ?? process.env.VIDEO_AI_RENDER_PORT ?? "8788");
 const hostname = process.env.VIDEO_AI_RENDER_HOST ?? "0.0.0.0";
-console.info(`video-ai render listening on http://${hostname}:${port}`);
-serve({ fetch: app.fetch, port, hostname });
+serve(
+  { fetch: app.fetch, port, hostname },
+  (addr) => {
+    const p = addr && typeof addr === "object" && "port" in addr ? (addr as { port: number }).port : port;
+    console.info(`video-ai render listening on http://${hostname}:${p}`);
+  },
+);

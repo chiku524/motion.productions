@@ -5,7 +5,7 @@
   "description": "Side project: prompt → recipe JSON → MP4 (Cloudflare Worker + Node/FFmpeg render)",
   "type": "module",
   "scripts": {
-    "start": "tsx src/render/server.ts",
+    "start": "node node_modules/tsx/dist/cli.mjs src/render/server.ts",
     "dev:worker": "wrangler dev",
     "dev:render": "tsx watch src/render/server.ts",
     "render": "tsx src/render/server.ts",
