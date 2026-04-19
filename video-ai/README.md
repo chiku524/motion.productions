@@ -142,25 +142,32 @@ Some projects hit a Railway quirk: the UI flips back to **Railpack** even after 
 ### Fly.io
 
 1. Install the [Fly CLI](https://fly.io/docs/hands-on/install-flyctl/) and run `fly auth login`.
-2. From your machine, in the **`video-ai`** directory (so Docker build context is correct):
+2. The repo ships **`video-ai/fly.toml`** for app **`motion-productions`** (HTTP service on **8080**, health **`GET /health`**). From the **`video-ai`** directory (Docker build context must be this folder):
 
    ```bash
    cd video-ai
-   fly launch
+   fly deploy
    ```
 
-   - Choose an app name (update `fly.toml` `app` if needed).
-   - Say **no** to Postgres/Redis if prompted unless you want them.
-   - Deploy.
+   If you created the Fly app in the dashboard with a **different** name, either rename the app in Fly or set `app = "your-name"` in `fly.toml` before deploying.
 
-3. **Secrets** (match Cloudflare):
+   New app from CLI (only if you do not already have one):
 
    ```bash
+   cd video-ai
+   fly launch --no-deploy --copy-config
+   fly deploy
+   ```
+
+3. **Secrets** (match Cloudflare Worker `VIDEO_AI_RENDER_SECRET`):
+
+   ```bash
+   cd video-ai
    fly secrets set VIDEO_AI_RENDER_SECRET=your-secret-here
    ```
 
-4. The app listens on `PORT` (Fly sets this, e.g. **8080** — `fly.toml` `internal_port` should match). After deploy: `https://<your-app>.fly.dev`.
-5. Set Worker `VIDEO_AI_RENDER_URL` to that origin.
+4. After deploy, the default URL is **`https://motion-productions.fly.dev`** (or `https://<app>.fly.dev` if you changed `app`). Fly sets **`PORT`** to match `internal_port` (8080).
+5. Set Worker `VIDEO_AI_RENDER_URL` to that HTTPS origin (no trailing slash).
 
 **Health check:** `GET https://YOUR-HOST/health` should return `{ "ok": true, "service": "video-ai-render" }`.
 

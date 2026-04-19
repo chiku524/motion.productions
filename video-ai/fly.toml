@@ -1,16 +1,58 @@
-# Fly.io: run `fly launch` from repo root with --dockerfile video-ai/Dockerfile
-# or `cd video-ai && fly launch` after copying this file; see README.
-app = "motion-video-ai-render"
+# Video AI FFmpeg render API — Fly.io Machines
+#
+# Deploy (from this directory so Docker build context is correct):
+#   cd video-ai
+#   fly auth login
+#   fly deploy
+#
+# One-time secrets (match Cloudflare Worker secret VIDEO_AI_RENDER_SECRET):
+#   fly secrets set VIDEO_AI_RENDER_SECRET="your-secret"
+# Optional — OpenAI TTS on the render host:
+#   fly secrets set OPENAI_API_KEY="sk-..."
+#
+# Then point the Worker at this origin (HTTPS, no trailing slash):
+#   cd ../cloudflare && printf '%s' 'https://motion-productions.fly.dev' | npx wrangler secret put VIDEO_AI_RENDER_URL
+#
+app = "motion-productions"
 primary_region = "iad"
+
+kill_signal = "SIGTERM"
+kill_timeout = 120
 
 [build]
   dockerfile = "Dockerfile"
 
+[deploy]
+  wait_timeout = "10m"
+
+# Fly routes to internal_port; the Node server must bind the same port (see Dockerfile ENV PORT).
+[env]
+  PORT = "8080"
+
 [http_service]
   internal_port = 8080
   force_https = true
-  auto_stop_machines = false
+  # "off" keeps a warm machine for faster first render; use "stop" + min_machines_running = 0 to scale to zero.
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 0
   processes = ["app"]
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 2
+    hard_limit = 4
+
+  # Long MP4 encodes can hold connections open for many minutes.
+  [http_service.http_options]
+    idle_timeout = 600
+
+  [[http_service.checks]]
+    grace_period = "15s"
+    interval = "30s"
+    method = "GET"
+    timeout = "5s"
+    path = "/health"
 
 [[vm]]
   memory = "1gb"

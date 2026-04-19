@@ -14,8 +14,9 @@ COPY tsconfig.json ./
 COPY src ./src
 
 ENV NODE_ENV=production
-# Fly.io / Railway set PORT; local default still works via VIDEO_AI_RENDER_PORT
-EXPOSE 8788
+# Fly http_service uses 8080 by default; Railway overwrites PORT at runtime when set.
+ENV PORT=8080
+EXPOSE 8080
 
 # Run tsx via node (PID 1). npm as PID 1 often mishandles SIGTERM during Railway health checks / restarts.
 CMD ["node", "node_modules/tsx/dist/cli.mjs", "src/render/server.ts"]
