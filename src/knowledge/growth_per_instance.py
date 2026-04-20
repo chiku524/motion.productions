@@ -14,7 +14,6 @@ from .extractor_per_instance import (
     extract_static_per_frame,
     extract_dynamic_per_window,
     read_video_once,
-    read_audio_segments_only,
     _extract_static_from_preloaded,
     _extract_dynamic_from_preloaded,
 )
@@ -308,7 +307,6 @@ def ensure_dynamic_primitives_seeded(config: dict[str, Any] | None = None) -> No
         window = {"lighting": {"brightness": 125, "contrast": contrast, "saturation": 1.0}}
         ensure_dynamic_lighting_in_registry(window, config=config)
     # Composition: balance primitives
-    comp_origins = origins.get("composition") or {}
     balance_centers = [
         (0.2, 0.5, 0.5),   # left_heavy
         (0.5, 0.5, 0.5),   # balanced

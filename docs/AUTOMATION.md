@@ -8,7 +8,7 @@ Run automation to continuously generate prompts, create videos, and build a know
 
 | Script                    | Purpose                                                                 |
 |---------------------------|-------------------------------------------------------------------------|
-| `scripts/automate_loop.py`| Self-feeding loop: 70% exploit, 30% explore, baseline on restart. For Railway/Render. |
+| `scripts/automate_loop.py`| Self-feeding loop: 70% exploit, 30% explore, baseline on restart. Runs on **Fly.io** via `fly.loop-*.toml`. |
 | `scripts/automate.py`     | Interval-based automation: runs with sleep between jobs. For local/scheduled runs. |
 | `scripts/generate_bridge.py` | Process pending API jobs: generate → upload → learn.                 |
 | `scripts/learn_from_api.py`  | Fetch events/feedback from API, produce suggestions.                |
@@ -58,32 +58,32 @@ python scripts/automate.py --duration 5 --interval 120
 
 ---
 
-## Deploy Loop to Railway / Render
+## Deploy loop workers (Fly.io)
 
 ### Prerequisites
 
 - API deployed at motion.productions
-- GitHub repo connected
+- [Fly CLI](https://fly.io/docs/hands-on/install-flyctl/) (`fly auth login`)
 
-### Railway
+### Fly.io
 
-`railway.toml`, `Dockerfile`, and `Procfile` are in the repo. **Root Directory must be repo root** (not `cloudflare/`).
+The repo ships **`fly.loop-explorer.toml`**, **`fly.loop-exploiter.toml`**, **`fly.loop-balanced.toml`**, and optional **`fly.loop-interpret.toml`** / **`fly.loop-sound.toml`** at the **repository root**. Each file defines one Fly app, the same **`Dockerfile`**, and the env vars for that role.
 
-1. [railway.app](https://railway.app) → New Project → Deploy from GitHub
-2. Add Worker service: Root Directory empty, Builder: Dockerfile
-3. Start Command: `python scripts/automate_loop.py`
-4. Env vars (optional): `API_BASE=https://motion.productions`
+```bash
+cd motion.productions   # repo root
+fly apps create motion-loop-explorer    # once per app name
+fly deploy --config fly.loop-explorer.toml
+```
 
-**Cost:** ~$5/mo (usage-based).
+Repeat with the other config files as needed. Full matrix and operational checklist: **[docs/DEPLOYMENT.md](DEPLOYMENT.md)** (Fly.io section).
 
-### Render
+Default **`CMD`** is `python scripts/worker_start.py` (**`WORKER_START_SCRIPT`** selects `automate_loop` vs `interpret_loop` vs `sound_loop`).
 
-1. New → Background Worker → Connect GitHub
-2. Build: `pip install -r requirements.txt`
-3. Start: `python scripts/automate_loop.py`
-4. Or use `render.yaml` (Blueprint)
+**Video AI** (FFmpeg render for the Worker): deploy from **`video-ai/`** with **`video-ai/fly.toml`** — see **`video-ai/README.md`**.
 
-**Cost:** Free tier available; paid ~$7/mo for always-on.
+### Local / Procfile
+
+`Procfile` lists example processes; use `foreman` or run scripts directly for development.
 
 ### Environment variables
 
@@ -97,7 +97,7 @@ python scripts/automate.py --duration 5 --interval 120
 
 ## Multi-Workflow (Parallel Workers)
 
-You can run **multiple Railway services** to speed up learning without compromising quality. Each worker shares the same KV/D1 (state, knowledge) and contributes discoveries.
+You can run **multiple worker services** to speed up learning without compromising quality. Each worker shares the same KV/D1 (state, knowledge) and contributes discoveries.
 
 ### Option 1: Identical workers (2×–3× throughput)
 
@@ -115,19 +115,15 @@ Use env overrides to run workers with different strategies:
 
 Each worker writes to the same D1; the knowledge base grows from all strategies. Quality is preserved because discoveries and good prompts are shared.
 
-### Setup (Railway) — step-by-step
+### Setup (multiple workers) on Fly
 
-1. **Existing service** — Your current worker (e.g. `motion-loop`). No changes if you want it as "balanced" (uses webapp).
-2. **Add Explorer** — New service from same repo: Root Directory: (repo root); Build: Dockerfile; Start: `python scripts/automate_loop.py`; Variables: `LOOP_EXPLOIT_RATIO_OVERRIDE=0`, `API_BASE=https://motion.productions`.
-3. **Add Exploiter** — Another new service: same as above; Variables: `LOOP_EXPLOIT_RATIO_OVERRIDE=1`, `API_BASE=https://motion.productions`.
+1. **Balanced** — `fly apps create motion-loop-balanced` then `fly deploy --config fly.loop-balanced.toml`.
+2. **Explorer** — `fly apps create motion-loop-explorer` then `fly deploy --config fly.loop-explorer.toml`.
+3. **Exploiter** — `fly apps create motion-loop-exploiter` then `fly deploy --config fly.loop-exploiter.toml`.
 
-**Railway UI:** Dashboard → Your Project → **New** → **Empty Service** → Connect repo → Settings: Root Directory empty, Builder: Dockerfile, Start Command: `python scripts/automate_loop.py` → Variables: `API_BASE`, `LOOP_EXPLOIT_RATIO_OVERRIDE` (0 for Explorer, 1 for Exploiter) → Deploy.
+Optional: interpretation and sound use **`fly.loop-interpret.toml`** and **`fly.loop-sound.toml`**. Env vars are already set in each file; change **`primary_region`** if you do not want `iad`.
 
-**Verify:** All services show logs like `[1]`, `[2]`, …; webapp loop status reflects combined activity.
-
-### Setup (Render)
-
-Use `render.yaml` — it defines three workers (explorer, balanced, exploiter). Connect the repo as a Blueprint to deploy all at once.
+**Verify:** `fly logs -a motion-loop-balanced` (etc.) show `[1]`, `[2]`, …; the motion.productions loop UI reflects combined activity.
 
 ---
 

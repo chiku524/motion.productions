@@ -241,11 +241,11 @@ Algorithms and functions must be **100% precise** with these rules so the regist
 
 ---
 
-### Railway / Render: same loop, two focuses (optional third)
+### Background workers on Fly.io: same loop, two focuses (optional third)
 
 **Both workflow types run the same code path** (`scripts/automate_loop.py`). Every run does: pick prompt → interpret → create → render → extract → grow (static + dynamic + narrative) → sync. The only lever is **how the prompt is chosen** (exploit vs explore), which aligns with Workflow A vs B *focus*:
 
-| Railway/Render worker | Env | Focus | Aligns with |
+| Worker | Env | Focus | Aligns with |
 |------------------------|-----|--------|-------------|
 | **Explorer** | `LOOP_EXPLOIT_RATIO_OVERRIDE=0` | 100% explore — new combos, broad discovery | **Workflow B** (growth / discovery) |
 | **Exploiter** | `LOOP_EXPLOIT_RATIO_OVERRIDE=1` | 100% exploit — reuse known-good prompts | **Workflow A** (interpretation / refinement) |

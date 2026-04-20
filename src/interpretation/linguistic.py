@@ -12,7 +12,6 @@ from .language_standard import infer_variant_type as _infer_variant_type
 from ..procedural.data.keywords import (
     KEYWORD_TO_PALETTE,
     KEYWORD_TO_MOTION,
-    KEYWORD_TO_INTENSITY,
     KEYWORD_TO_GRADIENT,
     KEYWORD_TO_CAMERA,
     KEYWORD_TO_SHAPE,
@@ -69,7 +68,6 @@ def extract_linguistic_mappings(
         resolved = instr_dict.get(field_name)
         if resolved is None:
             continue
-        canonical = str(resolved)
         # Use merged lookup (base + builtin + fetched) so we capture slang/dialect
         lookup = _merge_linguistic(domain, kw_dict, None)
         for w in words:

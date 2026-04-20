@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "motion-productions"
+version = "0.1.0"
+description = "Procedural text-to-video engine and motion.productions stack"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "PyYAML>=6.0",
+    "requests>=2.28.0",
+    "numpy>=1.24.0",
+    "imageio>=2.31.0",
+    "imageio-ffmpeg>=0.4.9",
+    "Pillow>=10.0.0",
+    "pydub>=0.25.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "ruff>=0.4",
+]
+
+[tool.setuptools]
+packages = ["src"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100

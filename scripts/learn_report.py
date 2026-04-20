@@ -5,16 +5,11 @@ Usage:
   python scripts/learn_report.py           # report from default log
   python scripts/learn_report.py --suggest # include update suggestions
 """
-import sys
-from pathlib import Path
-
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
-
 import argparse
 import json
+from pathlib import Path
 
-from src.learning import aggregate_log, suggest_updates, get_log_path
+from src.learning import aggregate_log, get_log_path, suggest_updates
 
 
 def main() -> None:

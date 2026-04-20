@@ -3,6 +3,8 @@ Sound: procedural audio, SFX, mix with video. Phase 6.
 Procedural audio uses origins: tempo, mood, presence.
 Requires: pydub, ffmpeg and ffprobe on PATH.
 """
+from __future__ import annotations
+
 import logging
 import os
 import random
@@ -12,7 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    pass
+    from pydub import AudioSegment
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +38,6 @@ def generate_tone(
 ) -> "bytes":
     """Generate a simple sine tone. For procedural SFX building blocks."""
     try:
-        from pydub import AudioSegment
         from pydub.generators import Sine
     except ImportError:
         return b""
@@ -164,7 +165,7 @@ def generate_audio_from_pure_sounds(
     duration_ms: int,
     *,
     sample_rate: int = 44100,
-) -> "AudioSegment":
+) -> AudioSegment:
     """
     Mix multiple pure sounds (from the static_sound registry mesh) into one track.
     Each entry can have tone (low/mid/high/silent), amplitude/weight, timbre.
@@ -209,7 +210,6 @@ def generate_audio_from_pure_sounds(
 
 def _repeat_to_duration(segment, duration_ms: int):
     """Repeat an AudioSegment until at least duration_ms, then slice to exact length. pydub has no .loop()."""
-    from pydub import AudioSegment
 
     n = len(segment)
     if n >= duration_ms:
@@ -224,7 +224,7 @@ def _generate_procedural_audio(
     mood: str = "neutral",
     tempo: str = "medium",
     presence: str = "ambient",
-) -> "AudioSegment":
+) -> AudioSegment:
     """Generate procedural audio from origin primitives (AUDIO_ORIGINS)."""
     from pydub import AudioSegment
 
@@ -295,13 +295,6 @@ def generate_audio_only(
     Generate procedural audio to a WAV file (no video). Used by the sound-only
     workflow to discover pure sound values without rendering video.
     """
-    try:
-        from pydub import AudioSegment
-    except ImportError as e:
-        raise RuntimeError(
-            "pydub is required for audio. Install with: pip install pydub"
-        ) from e
-
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     duration_ms = int(duration_seconds * 1000)

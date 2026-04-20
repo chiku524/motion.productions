@@ -3,7 +3,6 @@ Completion targets: definition of "registry complete" for each registry.
 Used by coverage API (via shared constants), prompt selection, and exploit-ratio logic.
 See docs/REGISTRY_AND_WORKFLOW_IMPROVEMENTS.md.
 """
-from typing import Any
 
 # Static color: key = quantized RGB (tolerance 25 → 11 steps per channel) + opacity (21 steps)
 # 11^3 * 21 ≈ 27_951 — this is the *cell space* for static_colors_coverage_pct (distinct keys / cells).

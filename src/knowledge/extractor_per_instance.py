@@ -10,7 +10,6 @@ import numpy as np
 
 from ..analysis.metrics import (
     brightness_and_contrast,
-    color_histogram,
     color_variance,
     dominant_colors,
     frame_difference,
@@ -238,10 +237,8 @@ def _derive_audio_semantic_from_segments(
     if not segs:
         return {}
     amps = [float(s.get("amplitude") or s.get("weight") or 0) for s in segs]
-    tones = [str(s.get("tone") or "mid").strip() for s in segs if s.get("tone")]
     mean_amp = sum(amps) / len(amps) if amps else 0
     amp_std = (sum((a - mean_amp) ** 2 for a in amps) / len(amps)) ** 0.5 if len(amps) > 1 else 0
-    dominant_tone = max(set(tones), key=tones.count) if tones else "mid"
     if mean_amp < 0.05:
         role, presence = "ambient", "silence"
     elif mean_amp > 0.3:

@@ -3,7 +3,6 @@ Precise parsing of user instructions.
 Interprets what the user is instructing from text/script/prompt.
 """
 import re
-from typing import Any
 
 from .schema import InterpretedInstruction
 from ..procedural.data.keywords import (
@@ -32,7 +31,6 @@ from ..procedural.data.keywords import (
     DEFAULT_INTENSITY,
     DEFAULT_GRADIENT,
     DEFAULT_CAMERA,
-    DEFAULT_SHAPE,
     DEFAULT_SHOT,
     DEFAULT_TRANSITION,
     DEFAULT_LIGHTING,
@@ -444,9 +442,9 @@ def _resolve_tone(
 ) -> str | None:
     """Extract tone from keywords or phrases; uses linguistic merge for synonyms."""
     lookup = _merge_linguistic("tone", MOOD_TO_TONE, linguistic_registry)
-    raw = (prompt or "").lower()
+    pl = (prompt or "").lower()
     for mood, tone in lookup.items():
-        if mood in (prompt or "").lower():
+        if mood in pl:
             return tone
     for w in words:
         if w in lookup:

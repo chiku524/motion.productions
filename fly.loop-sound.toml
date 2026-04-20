@@ -1,0 +1,46 @@
+# Sound discovery worker — no video; grows static_sound registry. Deploy from repository root:
+#   fly apps create motion-loop-sound   # first time only
+#   fly deploy --config fly.loop-sound.toml
+app = "motion-loop-sound"
+primary_region = "iad"
+
+kill_signal = "SIGTERM"
+kill_timeout = 120
+
+[build]
+  dockerfile = "Dockerfile"
+
+[deploy]
+  wait_timeout = "10m"
+
+[env]
+  WORKER_START_SCRIPT = "sound_loop"
+  API_BASE = "https://motion.productions"
+  SOUND_LOOP_DELAY_SECONDS = "15"
+  SOUND_LOOP_DURATION_SECONDS = "2.5"
+  HEALTH_PORT = "8080"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 2
+    hard_limit = 4
+
+  [[http_service.checks]]
+    grace_period = "45s"
+    interval = "60s"
+    method = "GET"
+    timeout = "5s"
+    path = "/"
+
+[[vm]]
+  memory = "1gb"
+  cpu_kind = "shared"
+  cpus = 1

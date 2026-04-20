@@ -2,16 +2,14 @@
 Interpreter: analyze a generated video and produce a structured description.
 Uses the base-knowledge extractor for full extraction; OutputAnalysis for backward compat.
 """
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from .metrics import (
-    color_histogram,
-    frame_difference,
-    dominant_colors,
-    brightness_and_contrast,
-)
+if TYPE_CHECKING:
+    from ..knowledge.schema import BaseKnowledgeExtract
 
 
 @dataclass
@@ -59,7 +57,7 @@ class OutputAnalysis:
         return d
 
 
-def _extract_to_output_analysis(ext: "BaseKnowledgeExtract") -> OutputAnalysis:
+def _extract_to_output_analysis(ext: BaseKnowledgeExtract) -> OutputAnalysis:
     """Convert BaseKnowledgeExtract to OutputAnalysis for backward compatibility."""
     bins = len(ext.histogram_r) if ext.histogram_r else 16
     return OutputAnalysis(
@@ -90,7 +88,7 @@ def analyze_video(
     Interpret a generated video using base-knowledge extraction.
     Returns OutputAnalysis (backward compat). Use extract_from_video for full extract.
     """
-    from ..knowledge import extract_from_video, BaseKnowledgeExtract
+    from ..knowledge import extract_from_video
     ext = extract_from_video(
         video_path,
         max_frames=max_frames,

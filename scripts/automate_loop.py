@@ -11,16 +11,12 @@ Usage:
   LOOP_DELAY_SECONDS=60 python scripts/automate_loop.py
   DEBUG=1 python scripts/automate_loop.py      # print full tracebacks on errors
 """
-import json
 import logging
 import os
-import sys
 import time
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
-
+from src.api_client import APIError, api_request, api_request_with_retry
 from src.random_utils import secure_choice, secure_random
 
 logger = logging.getLogger(__name__)
@@ -46,9 +42,6 @@ def baseline_state() -> dict:
         "interpretation_streak": 0,
         "interpretation_recent_buckets": [],
     }
-
-
-from src.api_client import APIError, api_request, api_request_with_retry
 
 
 def is_good_outcome(analysis: dict) -> bool:
@@ -286,7 +279,7 @@ def _post_learning_with_retry(
 
 
 def _load_loop_config(api_base: str) -> dict:
-    """Load user-controlled loop config from API (controls Railway loop). Retries on 5xx/connection; logs on failure."""
+    """Load user-controlled loop config from API (controls this worker). Retries on 5xx/connection; logs on failure."""
     try:
         data = api_request_with_retry(api_base, "GET", "/api/loop/config", timeout=15)
         return {
@@ -340,7 +333,6 @@ def run() -> None:
     from src.config import load_config
     from src.pipeline import generate_full_video
     from src.procedural import ProceduralVideoGenerator
-    from src.analysis import analyze_video
     from src.interpretation import interpret_user_prompt
     from src.creation import build_spec_from_instruction
     from src.knowledge.lookup import get_knowledge_for_creation
@@ -405,13 +397,13 @@ def run() -> None:
         # workflow_type for site: explorer | exploiter | main (prompt choice)
         workflow_type = os.environ.get("LOOP_WORKFLOW_TYPE") or ("explorer" if override == "0" else "exploiter" if override == "1" else "main")
         # extraction_focus: frame (per-frame / pure static only) | window (per-window blends only) | unset = all
-        # Use LOOP_EXTRACTION_FOCUS (not LCXP_EXTRACTION_FOCUS). See RAILWAY_CONFIG.md §8 and docs/MISSION_AND_OPERATIONS.md.
+        # Use LOOP_EXTRACTION_FOCUS (not LCXP_EXTRACTION_FOCUS). See docs/DEPLOYMENT.md (Fly.io §8) and REGISTRY_AND_WORKFLOW_IMPROVEMENTS.md Part 0.
         extraction_focus = (os.environ.get("LOOP_EXTRACTION_FOCUS") or "").strip().lower() or "all"
         if extraction_focus not in ("frame", "window", "all"):
             extraction_focus = "all"
         if extraction_focus == "all" and state.get("run_count", 0) == 0:
             logger.info(
-                "LOOP_EXTRACTION_FOCUS is unset → Growth [all]. For split workers set LOOP_EXTRACTION_FOCUS=frame or =window (see RAILWAY_CONFIG.md §8)."
+                "LOOP_EXTRACTION_FOCUS is unset → Growth [all]. For split workers set LOOP_EXTRACTION_FOCUS=frame or =window (see docs/DEPLOYMENT.md Fly.io §8)."
             )
         # static_focus: when frame extraction, grow only color | only sound | both (pure colors vs pure sounds workers)
         static_focus = (os.environ.get("LOOP_STATIC_FOCUS") or "").strip().lower() or "both"
@@ -499,7 +491,7 @@ def run() -> None:
             run_succeeded = True
 
             instruction = interpret_user_prompt(prompt, default_duration=duration)
-            # Record interpretation first (so it's never skipped by later errors); visible in Railway logs
+            # Record interpretation first (so it's never skipped by later errors); visible in worker logs
             if args.api_base:
                 try:
                     payload = instruction.to_api_dict() if hasattr(instruction, "to_api_dict") else instruction.to_dict()

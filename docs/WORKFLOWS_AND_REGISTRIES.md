@@ -38,7 +38,7 @@ All registries fit the **overall mission**: record every element of a complete v
 
 Each file is **human-readable JSON**: `_meta` describes the registry and aspect; `entries` holds the recorded values; `count` is the number of entries.
 
-**D1 migrations:** From repo root run `python scripts/run_d1_migrations.py`. See [DEPLOY_CLOUDFLARE.md](DEPLOY_CLOUDFLARE.md).
+**D1 migrations:** From repo root run `python scripts/run_d1_migrations.py`. See [DEPLOYMENT.md](DEPLOYMENT.md) (Cloudflare Worker section).
 
 ---
 
@@ -229,14 +229,14 @@ Each workflow is one **continuous loop** that repeats the same steps. Only **pro
 
 ### Interpretation (Workflow D — no create/render)
 
-- **Script:** `scripts/interpret_loop.py` (fourth Railway service).
+- **Script:** `scripts/interpret_loop.py` (fourth worker service).
 - **What it does:** Polls `GET /api/interpret/queue` for pending prompts; runs `interpret_user_prompt(prompt)`; stores the result with `PATCH /api/interpret/:id`. Optionally backfills prompts from the jobs table that don't yet have an interpretation and stores them via `POST /api/interpretations`.
 - **Storage:** User prompts and full instruction payloads (palette, motion, gradient, camera, audio, etc.) are stored in **D1** (`interpretations` table). No R2 (no video). KV is used for loop config/state as for other workers.
 - **Integration with main pipeline:** `GET /api/knowledge/for-creation` returns `interpretation_prompts` (list of `{ prompt, instruction }`). The main loop's `pick_prompt()` uses `knowledge["interpretation_prompts"]` when exploring: with 45% probability it may pick one of these. **Diversity:** prompts are chosen with bias toward under-used `(genre|palette|motion)` buckets from recent runs (`interpretation_recent_buckets` in loop state). After **5** consecutive interpretation-sourced prompts (`interpretation_streak`), the loop skips interpretation until a procedural/targeted run resets the streak. Override cap with **`LOOP_INTERPRETATION_STREAK_MAX`** (default `5`).
 
 ### Sound-only (Workflow E — pure sound discovery, no video)
 
-- **Script:** `scripts/sound_loop.py` (fifth Railway service; optional).
+- **Script:** `scripts/sound_loop.py` (fifth worker service; optional).
 - **Pure sound** = any form of noise within **one frame (one instant)** — not a 1-second window. Each instant is measured (amplitude, tone, timbre) and recorded; new values are **blended into the mesh** (the static_sound registry). The mesh grows each cycle and is used on the next run for creation and further discovery.
 - **What it does:** Does **not** create or render video. Each cycle: fetches knowledge (for-creation); picks mood/tempo/presence (from `learned_audio` or keyword origins); generates procedural audio to a WAV; extracts **per-frame (per-instant)** sound with `read_audio_segments_only()`; grows the **mesh** with `grow_static_sound_from_audio_segments()`; POSTs novel discoveries to `/api/knowledge/discoveries`.
 - **Goal:** Discovery of new pure (per-instant) sounds on par with the system. Frame workers handle pure colors + pure sounds from video; window worker handles blended + semantic within 1-second windows.
@@ -257,7 +257,7 @@ Each workflow is one **continuous loop** that repeats the same steps. Only **pro
 | Fourth workflow (Interpretation)? | Yes. **Interpretation** runs `interpret_loop.py`; no create/render; stores prompt + instruction in D1; main loop uses `interpretation_prompts` from for-creation when picking prompts. |
 | Fifth workflow (Sound-only)? | Yes. **Sound-only** runs `sound_loop.py`; no create/render; grows static_sound only; uses knowledge (learned_audio) for next-cycle discovery. |
 
-For config and env details, see `config/workflows.yaml` and [RAILWAY_CONFIG.md](RAILWAY_CONFIG.md).
+For config and env details, see `config/workflows.yaml` and [DEPLOYMENT.md](DEPLOYMENT.md) (Fly.io section).
 
 ---
 
@@ -270,7 +270,7 @@ Every generated video goes through the same pipeline and **gets procedural audio
 | **Pipeline** | `generate_full_video()` always calls **`_add_audio(output_path, config, prompt)`** after the visual clip is created (single-clip and multi-segment). |
 | **No silent skip** | If pydub or ffmpeg is missing, `_add_audio` **raises**; the job fails. We do not upload a video without an audio track. |
 | **Procedural audio** | `mix_audio_to_video()` generates audio from **mood**, **tempo**, **presence** (spec: audio_mood, audio_tempo, audio_presence). Muxed into the MP4 with ffmpeg (`-c:a aac`). |
-| **Dependencies** | `requirements.txt`: pydub; **Dockerfile**: `apt-get install ffmpeg`. Railway/Render workers have both; every loop run produces an MP4 with an audio track. |
+| **Dependencies** | `requirements.txt`: pydub; **Dockerfile**: `apt-get install ffmpeg`. Container workers have both; every loop run produces an MP4 with an audio track. |
 
 The **audio icon is enabled** in the browser when the source has a track; the `<video>` element uses `controls` and is not muted by the app (browsers may show muted by default until user interaction).
 
@@ -337,6 +337,6 @@ Exploiter always picks from good_prompts → same motion/sound/color. Balanced w
 - **[LOOP_STANDARDS.md](LOOP_STANDARDS.md)** — Set algorithms and functions for interpretation loop (language standard) and video loop (MP4 aspects); both grow from origin/primitive + extracted values.
 - [NAME_GENERATOR.md](NAME_GENERATOR.md) — Algorithm for sensible, semantic or name-like short names.
 - [MP4_ASPECTS.md](MP4_ASPECTS.md) — Every aspect of a complete MP4; frame/window model.
-- [RAILWAY_CONFIG.md](RAILWAY_CONFIG.md) — Service config, env vars, deploy steps, post-deploy checklist.
+- [DEPLOYMENT.md](DEPLOYMENT.md) — Cloudflare Worker + Fly.io workers (config, env, post-deploy checklist).
 - [REGISTRY_AND_WORKFLOW_IMPROVEMENTS.md](REGISTRY_AND_WORKFLOW_IMPROVEMENTS.md) — Consolidated improvement plans and reports.
 - [ALGORITHMS_AND_FUNCTIONS_AUDIT.md](ALGORITHMS_AND_FUNCTIONS_AUDIT.md) — Audit of extraction, growth, and registry functions.

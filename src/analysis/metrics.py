@@ -2,7 +2,6 @@
 Pure algorithms for interpreting video frames: color, motion, consistency.
 No external model — our scripts only.
 """
-from typing import Any
 
 import numpy as np
 

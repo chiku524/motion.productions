@@ -123,7 +123,7 @@ def _build_slot_pools_interpretation(knowledge: dict[str, Any] | None) -> dict[s
     return {
         "color": [c for c in color if c],
         "motion": [m for m in motion if m],
-        "lighting": [l for l in lighting if l],
+        "lighting": [lv for lv in lighting if lv],
         "gradient": [g for g in gradient if g],
         "camera": [c for c in camera if c],
         "mood": [m for m in mood if m],

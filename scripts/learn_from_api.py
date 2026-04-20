@@ -14,10 +14,6 @@ import json
 import re
 import sys
 from collections import defaultdict
-from pathlib import Path
-
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.api_client import api_get
 
@@ -49,9 +45,6 @@ def main() -> None:
     events = events_data.get("events", [])
     feedback_list = feedback_data.get("feedback", [])
     stats = stats_data
-
-    # Build job_id -> feedback
-    job_feedback: dict[str, int] = {f["job_id"]: f["rating"] for f in feedback_list}
 
     # Correlate events with jobs: which jobs got played, downloaded, thumbs up/down
     job_events: dict[str, list[str]] = defaultdict(list)

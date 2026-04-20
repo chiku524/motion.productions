@@ -138,7 +138,7 @@ Clean organization: every file is in its respective directory.
 | `scripts/` | Entrypoints: generate.py, generate_bridge.py, automate_loop.py, automate.py, learn_from_api.py, learn_report.py, run_d1_migrations.py, seed_name_reserve.py. |
 | `cloudflare/` | Worker API (D1, R2, KV), migrations, static app. |
 | `src/` | Python source (see below). |
-| `Dockerfile`, `Procfile`, `railway.toml`, `render.yaml` | Deployment. |
+| `Dockerfile`, `Procfile`, `fly.loop-*.toml`, `video-ai/fly.toml` | Deployment (Fly.io). |
 
 **`src/` — Python package**
 

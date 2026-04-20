@@ -1,5 +1,5 @@
 -- User-prompt interpretation queue and results (no create/render).
--- Interpretation worker (Railway) polls queue, interprets, stores result here.
+-- Interpretation worker polls queue, interprets, stores result here.
 -- Main loop uses interpretation_prompts from GET /api/knowledge/for-creation.
 
 CREATE TABLE IF NOT EXISTS interpretations (

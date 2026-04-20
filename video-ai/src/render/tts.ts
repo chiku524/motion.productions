@@ -10,7 +10,7 @@ const VOICES = new Set([
 ]);
 
 /**
- * OpenAI TTS → MP3 file. Requires OPENAI_API_KEY on the render host (Railway).
+ * OpenAI TTS → MP3 file. Requires OPENAI_API_KEY on the render host.
  */
 export async function openAiSpeechToMp3(
   apiKey: string,

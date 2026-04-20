@@ -52,8 +52,6 @@ def render_text_overlay(
     bboxes = [draw.textbbox((0, 0), line, font=font) for line in lines]
     line_height = max(b[3] - b[1] for b in bboxes) if bboxes else font_size
     total_height = line_height * len(lines)
-    first_bbox = bboxes[0] if bboxes else (0, 0, 0, 0)
-    line_w = first_bbox[2] - first_bbox[0]
 
     # Position
     x_center = w // 2

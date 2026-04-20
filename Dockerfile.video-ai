@@ -1,5 +1,4 @@
-# Video AI FFmpeg render API — use when Railway ignores video-ai/Dockerfile (Railpack override).
-# Railway: Root Directory = / (repo root). Dockerfile path = Dockerfile.video-ai
+# Video AI FFmpeg render API — build from monorepo root (repo root). Dockerfile path = Dockerfile.video-ai
 FROM node:22-bookworm-slim
 
 RUN apt-get update \

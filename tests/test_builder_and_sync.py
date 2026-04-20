@@ -1,16 +1,9 @@
 """
-Unit tests for critical registry-affecting paths (MISSION_AND_OPERATIONS §2.7).
+Unit tests for critical registry-affecting paths (REGISTRY_AND_WORKFLOW_IMPROVEMENTS Part 0 §2.7).
 Run from project root: python -m pytest tests/ -v
 Or: python -m unittest discover -s tests -p "test_*.py" -v
 """
-import sys
 import unittest
-from pathlib import Path
-
-# Project root on path so "from src. ..." works
-ROOT = Path(__file__).resolve().parent.parent
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 
 class TestBuilderAndSync(unittest.TestCase):

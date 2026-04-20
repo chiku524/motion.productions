@@ -1,6 +1,6 @@
 # Precision verification checklist
 
-Use this checklist to verify that workflows and registries align with the **refined mission** (100% precision, comprehensive data acquisition, robust prompt interpretation). See **REGISTRY_AND_WORKFLOW_IMPROVEMENTS.md** (Part I) and **MISSION_AND_OPERATIONS.md**.
+Use this checklist to verify that workflows and registries align with the **refined mission** (100% precision, comprehensive data acquisition, robust prompt interpretation). See **REGISTRY_AND_WORKFLOW_IMPROVEMENTS.md** (Parts 0 and I).
 
 ---
 
@@ -10,12 +10,12 @@ Use this checklist to verify that workflows and registries align with the **refi
 
 | Check | How |
 |-------|-----|
-| **Env set correctly** | On Railway (or your host): Explorer and Exploiter have `LOOP_EXTRACTION_FOCUS=frame`; Balanced has `LOOP_EXTRACTION_FOCUS=window`. Exact name is **LOOP_EXTRACTION_FOCUS** (not LCXP). Copy from **RAILWAY_CONFIG.md**. |
+| **Env set correctly** | On each worker: Explorer and Exploiter have `LOOP_EXTRACTION_FOCUS=frame`; Balanced has `LOOP_EXTRACTION_FOCUS=window`. Exact name is **LOOP_EXTRACTION_FOCUS** (not LCXP). Copy from **[DEPLOYMENT.md](DEPLOYMENT.md)** (Fly.io section). |
 | **Logs: frame workers** | In Explorer/Exploiter logs you should see **`Growth [frame]`** (and static counts). You should **not** see `Growth [all]` on those services if the variable is set. |
 | **Logs: window worker** | In Balanced logs you should see **`Growth [window]`** (and dynamic/narrative counts). You should **not** see `Growth [all]` on that service if the variable is set. |
 | **First-run reminder** | If the variable is **unset**, the first run of automate_loop logs: *"LOOP_EXTRACTION_FOCUS is unset → Growth [all]. For split workers set ..."*. Use that to catch misconfiguration. |
 
-**If you see `Growth [all]` on a worker that should be frame or window:** Confirm the env var is set in that service’s environment (e.g. Railway env vars) and redeploy.
+**If you see `Growth [all]` on a worker that should be frame or window:** Confirm the env var is set in that service’s environment and redeploy.
 
 ---
 
@@ -72,7 +72,7 @@ Use this checklist to verify that workflows and registries align with the **refi
 
 | Check | How |
 |-------|-----|
-| **Recording in Railway** | After each run the loop prints **`[interpretation] posting...`** then **`[interpretation] recorded`** (or **`[interpretation] failed ...`**). If you never see these, the deployed code may be old or the process may not be the main video loop. Interpretation is posted **immediately** after interpret_user_prompt (before spec build) so it is not skipped by later errors. |
+| **Recording in worker logs** | After each run the loop prints **`[interpretation] posting...`** then **`[interpretation] recorded`** (or **`[interpretation] failed ...`**). If you never see these, the deployed code may be old or the process may not be the main video loop. Interpretation is posted **immediately** after interpret_user_prompt (before spec build) so it is not skipped by later errors. |
 | **Interpret worker logs** | In interpret_loop.py you should see **`[cycle] interpreted`**, **`[cycle] backfill`**, **`[cycle] generated`**, **`[cycle] linguistic growth`**. If absent, check queue, API, and --no-backfill / --no-generate flags. |
 | **Prompt quality** | Procedural prompts use slot pools and _expand_from_knowledge. Nonsensical prompts are filtered. Run backfill_registry_names so cascaded prompts stay semantic. |
 
@@ -97,7 +97,7 @@ Use this checklist to verify that workflows and registries align with the **refi
 
 | Check | How |
 |-------|-----|
-| **Code** | builder.py builds pure_colors from origin + static_colors + learned_colors; creation_mode = "pure_per_frame" when pool non-empty. renderer.py _render_pure_per_frame() assigns a color per pixel from that pool. See MISSION_AND_OPERATIONS.md §2.4. |
+| **Code** | builder.py builds pure_colors from origin + static_colors + learned_colors; creation_mode = "pure_per_frame" when pool non-empty. renderer.py _render_pure_per_frame() assigns a color per pixel from that pool. See REGISTRY_AND_WORKFLOW_IMPROVEMENTS.md Part 0 §2.4. |
 | **Parameterization** | Palette: 2–3 hints when default, with underused bias. Motion, gradient, camera: from _pool_from_knowledge (learned_* + origin_*). Audio: 35% weighted_choice_favor_recent(learned_audio), else most_common; static_sound for mood/tone with underused bias. |
 | **Tests** | Run `python -m pytest tests/ -v` or `python -m unittest discover -s tests -p "test_*.py" -v` to confirm _build_pure_color_pool and growth_metrics behave as expected. |
 
@@ -109,7 +109,7 @@ Use this checklist to verify that workflows and registries align with the **refi
 |-------|-----|
 | **Tests** | `python -m pytest tests/ -v` (or unittest discover). Add tests for new registry-affecting functions when feasible. |
 | **Recursion** | No recursion in src/ (audit confirmed). If you add recursive logic, use limits or iterative form to avoid RecursionError. |
-| **Commit and deploy** | After code/config changes, commit and push; redeploy services (e.g. Railway) so new logic and env vars are active. |
+| **Commit and deploy** | After code/config changes, commit and push; redeploy worker services so new logic and env vars are active. |
 | **Standards** | Registry-affecting behaviour should align with **REGISTRY_FOUNDATION.md** and **LOOP STANDARDS** (INTENDED_LOOP.md, WORKFLOWS_AND_REGISTRIES.md). |
 
 ---

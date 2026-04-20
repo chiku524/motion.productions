@@ -16,10 +16,6 @@ first (push to main or run deploy workflow) so the API includes learned_colors s
 import argparse
 import os
 import sys
-from pathlib import Path
-
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
 
 from src.api_client import api_request_with_retry
 from src.knowledge.blend_depth import (

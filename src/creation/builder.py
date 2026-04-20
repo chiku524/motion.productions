@@ -14,18 +14,18 @@ import logging
 from typing import Any
 
 from ..interpretation import InterpretedInstruction
-from ..procedural.parser import SceneSpec
-from ..random_utils import secure_choice, weighted_choice_favor_underused, weighted_choice_favor_recent
 from ..knowledge.blend_depth import COLOR_ORIGIN_PRIMITIVES
-
-logger = logging.getLogger(__name__)
-from ..procedural.data.palettes import PALETTES
+from ..knowledge.origins import GRAPHICS_ORIGINS, CAMERA_ORIGINS
 from ..procedural.data.keywords import (
+    DEFAULT_CAMERA,
     DEFAULT_GRADIENT,
     DEFAULT_MOTION,
-    DEFAULT_CAMERA,
 )
-from ..knowledge.origins import GRAPHICS_ORIGINS, CAMERA_ORIGINS
+from ..procedural.data.palettes import PALETTES
+from ..procedural.parser import SceneSpec
+from ..random_utils import secure_choice, weighted_choice_favor_underused, weighted_choice_favor_recent
+
+logger = logging.getLogger(__name__)
 
 # Renderer-valid sets (used only to filter registry values; no fixed list used for creation)
 _GRADIENT_VALID = frozenset(GRAPHICS_ORIGINS["gradient_type"])
@@ -557,7 +557,6 @@ def _refine_from_knowledge(
     Only adjusts intensity when palette had poor motion stats; never changes palette/motion
     to an avoided value.
     """
-    avoid_m = avoid_motion or set()
     avoid_p = avoid_palette or set()
     by_keyword = knowledge.get("by_keyword", {})
     by_palette = knowledge.get("by_palette", {})

@@ -107,7 +107,7 @@ function jobKeys(jobId: string) {
   };
 }
 
-async function notifyRailwayEnqueue(
+async function notifyRenderServiceEnqueue(
   env: VideoAiEnv,
   jobId: string,
   origin: string,
@@ -250,7 +250,7 @@ export async function handleVideoAiApi(
       return json(
         {
           error:
-            "VIDEO_AI_RENDER_URL is not configured. Set it on the Worker and configure R2 credentials on Railway for async jobs (see video-ai/README.md).",
+            "VIDEO_AI_RENDER_URL is not configured. Set it on the Worker and give the render host R2 credentials for async jobs (see video-ai/README.md).",
         },
         501,
       );
@@ -299,7 +299,7 @@ export async function handleVideoAiApi(
     const origin = new URL(request.url).origin;
     ctx.waitUntil(
       (async () => {
-        const r = await notifyRailwayEnqueue(env, jobId, origin);
+        const r = await notifyRenderServiceEnqueue(env, jobId, origin);
         if (!r.ok) {
           const errText = r.status ? `enqueue ${r.status}: ${r.detail}` : r.detail;
           try {

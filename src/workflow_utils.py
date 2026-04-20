@@ -33,7 +33,7 @@ def setup_graceful_shutdown() -> None:
 
 
 def log_structured(level: str, **kwargs: Any) -> None:
-    """Emit structured (JSON) log for Railway/monitoring."""
+    """Emit structured (JSON) log for monitoring."""
     record = {"level": level, **kwargs}
     line = json.dumps(record)
     if level == "error":
@@ -45,7 +45,7 @@ def log_structured(level: str, **kwargs: Any) -> None:
 
 
 def start_health_server(port: int = 8080) -> threading.Thread | None:
-    """Start a minimal HTTP server for health checks (Railway). Daemon thread."""
+    """Start a minimal HTTP server for health checks from the host. Daemon thread."""
     class HealthHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
             self.send_response(200)

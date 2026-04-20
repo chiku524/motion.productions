@@ -102,7 +102,7 @@ async function muxFinalOutput(
     const key = process.env.OPENAI_API_KEY?.trim();
     if (!key) {
       throw new Error(
-        "Recipe includes narration but OPENAI_API_KEY is not set on the render service (Railway variables).",
+        "Recipe includes narration but OPENAI_API_KEY is not set on the render service.",
       );
     }
     await openAiSpeechToMp3(key, narrText!, audio?.narration?.voice, narrPath);

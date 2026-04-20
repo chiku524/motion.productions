@@ -15,6 +15,7 @@ data/automation_state.json
 
 # Python
 __pycache__/
+*.egg-info/
 *.py[cod]
 *$py.class
 .venv/

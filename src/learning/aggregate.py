@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .log import read_log, get_log_path
+from .log import read_log
 
 
 @dataclass

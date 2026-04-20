@@ -1,7 +1,6 @@
 """
 Story beats and emotional arcs. Phase 5.
 """
-from typing import Callable
 
 
 # Story beat phases (0-1 normalized time)

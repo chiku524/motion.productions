@@ -5,9 +5,8 @@ Create and produce videos from text, script, or prompt — driven by base knowle
 
 - **Core foundation and loop:** [docs/INTENDED_LOOP.md](./docs/INTENDED_LOOP.md) — base knowledge, extraction, creation, learning loop
 - **Architecture:** [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) — procedural engine, interpreter & learning
-- **Automation & deployment:** [docs/AUTOMATION.md](./docs/AUTOMATION.md) — automate_loop, Railway/Render
-- **Deploy to Cloudflare:** [docs/DEPLOY_CLOUDFLARE.md](./docs/DEPLOY_CLOUDFLARE.md) (includes security)
-- **Railway services & ops:** [docs/RAILWAY_CONFIG.md](./docs/RAILWAY_CONFIG.md) — env vars, workflows, post-deploy checklist
+- **Automation & deployment:** [docs/AUTOMATION.md](./docs/AUTOMATION.md) — automate_loop, **Fly.io** workers (`fly.loop-*.toml`, `video-ai/fly.toml`)
+- **Deployment:** [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md) — Cloudflare Worker (D1, R2, KV), security, and Fly.io background workers (env, workflows, post-deploy checklist)
 - **Registry improvements:** [docs/REGISTRY_AND_WORKFLOW_IMPROVEMENTS.md](./docs/REGISTRY_AND_WORKFLOW_IMPROVEMENTS.md)
 - **Brand kit:** [docs/BRAND.md](./docs/BRAND.md)
 
@@ -39,6 +38,7 @@ Create and produce videos from text, script, or prompt — driven by base knowle
    source .venv/bin/activate   # Windows: .venv\Scripts\activate
    pip install -r requirements.txt
    ```
+   This installs the repo as an **editable package** (`pyproject.toml`) so `from src.…` works when you run scripts (no `PYTHONPATH` or `sys.path` hacks).
 
 3. **FFmpeg** (for encoding; imageio-ffmpeg may bundle it, or install system FFmpeg)
    - Windows: e.g. `winget install FFmpeg`
@@ -102,7 +102,7 @@ print(path)  # one output video file
 
 ## Web app
 
-Visit **https://motion.productions** to generate videos from a prompt. The app creates a job, and the procedural engine (run via `scripts/generate_bridge.py` locally or on a server) processes it and uploads the result. See [docs/DEPLOY_CLOUDFLARE.md](docs/DEPLOY_CLOUDFLARE.md).
+Visit **https://motion.productions** to generate videos from a prompt. The app creates a job, and the procedural engine (run via `scripts/generate_bridge.py` locally or on a server) processes it and uploads the result. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ## Project layout
 
@@ -110,12 +110,17 @@ Visit **https://motion.productions** to generate videos from a prompt. The app c
 motion.productions/
 ├── config/
 │   └── default.yaml           # Output dir, resolution, fps
+├── fly.loop-explorer.toml     # Fly.io: Explorer learning loop
+├── fly.loop-exploiter.toml    # Fly.io: Exploiter loop
+├── fly.loop-balanced.toml     # Fly.io: Balanced (UI ratio) loop
+├── fly.loop-interpret.toml    # Fly.io: interpretation worker
+├── fly.loop-sound.toml        # Fly.io: sound discovery worker
+├── Dockerfile                 # Python workers (repo root)
 ├── docs/
 │   ├── INTENDED_LOOP.md        # Core: foundation, loop, extraction, creation
 │   ├── ARCHITECTURE.md         # Procedural engine, interpreter & learning
-│   ├── AUTOMATION.md           # Scripts, Railway/Render deployment
-│   ├── DEPLOY_CLOUDFLARE.md    # Cloudflare Worker deploy (+ security)
-│   ├── RAILWAY_CONFIG.md       # Railway services, env, post-deploy checklist
+│   ├── AUTOMATION.md           # Scripts, container worker deployment
+│   ├── DEPLOYMENT.md           # Cloudflare + Fly.io deploy & ops
 │   ├── REGISTRY_AND_WORKFLOW_IMPROVEMENTS.md  # Improvement plans & reports
 │   └── BRAND.md                # Brand kit
 ├── output/                     # Generated videos
@@ -150,10 +155,12 @@ motion.productions/
 ├── cloudflare/                 # Worker API + static app
 │   ├── public/                 # Web app (index.html, app.css, app.js)
 │   └── src/index.ts            # Jobs API
+├── video-ai/
+│   └── fly.toml                # Fly.io: Video AI FFmpeg render service
 ├── scripts/                    # Python entry points
 │   ├── generate.py             # CLI: generate video
 │   ├── generate_bridge.py      # Process pending jobs from API
-│   ├── automate_loop.py        # Self-feeding loop (Railway/Render)
+│   ├── automate_loop.py        # Self-feeding loop (Fly.io workers)
 │   ├── automate.py             # Interval-based automation
 │   ├── learn_report.py         # Learning report (local JSONL)
 │   ├── learn_from_api.py       # Fetch events/feedback, produce suggestions

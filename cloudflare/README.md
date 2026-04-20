@@ -14,7 +14,7 @@ npx wrangler deploy
 
 If you use **Wrangler 4.45+**, the first `deploy` can auto-create D1/KV/R2; then run the migrations command above (use the database name from your config if it differs).
 
-Full steps and troubleshooting: **[../docs/DEPLOY_CLOUDFLARE.md](../docs/DEPLOY_CLOUDFLARE.md)**.
+Full steps and troubleshooting: **[../docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md)** (Cloudflare Worker section).
 
 ## API
 

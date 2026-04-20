@@ -3,7 +3,7 @@ Crypto-quality random for growth and creation (BACKLOG_AND_ENHANCEMENTS).
 Uses secrets module to avoid bias in domain value selection.
 """
 import secrets
-from typing import Any, Callable, TypeVar
+from typing import Callable, TypeVar
 
 T = TypeVar("T")
 

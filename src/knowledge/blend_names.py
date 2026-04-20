@@ -10,7 +10,6 @@ syllables. Output: single word, title case (e.g. Suntor, Velvet). Pronounceable,
 See docs/NAME_GENERATOR.md.
 """
 import re
-from typing import Any
 
 # Start parts — semantic or name-like (real words or plausible name roots)
 _START = [

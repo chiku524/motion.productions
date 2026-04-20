@@ -3,7 +3,7 @@ Blending: combine primitives to produce new values.
 Supports every primitive domain and multiple blending approaches.
 When primitives are blended, the result may be novel and added to learned knowledge.
 """
-from typing import Any, Literal
+from typing import Literal
 
 BlendApproach = Literal["linear", "average", "dominant", "geometric", "additive", "min_max", "alternating"]
 

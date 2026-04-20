@@ -31,10 +31,6 @@ function json<T>(data: T, status = 200) {
   });
 }
 
-function err(message: string, status = 400) {
-  return json({ error: message }, status);
-}
-
 function uuid() {
   return crypto.randomUUID();
 }
@@ -161,9 +157,9 @@ async function upsertLearnedDynamicMeta(
 /** Derive D1 database (with read replica when available). Used by helpers that run outside handleApi's scope. */
 function getDb(env: Env): D1Database {
   const primaryDb = env.DB;
-  return (primaryDb as D1Database & { withSession?: (b: string) => D1Database }).withSession?.(
-    "first-unconstrained"
-  ) ?? primaryDb;
+  const extended = primaryDb as D1Database & { withSession?: (b: string) => D1Database };
+  /* withSession returns D1DatabaseSession in typings; runtime API matches D1Database for prepare/batch. */
+  return (extended.withSession?.("first-unconstrained") ?? primaryDb) as unknown as D1Database;
 }
 
 export default {
@@ -242,12 +238,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
   const err = (message: string, status = 400) =>
     json({ error: message }, status);
 
-  // Use D1 Sessions API for read replication when available (spreads reads across replicas)
-  const primaryDb = env.DB;
-  const db: D1Database =
-    (primaryDb as D1Database & { withSession?: (b: string) => D1Database }).withSession?.(
-      "first-unconstrained"
-    ) ?? primaryDb;
+  const db = getDb(env);
 
   // GET /api/jobs?status=pending|completed — list jobs (pending for worker; completed for library)
     if (path === "/api/jobs" && request.method === "GET") {
@@ -479,10 +470,11 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         const msg = String(e);
         const isRateLimit = msg.toLowerCase().includes("rate") || msg.toLowerCase().includes("limit");
         const status = isRateLimit ? 429 : 500;
-        const headers = isRateLimit ? { "Retry-After": "2" } : {};
+        const headers: Record<string, string> = { "Content-Type": "application/json", ...corsHeaders };
+        if (isRateLimit) headers["Retry-After"] = "2";
         return new Response(JSON.stringify({ error: "Failed to save loop state", details: msg }), {
           status,
-          headers: { "Content-Type": "application/json", ...corsHeaders, ...headers },
+          headers,
         });
       }
     }
@@ -514,7 +506,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       }
     }
 
-    // POST /api/loop/config — update loop config (controls Railway loop)
+    // POST /api/loop/config — update loop config (controls background workers)
     if (path === "/api/loop/config" && request.method === "POST") {
       let body: { enabled?: boolean; delay_seconds?: number; exploit_ratio?: number; duration_seconds?: number };
       try {
@@ -958,14 +950,35 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
       let body: {
         static_colors?: Array<{ key: string; r: number; g: number; b: number; brightness?: number; luminance?: number; contrast?: number; saturation?: number; chroma?: number; hue?: number; color_variance?: number; opacity?: number; depth_breakdown?: Record<string, unknown>; source_prompt?: string; name?: string }>;
         static_sound?: Array<{ key: string; amplitude?: number; weight?: number; strength_pct?: number; tone?: string; timbre?: string; depth_breakdown?: Record<string, unknown>; source_prompt?: string; name?: string }>;
-        colors?: Array<{ key: string; r: number; g: number; b: number; source_prompt?: string }>;
+        colors?: Array<{
+          key: string;
+          r: number;
+          g: number;
+          b: number;
+          source_prompt?: string;
+          name?: string;
+          depth_breakdown?: Record<string, unknown>;
+        }>;
         blends?: Array<{ name: string; domain: string; inputs: Record<string, unknown>; output: Record<string, unknown>; primitive_depths?: Record<string, unknown>; source_prompt?: string }>;
         motion?: Array<{ key: string; motion_level: number; motion_std: number; motion_trend: string; motion_direction?: string; motion_rhythm?: string; depth_breakdown?: Record<string, unknown>; source_prompt?: string }>;
         lighting?: Array<{ key: string; brightness: number; contrast: number; saturation: number; depth_breakdown?: Record<string, unknown>; source_prompt?: string }>;
         composition?: Array<{ key: string; center_x: number; center_y: number; luminance_balance: number; source_prompt?: string }>;
         graphics?: Array<{ key: string; edge_density: number; spatial_variance: number; busyness: number; source_prompt?: string }>;
-        temporal?: Array<{ key: string; duration: number; motion_trend: string; source_prompt?: string }>;
-        technical?: Array<{ key: string; width: number; height: number; fps: number; source_prompt?: string }>;
+        temporal?: Array<{
+          key: string;
+          duration: number;
+          motion_trend: string;
+          source_prompt?: string;
+          depth_breakdown?: Record<string, unknown>;
+        }>;
+        technical?: Array<{
+          key: string;
+          width: number;
+          height: number;
+          fps: number;
+          source_prompt?: string;
+          depth_breakdown?: Record<string, unknown>;
+        }>;
         audio_semantic?: Array<{ key: string; role: string; mood?: string; tempo?: string; source_prompt?: string; name?: string }>;
         time?: Array<{ key: string; duration: number; fps: number; source_prompt?: string }>;
         gradient?: Array<{ key: string; gradient_type: string; strength?: number; depth_breakdown?: Record<string, unknown>; source_prompt?: string }>;
@@ -1276,9 +1289,8 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
         results.depth++;
         itemsProcessed++;
       }
-      const totalResults = Object.values(results).reduce((a, b) => a + b, 0);
       const jobId = typeof (body as { job_id?: string }).job_id === "string" ? (body as { job_id: string }).job_id.trim() : null;
-      // Record discovery run when job_id present (even if totalResults=0) so diagnostics show "attempted"
+      // Record discovery run when job_id present (even if no discovery rows) so diagnostics show "attempted"
       if (jobId) {
         try {
           await db.prepare("INSERT INTO discovery_runs (id, job_id) VALUES (?, ?)")
@@ -1506,7 +1518,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
                   await db.prepare(`UPDATE ${table} SET name = ? WHERE id = ?`)
                     .bind(newName, row.id)
                     .run();
-                  await cascadeNameUpdate(env, oldName, newName);
+                  await cascadeNameUpdate(env, oldName ?? "", newName);
                 }
                 updated++;
               }
@@ -1552,7 +1564,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
                   await db.prepare(`UPDATE ${table} SET ${nameCol} = ? WHERE ${idCol} = ?`)
                     .bind(newName, row.id)
                     .run();
-                  await cascadeNameUpdate(env, oldName, newName);
+                  await cascadeNameUpdate(env, oldName ?? "", newName);
                 }
                 updated++;
               }

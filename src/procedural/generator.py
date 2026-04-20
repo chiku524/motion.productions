@@ -7,9 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from ..video_generator.base import VideoGenerator
-from .parser import SceneSpec
 from .renderer import render_frame
-from ..cinematography import SceneScript
 
 
 class ProceduralVideoGenerator(VideoGenerator):

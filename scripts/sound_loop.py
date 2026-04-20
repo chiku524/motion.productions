@@ -15,12 +15,7 @@ import argparse
 import logging
 import os
 import random
-import sys
 import time
-from pathlib import Path
-
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +77,7 @@ def run() -> None:
         else float(os.environ.get("SOUND_LOOP_DURATION_SECONDS", DEFAULT_DURATION_SECONDS))
     )
 
-    from src.api_client import APIError, api_request_with_retry
+    from src.api_client import APIError
     from src.config import load_config, get_output_dir
     from src.audio import generate_audio_only
     from src.knowledge.extractor_per_instance import read_audio_segments_only

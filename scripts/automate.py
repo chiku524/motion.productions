@@ -12,23 +12,18 @@ Usage:
 
 Run in background: screen -S motion python scripts/automate.py
 """
-import sys
-from pathlib import Path
-
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
-
 import argparse
 import json
 import time
+from pathlib import Path
 
+from src.api_client import api_request
+from src.automation import generate_procedural_prompt
 from src.config import load_config
 from src.pipeline import generate_full_video
 from src.procedural import ProceduralVideoGenerator
-from src.automation import generate_procedural_prompt
 
-
-from src.api_client import api_request
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 def load_state(state_path: Path, api_base: str | None = None) -> dict:
@@ -160,7 +155,7 @@ def main() -> None:
                 "analysis": analysis.to_dict(),
             })
 
-            print(f"  ✓ Uploaded + learned")
+            print("  ✓ Uploaded + learned")
 
         except Exception as e:
             print(f"  ✗ Error: {e}")

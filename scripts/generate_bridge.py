@@ -12,21 +12,14 @@ Usage:
 Requires: the API must be deployed. Jobs stay "pending" until this script (or similar)
 processes them and uploads the video.
 """
-import sys
-from pathlib import Path
-
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
-
 import argparse
 import time
+from pathlib import Path
 
+from src.api_client import api_get, api_post, api_post_binary
 from src.config import load_config
 from src.pipeline import generate_full_video
 from src.procedural import ProceduralVideoGenerator
-
-
-from src.api_client import api_get, api_post, api_post_binary
 
 
 def fetch_pending_jobs(api_base: str) -> list[dict]:
@@ -110,7 +103,7 @@ def process_job(job: dict, api_base: str, config: dict, learn: bool) -> bool:
                             novel_for_sync.get("static_sound"),
                             job_id=job_id,
                         )
-                        print(f"  Static discoveries synced to D1")
+                        print("  Static discoveries synced to D1")
                     post_dynamic_discoveries(api_base, novel_for_sync, job_id=job_id)
             except Exception as e:
                 print(f"  Per-instance growth failed: {e}")
@@ -127,7 +120,7 @@ def process_job(job: dict, api_base: str, config: dict, learn: bool) -> bool:
                     print(f"  Narrative registry: {sum(narrative_added.values())} new — {narrative_added}")
                 if api_base and any(narrative_novel.get(a) for a in ("genre", "mood", "plots", "settings", "themes", "scene_type")):
                     post_narrative_discoveries(api_base, narrative_novel, job_id=job_id)
-                    print(f"  Narrative discoveries synced to D1")
+                    print("  Narrative discoveries synced to D1")
             except Exception as e:
                 print(f"  Narrative growth failed: {e}")
             # Whole-video discoveries (blends, colors, motion, etc.) to D1/KV — pass spec for camera/audio/narrative
@@ -135,7 +128,7 @@ def process_job(job: dict, api_base: str, config: dict, learn: bool) -> bool:
                 sync_resp = grow_and_sync_to_api(
                     analysis_dict, prompt=prompt, api_base=api_base, spec=spec, job_id=job_id
                 )
-                print(f"  Logged for learning (D1 + KV)")
+                print("  Logged for learning (D1 + KV)")
                 if sync_resp.get("results"):
                     print(f"  Discoveries recorded: {sync_resp.get('results')}")
             except Exception as e:

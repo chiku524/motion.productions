@@ -34,6 +34,5 @@ def create_depth_layers(
         g = ((1 - v) * 200).astype(np.uint8)
         b = (v * 150).astype(np.uint8)
         img = np.stack([r, g, b], axis=-1)
-        alpha = 0.3 + 0.4 * depth
         layers.append((img, depth))
     return layers

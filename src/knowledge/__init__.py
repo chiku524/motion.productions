@@ -64,4 +64,5 @@ __all__ = [
     "post_narrative_discoveries",
     "grow_from_video",
     "grow_dynamic_from_video",
+    "grow_all_from_video",
 ]

@@ -2,7 +2,6 @@
 Growth: extraction → compare → add novel.
 Extracts from every domain; records per-domain and full blend discoveries.
 """
-from pathlib import Path
 from typing import Any
 
 from .registry import (

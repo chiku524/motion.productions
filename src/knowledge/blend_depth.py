@@ -206,7 +206,6 @@ def compute_temporal_depth(duration: float, motion_trend: str) -> dict[str, floa
 def compute_technical_depth(width: int, height: int, fps: float) -> dict[str, float]:
     """Map technical to primitive depths (resolution, fps)."""
     depths: dict[str, float] = {}
-    res = (width, height)
     resolutions = [(256, 256), (512, 512), (720, 480), (1280, 720), (1920, 1080)]
     best = min(resolutions, key=lambda r: abs(r[0] - width) + abs(r[1] - height))
     depths[f"resolution_{best[0]}x{best[1]}"] = 1.0

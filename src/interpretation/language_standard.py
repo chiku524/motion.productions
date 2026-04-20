@@ -15,7 +15,6 @@ Algorithm order:
 """
 
 import re
-from typing import Any
 
 # -----------------------------------------------------------------------------
 # 1. Built-in slang/lingo and dialect (seed for linguistic registry)

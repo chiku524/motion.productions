@@ -1,4 +1,4 @@
-# Multi-workflow configurations for Railway / Render / local
+# Multi-workflow configurations for Fly.io workers / local Docker
 # Copy env vars per service when creating multiple workers.
 #
 # §2.6 Parallel workers: Run Explorer and Exploiter together so completion (coverage) and quality
@@ -57,18 +57,18 @@ workflows:
 
   interpretation:
     description: "Interpretation only — no create/render; fills interpretation registry (D1) for main pipeline"
-    # Start command from railway.toml (railway_start.py); this env selects interpret_loop.py
+    # worker_start.py + WORKER_START_SCRIPT=interpret_loop (see docs/DEPLOYMENT.md)
     env:
-      RAILWAY_START_SCRIPT: interpret_loop
+      WORKER_START_SCRIPT: interpret_loop
       API_BASE: https://motion.productions
       INTERPRET_DELAY_SECONDS: "10"
 
   # Pure sound discovery: no video. Generates procedural audio → extract → grow static_sound → sync.
   sound:
     description: "Sound-only — no create/render; pure sound extraction + growth; fills static_sound registry"
-    # Start command from railway.toml (railway_start.py); this env selects sound_loop.py
+    # worker_start.py + WORKER_START_SCRIPT=sound_loop (see docs/DEPLOYMENT.md)
     env:
-      RAILWAY_START_SCRIPT: sound_loop
+      WORKER_START_SCRIPT: sound_loop
       API_BASE: https://motion.productions
       SOUND_LOOP_DELAY_SECONDS: "15"
       SOUND_LOOP_DURATION_SECONDS: "2.5"

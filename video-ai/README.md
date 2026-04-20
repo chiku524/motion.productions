@@ -66,9 +66,9 @@ Override caption font:
 set VIDEO_AI_FONT=C:\Windows\Fonts\arial.ttf
 ```
 
-## Deploy render service (Fly.io or Railway)
+## Deploy render service (Fly.io primary)
 
-The **render** app is the Docker image in this folder (`Dockerfile`): Node + FFmpeg + `POST /render`. It must be reachable over **HTTPS** so the motion.productions Worker can set `VIDEO_AI_RENDER_URL` to its **origin only** (no path), e.g. `https://motion-video-ai-render.fly.dev`.
+The **render** app is the Docker image in this folder (`Dockerfile`): Node + FFmpeg + `POST /render`. It must be reachable over **HTTPS** so the motion.productions Worker can set `VIDEO_AI_RENDER_URL` to its **origin only** (no path), e.g. `https://motion-productions.fly.dev`.
 
 **Env vars on the host**
 
@@ -76,12 +76,12 @@ The **render** app is the Docker image in this folder (`Dockerfile`): Node + FFm
 |----------|----------|--------|
 | `VIDEO_AI_RENDER_SECRET` | Recommended | Same value as Worker secret `VIDEO_AI_RENDER_SECRET`; Worker sends it as header `X-Video-AI-Key`. |
 | `OPENAI_API_KEY` | For TTS only | Set on the **render** host if recipes use `meta.audio.narration` (OpenAI `tts-1`). Never commit keys. |
-| `PORT` | Auto | Fly.io and Railway inject this; the server reads `PORT` first. |
+| `PORT` | Auto | Fly sets this to match `fly.toml` `internal_port`; other hosts may inject `PORT` too. The server reads `PORT` first. |
 | `VIDEO_AI_FONT` | Optional | Path to a `.ttf` inside the container if `drawtext` cannot find a font. |
 
 ### Audio in the recipe (`meta.audio`)
 
-- **`narration`**: `{ "text": "...", "voice": "alloy" }` (optional voice from OpenAI TTS set). Requires **`OPENAI_API_KEY`** on Railway (or local `npm run render`).
+- **`narration`**: `{ "text": "...", "voice": "alloy" }` (optional voice from OpenAI TTS set). Requires **`OPENAI_API_KEY`** on the render host (or local `npm run render`).
 - **`backgroundMusicUrl`**: public **`https://`** URL to an audio file (mp3/aac/wav). Looped and mixed under narration if both are set (`backgroundMusicVolume` 0–1, default ~0.22).
 - Omit `meta.audio` for a silent AAC bed (previous behavior).
 
@@ -94,50 +94,9 @@ printf '%s' 'https://YOUR-RENDER-HOST' | npx wrangler secret put VIDEO_AI_RENDER
 
 Use **HTTPS** URL with **no trailing slash**.
 
-### Railway (step-by-step)
+### Other Docker hosts (monorepo root)
 
-Railway often **ignores “Dockerfile” in the UI** and runs **Railpack** instead (especially if a `railpack.json` exists — this repo **does not** ship one). Use **Method A** first; if the build log still starts with `Railpack`, use **Method B**.
-
-#### Method A — Root Directory `video-ai`
-
-1. **New service** → GitHub repo **`motion.productions`** (dedicated service; not the Python worker).
-
-2. **Settings** → **Root Directory** → **`video-ai`** (exactly; no leading `/`).
-
-3. **Settings** → **Build**:
-   - Set builder to **Dockerfile** if the UI offers it.
-   - **Dockerfile path:** `Dockerfile` (default).
-
-4. **Variables** → **`VIDEO_AI_RENDER_SECRET`** (match Cloudflare).
-
-5. **Networking** → **Generate Domain**.
-
-6. **Deploy** and open **Build logs**. You want **`FROM node:22-bookworm-slim`** (Docker). If you see **`Railpack`** at the top, use **Method B**.
-
-7. **Settings → Deploy → Custom Start Command:** leave **empty** (use Dockerfile / `railway.toml`) or set exactly  
-   `node node_modules/tsx/dist/cli.mjs src/render/server.ts`.  
-   If deploy logs show `> npm run start` / `npm error signal SIGTERM`, Railway is still running **`npm start`** as PID 1 — fix the start command or switch to **Dockerfile** builder (Method A/B).
-
-#### Method B — Repo root + `Dockerfile.video-ai` (when Railpack keeps winning)
-
-Some projects hit a Railway quirk: the UI flips back to **Railpack** even after choosing Dockerfile. Build from the **monorepo root** and point at the alternate Dockerfile (same image as `video-ai/Dockerfile`, FFmpeg included).
-
-1. Same **new** Video AI service as above.
-
-2. **Settings** → **Root Directory** → **clear it** (empty) so the root is the **repository root** (`motion.productions`), **not** `video-ai`.
-
-3. **Settings** → **Build**:
-   - Builder: **Dockerfile**
-   - **Dockerfile path:** `Dockerfile.video-ai`  
-     (file lives at the **repo root**, next to the Python `Dockerfile`.)
-
-4. Do **not** rely on a root `railway.json` for this service if it would conflict with other services; the dashboard **Dockerfile path** is enough.
-
-5. **Variables** / **Networking** / **Wrangler** same as Method A.
-
-6. Build logs should show Docker steps and **`apt-get install ffmpeg`**.
-
-7. Verify: `curl -sS https://YOUR-DOMAIN/health`
+To build from the repository root (same image as `video-ai/Dockerfile`), use **`Dockerfile.video-ai`** at the repo root as the Dockerfile path and set **`VIDEO_AI_RENDER_SECRET`** (and optional **`OPENAI_API_KEY`**) on the service. Verify: `curl -sS https://YOUR-HOST/health`.
 
 ### Fly.io
 

@@ -15,6 +15,14 @@ from __future__ import annotations
 import argparse
 import sys
 
+from src.config import load_config
+from src.knowledge.growth_per_instance import (
+    ensure_dynamic_primitives_seeded,
+    ensure_static_color_in_registry,
+    ensure_static_primitives_seeded,
+)
+from src.knowledge.remote_sync import post_static_discoveries
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(
@@ -44,20 +52,6 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    try:
-        from src.config import load_config
-        from src.knowledge.growth_per_instance import (
-            ensure_static_primitives_seeded,
-            ensure_dynamic_primitives_seeded,
-        )
-    except ImportError:
-        sys.path.insert(0, ".")
-        from src.config import load_config
-        from src.knowledge.growth_per_instance import (
-            ensure_static_primitives_seeded,
-            ensure_dynamic_primitives_seeded,
-        )
-
     config = load_config()
     print("Seeding static primitives (color + sound)...")
     ensure_static_primitives_seeded(config)
@@ -67,14 +61,6 @@ def main() -> int:
 
     if args.color_sweep:
         print("Running color sweep...")
-        try:
-            from src.knowledge.growth_per_instance import ensure_static_color_in_registry
-            from src.knowledge.remote_sync import post_static_discoveries
-        except ImportError:
-            sys.path.insert(0, ".")
-            from src.knowledge.growth_per_instance import ensure_static_color_in_registry
-            from src.knowledge.remote_sync import post_static_discoveries
-
         step = max(1, min(256, args.sweep_steps))
         if step == 1:
             values = [0, 255]

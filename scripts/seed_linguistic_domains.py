@@ -9,7 +9,8 @@ Run once after deploy to improve prompt interpretation. Uses POST /api/linguisti
 from __future__ import annotations
 
 import argparse
-import sys
+
+from src.interpretation.linguistic_client import post_linguistic_growth
 
 # High-value synonym mappings from Manus AI enhancement report (§4 Priority 4)
 SEED_ITEMS: list[dict[str, str]] = [
@@ -78,12 +79,6 @@ def main() -> int:
         for i in SEED_ITEMS:
             print(f"  {i['domain']}: {i['span']!r} -> {i['canonical']!r}")
         return 0
-
-    try:
-        from src.interpretation.linguistic_client import post_linguistic_growth
-    except ImportError:
-        sys.path.insert(0, ".")
-        from src.interpretation.linguistic_client import post_linguistic_growth
 
     result = post_linguistic_growth(api_base, SEED_ITEMS)
     print(f"Linguistic seed: inserted={result.get('inserted', 0)}, updated={result.get('updated', 0)}")

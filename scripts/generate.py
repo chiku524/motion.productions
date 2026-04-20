@@ -6,13 +6,8 @@ Usage:
   python scripts/generate.py "Your prompt" --duration 30
   python scripts/generate.py "Your prompt" --duration 10 --output my_video.mp4
 """
-import sys
-from pathlib import Path
-
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
-
 import argparse
+from pathlib import Path
 
 from src.config import load_config
 from src.pipeline import generate_full_video

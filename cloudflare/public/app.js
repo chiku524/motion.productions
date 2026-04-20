@@ -257,7 +257,7 @@ document.addEventListener('visibilitychange', () => {
 loadLibrary();
 scheduleLibraryRefresh();
 
-// Loop: control automated Railway loop via API
+// Loop: control automated learning loop via API
 const LOOP_POLL_MS = 20000;
 let loopPollTimer = null;
 

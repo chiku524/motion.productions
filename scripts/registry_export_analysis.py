@@ -96,13 +96,13 @@ def run_analysis(snapshots: dict[str, dict]) -> None:
     # ---- 1. GROWTH VELOCITY ----
     print("=== GROWTH VELOCITY: ENTRIES PER CATEGORY ===")
     n = len(labels)
-    header = "{:<30}".format("Category") + "".join("{:>8}".format(l) for l in labels)
+    header = "{:<30}".format("Category") + "".join("{:>8}".format(lbl) for lbl in labels)
     if n >= 2:
         header += "  {:>8}  {:>8}".format(labels[0] + "->" + labels[1][:3], labels[-2][:3] + "->" + labels[-1][:3] if n > 2 else "delta")
     print(header)
     print("-" * (30 + 8 * n + (20 if n >= 2 else 0)))
     for cat, fn in categories.items():
-        vals = [fn(snapshots[l]) for l in labels]
+        vals = [fn(snapshots[lbl]) for lbl in labels]
         row = "{:<30}".format(cat) + "".join("{:>8}".format(v) for v in vals)
         if n >= 2:
             d1 = vals[1] - vals[0]
