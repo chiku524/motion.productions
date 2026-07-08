@@ -49,7 +49,7 @@ if (path === "/api/knowledge/name/take" && request.method === "POST") {
 // Supports: static_colors, static_sound (per-frame) + colors, blends, motion, etc. (dynamic/whole-video)
 // Reduced to 50 items to stay under D1 CPU limit under 6-worker concurrency.
 if (path === "/api/knowledge/discoveries" && request.method === "POST") {
-  const DISCOVERIES_MAX_ITEMS = 80;
+  const DISCOVERIES_MAX_ITEMS = 25;
   let body: {
     static_colors?: Array<{ key: string; r: number; g: number; b: number; brightness?: number; luminance?: number; contrast?: number; saturation?: number; chroma?: number; hue?: number; color_variance?: number; opacity?: number; depth_breakdown?: Record<string, unknown>; source_prompt?: string; name?: string }>;
     static_sound?: Array<{ key: string; amplitude?: number; weight?: number; strength_pct?: number; tone?: string; timbre?: string; depth_breakdown?: Record<string, unknown>; source_prompt?: string; name?: string }>;
@@ -431,9 +431,9 @@ if (path === "/api/knowledge/colors" && request.method === "GET") {
 // GET /api/knowledge/for-creation — learned colors and motion for creation (closes the loop)
 if (path === "/api/knowledge/for-creation" && request.method === "GET") {
   try {
-  const limit = Math.min(parseInt(new URL(request.url).searchParams.get("limit") || "100", 10), 1000);
-  const interpLimitParam = new URL(request.url).searchParams.get("interpretation_limit") || "80";
-  const interpLimit = Math.min(parseInt(interpLimitParam, 10), 300);
+  const limit = Math.min(parseInt(new URL(request.url).searchParams.get("limit") || "40", 10), 200);
+  const interpLimitParam = new URL(request.url).searchParams.get("interpretation_limit") || "40";
+  const interpLimit = Math.min(parseInt(interpLimitParam, 10), 120);
   const cacheKey = `knowledge:for-creation:${limit}:${interpLimit}`;
   if (env.MOTION_KV) {
     const cached = await env.MOTION_KV.get(cacheKey);

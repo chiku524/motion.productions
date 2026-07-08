@@ -99,18 +99,36 @@ def pick_prompt(
         chosen = secure_choice(candidates) if candidates else secure_choice(good)
         if chosen:
             return (chosen, True, {"source": "exploit_good"})
-    # When exploring: targeted narrative to fill gaps; higher rate when plots/style coverage is thin (§2.4)
+    # When exploring: targeted narrative to fill gaps; higher rate when any aspect or color is thin
     narr = (coverage or {}).get("narrative") or {}
     p_cov = float((narr.get("plots") or {}).get("coverage_pct") or 100)
     s_cov = float((narr.get("style") or {}).get("coverage_pct") or 100)
+    g_cov = float((narr.get("genre") or {}).get("coverage_pct") or 100)
     ps_min = float((coverage or {}).get("narrative_plots_style_min_coverage_pct") or min(p_cov, s_cov))
+    narr_min = float((coverage or {}).get("narrative_min_coverage_pct") or 100)
+    color_pct = float((coverage or {}).get("static_colors_coverage_pct") or 100)
     thin_plots_style = ps_min < 85
-    targeted_rate = 0.34 if thin_plots_style else 0.20
+    thin_narrative = narr_min < 90 or g_cov < 90
+    thin_color = color_pct < 8
+    targeted_rate = 0.20
+    if thin_plots_style:
+        targeted_rate = 0.34
+    if thin_narrative:
+        targeted_rate = max(targeted_rate, 0.40)
+    if thin_color:
+        targeted_rate = max(targeted_rate, 0.28)
     if coverage and secure_random() < targeted_rate:
         targeted = generate_targeted_narrative_prompt(coverage, avoid=recent)
         if targeted:
             logger.info("Targeted narrative prompt (fill gaps): %s", targeted[:60] + ("..." if len(targeted) > 60 else ""))
             return (targeted, False, {"source": "targeted_narrative"})
+    # When color coverage is tiny, prefer procedural prompts (palette/lighting bias) over exploit
+    if thin_color and secure_random() < 0.55:
+        fallback = generate_procedural_prompt(
+            avoid=recent, knowledge=knowledge, coverage=coverage, instructive_ratio=0.75
+        )
+        if fallback:
+            return (fallback, False, {"source": "procedural_color_bias"})
     interp_streak = int(state.get("interpretation_streak", 0))
     max_interp_streak = int(os.environ.get("LOOP_INTERPRETATION_STREAK_MAX", "5"))
     if (
@@ -204,15 +222,23 @@ def _get_discovery_adjusted_exploit_ratio(
     if coverage and total_runs >= 3:
         static_pct = coverage.get("static_colors_coverage_pct")
         narrative_min = coverage.get("narrative_min_coverage_pct")
-        if static_pct is not None and static_pct < 10 and not override_active:
+        sound_pct = coverage.get("static_sound_coverage_pct")
+        sound_missing = coverage.get("static_sound_primitives_missing") or []
+        if static_pct is not None and static_pct < 5 and not override_active:
+            base_ratio = min(base_ratio, 0.15)
+        elif static_pct is not None and static_pct < 10 and not override_active:
             base_ratio = min(base_ratio, 0.3)
         elif static_pct is not None and static_pct < 5 and override_active:
             base_ratio = min(base_ratio, 0.5)
         if narrative_min is not None and narrative_min < 50 and not override_active:
             base_ratio = min(base_ratio, 0.5)
+        elif narrative_min is not None and narrative_min < 90 and not override_active:
+            base_ratio = min(base_ratio, 0.55)
         ps_min = coverage.get("narrative_plots_style_min_coverage_pct")
         if ps_min is not None and ps_min < 70 and not override_active:
             base_ratio = min(base_ratio, 0.45)
+        if (sound_missing or (sound_pct is not None and sound_pct < 100)) and not override_active:
+            base_ratio = min(base_ratio, 0.5)
 
     # High repetition → reduce exploit
     if repetition is not None and repetition > 0.35 and total_runs >= 5:
@@ -378,7 +404,7 @@ def run() -> None:
             continue
 
         raw_delay = loop_config.get("delay_seconds") or (args.delay if args.delay is not None else float(os.environ.get("LOOP_DELAY_SECONDS", "0")) or 0)
-        delay_seconds = max(3, float(raw_delay))  # min 3s to reduce D1 overload with multiple workers
+        delay_seconds = max(8, float(raw_delay))  # min 8s to reduce D1 overload with concurrent workers
         override = os.environ.get("LOOP_EXPLOIT_RATIO_OVERRIDE")
         override_active = override is not None and override != ""
         exploit_ratio = float(override) if override_active else loop_config.get("exploit_ratio", DEFAULT_EXPLOIT_RATIO)

@@ -7,8 +7,10 @@ We send max 200 items per request for efficiency (fewer round-trips).
 """
 from typing import Any
 
-# Match API DISCOVERIES_MAX_ITEMS (reduced for D1 CPU stability under 6-worker concurrency)
-DISCOVERIES_MAX_ITEMS = 50
+# Match API DISCOVERIES_MAX_ITEMS. Keep small under Free/Paid D1 CPU pressure.
+DISCOVERIES_MAX_ITEMS = 25
+# Pause between chunks so concurrent loops do not stampede D1.
+DISCOVERIES_CHUNK_PAUSE_SECONDS = 0.75
 
 
 def _chunk_discoveries(discoveries: dict[str, Any]) -> list[dict[str, Any]]:
@@ -103,19 +105,25 @@ def post_discoveries(
 ) -> dict[str, Any]:
     """
     POST discoveries to /api/knowledge/discoveries.
-    Batches into chunks of max 14 items to stay under D1 query limit (50/request).
+    Batches into small chunks with a short pause between posts to reduce D1 500/503 storms.
     Returns merged API response. Uses retry on 5xx/connection errors.
     When job_id is provided, records for discovery rate metric (on last chunk).
     """
+    import time
+    import os
     from ..api_client import api_request_with_retry
+
     payload = dict(discoveries)
     if job_id:
         payload["job_id"] = job_id
     chunks = _chunk_discoveries(payload)
     if not chunks:
         return {}
+    pause = float(os.environ.get("DISCOVERIES_CHUNK_PAUSE_SECONDS", DISCOVERIES_CHUNK_PAUSE_SECONDS))
     merged: dict[str, Any] = {"status": "recorded", "results": {}}
-    for chunk in chunks:
+    for i, chunk in enumerate(chunks):
+        if i > 0 and pause > 0:
+            time.sleep(pause)
         # Worker may take a while under load; use 90s to reduce read timeouts.
         # D1-heavy: extra retries with longer backoff on D1_ERROR (api_client handles that)
         resp = api_request_with_retry(

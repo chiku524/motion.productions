@@ -393,9 +393,21 @@ if (path === "/api/registries/sanitize-sound-keys" && request.method === "POST")
 // GET /api/registries/coverage — counts and coverage % per registry for completion targeting (§2.1, §2.8)
 if (path === "/api/registries/coverage" && request.method === "GET") {
   const coverageCacheKey = "registries:coverage";
-  if (env.MOTION_KV) {
+  const bypassCache = new URL(request.url).searchParams.get("fresh") === "1";
+  if (env.MOTION_KV && !bypassCache) {
     const cached = await env.MOTION_KV.get(coverageCacheKey);
-    if (cached) return new Response(cached, { headers: { "Content-Type": "application/json", "X-Cache": "HIT" } });
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached) as { static_colors_count?: number; static_sound_count?: number };
+        // Never serve a poisoned cache from a transient D1 COUNT failure (0 colors while sound exists).
+        const colorsOk = (parsed.static_colors_count ?? 0) > 0 || (parsed.static_sound_count ?? 0) === 0;
+        if (colorsOk) {
+          return new Response(cached, { headers: { "Content-Type": "application/json", "X-Cache": "HIT" } });
+        }
+      } catch {
+        /* rebuild */
+      }
+    }
   }
   // Sizes from registryConstants.generated.ts (full NARRATIVE_ORIGINS / cell space).
   const narrativeAspects = Object.keys(NARRATIVE_ORIGIN_SIZES);
@@ -403,16 +415,21 @@ if (path === "/api/registries/coverage" && request.method === "GET") {
   let staticColorsCount = 0;
   let staticSoundCount = 0;
   let learnedColorsCount = 0;
+  let countsReliable = true;
   const soundPrimitives = new Set<string>();
 
   try {
     const sc = await db.prepare("SELECT COUNT(*) as c FROM static_colors").first<{ c: number }>();
     staticColorsCount = sc?.c ?? 0;
-  } catch { /* table may not exist */ }
+  } catch {
+    countsReliable = false;
+  }
   try {
     const ss = await db.prepare("SELECT COUNT(*) as c FROM static_sound").first<{ c: number }>();
     staticSoundCount = ss?.c ?? 0;
-  } catch { /* table may not exist */ }
+  } catch {
+    countsReliable = false;
+  }
   try {
     const rows = await db.prepare("SELECT depth_breakdown_json FROM static_sound LIMIT 500")
       .all<{ depth_breakdown_json: string | null }>();
@@ -512,12 +529,22 @@ if (path === "/api/registries/coverage" && request.method === "GET") {
     },
   };
   const coverageBody = JSON.stringify(coverage);
-  if (env.MOTION_KV) {
+  // Only cache when COUNT queries succeeded and color count is non-zero (or both empty).
+  const cacheSafe =
+    countsReliable &&
+    ((staticColorsCount > 0) || (staticSoundCount === 0 && staticColorsCount === 0));
+  if (env.MOTION_KV && cacheSafe) {
     try {
-      await env.MOTION_KV.put(coverageCacheKey, coverageBody, { expirationTtl: 90 });
+      await env.MOTION_KV.put(coverageCacheKey, coverageBody, { expirationTtl: 45 });
     } catch { /* ignore */ }
   }
-  return new Response(coverageBody, { headers: { "Content-Type": "application/json" } });
+  return new Response(coverageBody, {
+    headers: {
+      "Content-Type": "application/json",
+      "X-Cache": "MISS",
+      ...(cacheSafe ? {} : { "X-Coverage-Unreliable": "1" }),
+    },
+  });
 }
 
 // GET /api/registries — pure (STATIC) vs non-pure (DYNAMIC + NARRATIVE); depth % vs primitives always
