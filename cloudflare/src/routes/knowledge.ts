@@ -2,7 +2,7 @@
  * Knowledge discoveries, for-creation, colors, name reserve API routes.
  */
 import type { Env } from "../env";
-import { getDb, ensureLearnedColorsDepthColumn, upsertLearnedDynamicMeta } from "../db";
+import { getDb, ensureLearnedColorsDepthColumn, upsertLearnedDynamicMeta, bumpRegistryCounts } from "../db";
 import { json, err, uuid } from "../http";
 import {
   resolveUniqueBlendName,
@@ -99,6 +99,9 @@ if (path === "/api/knowledge/discoveries" && request.method === "POST") {
   const results: Record<string, number> = { static_colors: 0, static_sound: 0, narrative: 0, colors: 0, blends: 0, motion: 0, lighting: 0, composition: 0, graphics: 0, temporal: 0, technical: 0, audio_semantic: 0, time: 0, gradient: 0, camera: 0, transition: 0, depth: 0 };
   let itemsProcessed = 0;
   let truncated = false;
+  let novelStaticColors = 0;
+  let novelStaticSound = 0;
+  let novelLearnedColors = 0;
 
   try {
   // Static registry: per-frame color entries
@@ -115,6 +118,7 @@ if (path === "/api/knowledge/discoveries" && request.method === "POST") {
       await db.prepare(
         "INSERT INTO static_colors (id, color_key, r, g, b, brightness, luminance, contrast, saturation, chroma, hue, color_variance, opacity, count, sources_json, name, depth_breakdown_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)"
       ).bind(uuid(), c.key, c.r, c.g, c.b, c.brightness ?? null, c.luminance ?? c.brightness ?? null, c.contrast ?? null, c.saturation ?? null, c.chroma ?? c.saturation ?? null, c.hue ?? null, c.color_variance ?? null, c.opacity ?? null, c.source_prompt ? JSON.stringify([c.source_prompt.slice(0, 80)]) : null, name, c.depth_breakdown ? JSON.stringify(c.depth_breakdown) : null).run();
+      novelStaticColors++;
     }
     results.static_colors++;
     itemsProcessed++;
@@ -135,6 +139,7 @@ if (path === "/api/knowledge/discoveries" && request.method === "POST") {
       await db.prepare(
         "INSERT INTO static_sound (id, sound_key, amplitude, weight, tone, timbre, count, sources_json, name, depth_breakdown_json, strength_pct) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)"
       ).bind(uuid(), key, s.amplitude ?? null, s.weight ?? null, s.tone ?? null, s.timbre ?? null, s.source_prompt ? JSON.stringify([s.source_prompt.slice(0, 80)]) : null, name, s.depth_breakdown ? JSON.stringify(s.depth_breakdown) : null, s.strength_pct ?? s.amplitude ?? s.weight ?? null).run();
+      novelStaticSound++;
     }
     results.static_sound++;
     itemsProcessed++;
@@ -187,6 +192,7 @@ if (path === "/api/knowledge/discoveries" && request.method === "POST") {
       await db.prepare(
         "INSERT INTO learned_colors (id, color_key, r, g, b, count, sources_json, name, depth_breakdown_json) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)"
       ).bind(uuid(), c.key, c.r, c.g, c.b, c.source_prompt ? JSON.stringify([c.source_prompt.slice(0, 80)]) : null, name, depthJson).run();
+      novelLearnedColors++;
     }
     results.colors++;
     itemsProcessed++;
@@ -411,6 +417,13 @@ if (path === "/api/knowledge/discoveries" && request.method === "POST") {
     }
   }
   // Do not use KV delete (free tier limit). Stats cache expires via TTL; GET recomputes when stale.
+  if (novelStaticColors || novelStaticSound || novelLearnedColors) {
+    await bumpRegistryCounts(env, {
+      static_colors: novelStaticColors,
+      static_sound: novelStaticSound,
+      learned_colors: novelLearnedColors,
+    });
+  }
   const resp: { status: string; results: Record<string, number>; truncated?: boolean } = { status: "recorded", results };
   if (truncated) resp.truncated = true;
   return json(resp, 201);

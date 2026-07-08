@@ -110,10 +110,65 @@ export async function upsertLearnedDynamicMeta(
   }
 }
 
-/** Derive D1 database (with read replica when available). */
+/** Derive D1 database (with read replica when available). Prefer for list/read paths. */
 export function getDb(env: Env): D1Database {
   const primaryDb = env.DB;
   const extended = primaryDb as D1Database & { withSession?: (b: string) => D1Database };
   /* withSession returns D1DatabaseSession in typings; runtime API matches D1Database for prepare/batch. */
   return (extended.withSession?.("first-unconstrained") ?? primaryDb) as unknown as D1Database;
+}
+
+/** Primary D1 only — use for COUNT(*) / coverage so replica lag or replica CPU 7429 cannot zero out metrics. */
+export function getPrimaryDb(env: Env): D1Database {
+  return env.DB;
+}
+
+const REGISTRY_COUNTS_KV_KEY = "registries:counts:v1";
+
+export type RegistryCounts = {
+  static_colors: number;
+  static_sound: number;
+  learned_colors: number;
+  updated_at: string;
+};
+
+export async function readRegistryCounts(env: Env): Promise<RegistryCounts | null> {
+  if (!env.MOTION_KV) return null;
+  try {
+    const raw = await env.MOTION_KV.get(REGISTRY_COUNTS_KV_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as RegistryCounts;
+    if (typeof parsed.static_colors !== "number") return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export async function writeRegistryCounts(env: Env, counts: RegistryCounts): Promise<void> {
+  if (!env.MOTION_KV) return;
+  try {
+    await env.MOTION_KV.put(REGISTRY_COUNTS_KV_KEY, JSON.stringify(counts), { expirationTtl: 60 * 60 * 24 * 30 });
+  } catch { /* ignore */ }
+}
+
+/** Increment registry row counters after novel inserts (not updates). */
+export async function bumpRegistryCounts(
+  env: Env,
+  delta: Partial<Pick<RegistryCounts, "static_colors" | "static_sound" | "learned_colors">>,
+): Promise<void> {
+  if (!env.MOTION_KV) return;
+  const prev = (await readRegistryCounts(env)) || {
+    static_colors: 0,
+    static_sound: 0,
+    learned_colors: 0,
+    updated_at: new Date().toISOString(),
+  };
+  const next: RegistryCounts = {
+    static_colors: Math.max(0, prev.static_colors + (delta.static_colors || 0)),
+    static_sound: Math.max(0, prev.static_sound + (delta.static_sound || 0)),
+    learned_colors: Math.max(0, prev.learned_colors + (delta.learned_colors || 0)),
+    updated_at: new Date().toISOString(),
+  };
+  await writeRegistryCounts(env, next);
 }

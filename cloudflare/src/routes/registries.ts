@@ -2,7 +2,14 @@
  * Registries export, coverage, health, backfill API routes.
  */
 import type { Env } from "../env";
-import { getDb, ensureLearnedDynamicMetaTable, ensureLearnedColorsDepthColumn } from "../db";
+import {
+  getDb,
+  getPrimaryDb,
+  readRegistryCounts,
+  writeRegistryCounts,
+  ensureLearnedDynamicMetaTable,
+  ensureLearnedColorsDepthColumn,
+} from "../db";
 import { json, err, normalizeOpacityToPercent } from "../http";
 import { COLOR_PRIMARIES_FOR_API, COLOR_PRIMITIVE_NAMES } from "../colorPrimaries.generated";
 import {
@@ -33,7 +40,11 @@ export async function handleRegistriesRoutes(
   env: Env,
   path: string,
 ): Promise<Response | null> {
-  const db = getDb(env);
+  // Coverage / health COUNTs must hit primary — replica COUNT on large static_colors hits 7429 / false zeros.
+  const db =
+    path === "/api/registries/coverage" || path === "/api/registries/health"
+      ? getPrimaryDb(env)
+      : getDb(env);
 
 // POST /api/registries/backfill-names — replace gibberish/inauthentic names with semantic ones
 if (path === "/api/registries/backfill-names" && request.method === "POST") {
@@ -416,56 +427,73 @@ if (path === "/api/registries/coverage" && request.method === "GET") {
   let staticSoundCount = 0;
   let learnedColorsCount = 0;
   let countsReliable = true;
+  let countsSource: "d1" | "kv" | "mixed" = "d1";
   const soundPrimitives = new Set<string>();
 
+  const kvCounts = await readRegistryCounts(env);
+
   async function countTable(sql: string): Promise<number | null> {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        const row = await db.prepare(sql).first<{ c: number }>();
-        return row?.c ?? 0;
-      } catch {
-        if (attempt === 0) {
-          await new Promise((r) => setTimeout(r, 50));
-          continue;
-        }
-        return null;
-      }
+    try {
+      const row = await db.prepare(sql).first<{ c: number }>();
+      return row?.c ?? 0;
+    } catch {
+      return null;
     }
-    return null;
   }
 
-  const scCount = await countTable("SELECT COUNT(*) as c FROM static_colors");
-  if (scCount == null) countsReliable = false;
-  else staticColorsCount = scCount;
-
-  const ssCount = await countTable("SELECT COUNT(*) as c FROM static_sound");
-  if (ssCount == null) countsReliable = false;
-  else staticSoundCount = ssCount;
-
-  // If COUNT failed or returned 0 under load, fall back to a cheap existence probe + prior cache.
-  if (countsReliable === false || (staticColorsCount === 0 && staticSoundCount > 0)) {
-    try {
-      const probe = await db.prepare("SELECT color_key FROM static_colors LIMIT 1").first<{ color_key: string }>();
-      if (probe?.color_key && env.MOTION_KV) {
-        const prev = await env.MOTION_KV.get(coverageCacheKey);
-        if (prev) {
-          const parsed = JSON.parse(prev) as { static_colors_count?: number };
-          if ((parsed.static_colors_count ?? 0) > 0) {
-            staticColorsCount = parsed.static_colors_count as number;
-            countsReliable = true;
-          }
-        }
+  // Prefer cheap KV counters when present; refresh from D1 only when missing or ?fresh=1.
+  if (kvCounts && !bypassCache) {
+    staticColorsCount = kvCounts.static_colors;
+    staticSoundCount = kvCounts.static_sound;
+    learnedColorsCount = kvCounts.learned_colors;
+    countsSource = "kv";
+  } else {
+    const scCount = await countTable("SELECT COUNT(*) as c FROM static_colors");
+    const ssCount = await countTable("SELECT COUNT(*) as c FROM static_sound");
+    const lcCount = await countTable("SELECT COUNT(*) as c FROM learned_colors");
+    if (scCount == null || ssCount == null) {
+      countsReliable = false;
+      if (kvCounts) {
+        staticColorsCount = kvCounts.static_colors;
+        staticSoundCount = kvCounts.static_sound;
+        learnedColorsCount = kvCounts.learned_colors;
+        countsSource = "kv";
+        countsReliable = true;
       }
-      // Still unknown: report at least 1 so UI/loop do not treat registry as empty.
-      if (probe?.color_key && staticColorsCount === 0) {
-        staticColorsCount = 1;
+    } else {
+      staticColorsCount = scCount;
+      staticSoundCount = ssCount;
+      learnedColorsCount = lcCount ?? (kvCounts?.learned_colors ?? 0);
+      countsSource = "d1";
+      await writeRegistryCounts(env, {
+        static_colors: staticColorsCount,
+        static_sound: staticSoundCount,
+        learned_colors: learnedColorsCount,
+        updated_at: new Date().toISOString(),
+      });
+    }
+  }
+
+  // Guard: if colors look empty but sound exists, try probe + KV before trusting zero.
+  if (staticColorsCount === 0 && staticSoundCount > 0) {
+    try {
+      const probe = await db.prepare("SELECT 1 as ok FROM static_colors LIMIT 1").first<{ ok: number }>();
+      if (probe && kvCounts && kvCounts.static_colors > 0) {
+        staticColorsCount = kvCounts.static_colors;
+        countsSource = "mixed";
+      } else if (probe) {
+        // Table non-empty but COUNT failed — avoid caching a false zero.
         countsReliable = false;
+        if (kvCounts && kvCounts.static_colors > 0) {
+          staticColorsCount = kvCounts.static_colors;
+          countsSource = "kv";
+        }
       }
     } catch { /* ignore */ }
   }
 
   try {
-    const rows = await db.prepare("SELECT depth_breakdown_json FROM static_sound LIMIT 500")
+    const rows = await db.prepare("SELECT depth_breakdown_json FROM static_sound LIMIT 200")
       .all<{ depth_breakdown_json: string | null }>();
     for (const r of rows.results || []) {
       if (!r.depth_breakdown_json) continue;
@@ -480,10 +508,6 @@ if (path === "/api/registries/coverage" && request.method === "GET") {
         }
       } catch { /* ignore */ }
     }
-  } catch { /* ignore */ }
-  try {
-    const lc = await db.prepare("SELECT COUNT(*) as c FROM learned_colors").first<{ c: number }>();
-    learnedColorsCount = lc?.c ?? 0;
   } catch { /* ignore */ }
 
   const staticColorsCoveragePct = STATIC_COLOR_ESTIMATED_CELLS > 0
@@ -520,6 +544,8 @@ if (path === "/api/registries/coverage" && request.method === "GET") {
     static_colors_coverage_pct: staticColorsCoveragePct,
     primitive_color_catalog_size: COLOR_PRIMARIES_FOR_API.length,
     static_sound_count: staticSoundCount,
+    counts_source: countsSource,
+    counts_reliable: countsReliable,
     static_sound_primitives_present: SOUND_PRIMARIES_FOR_COVERAGE.filter((p) => soundPrimitives.has(p)),
     static_sound_primitives_missing: SOUND_PRIMARIES_FOR_COVERAGE.filter((p) => !soundPrimitives.has(p)),
     static_sound_has_silence: soundPrimitives.has("silence"),
