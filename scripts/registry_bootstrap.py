@@ -58,7 +58,7 @@ def main() -> int:
     ensure_static_primitives_seeded(config)
     print("Seeding dynamic primitives (gradient, camera, motion axes, lighting, composition, time, temporal, technical, depth, transition, audio moods)...")
     ensure_dynamic_primitives_seeded(config)
-    print("Seeding narrative primitives (full NARRATIVE_ORIGINS → genre/mood/style/plots/settings/themes/scene_type)...")
+    print("Seeding narrative primitives (full NARRATIVE_ORIGINS -> genre/mood/style/plots/settings/themes/scene_type)...")
     ensure_narrative_primitives_seeded(config)
     print("Registry bootstrap: all primitives seeded.")
 

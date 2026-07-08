@@ -41,7 +41,7 @@ if (path === "/api/knowledge/prompts" && request.method === "GET") {
 // POST /api/knowledge/name/take — reserve a unique name for a discovery
 if (path === "/api/knowledge/name/take" && request.method === "POST") {
   const name = await generateUniqueName(env);
-  await db.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+  await db.prepare("INSERT OR IGNORE INTO name_reserve (name) VALUES (?)").bind(name).run();
   return json({ name }, 201);
 }
 
@@ -49,7 +49,7 @@ if (path === "/api/knowledge/name/take" && request.method === "POST") {
 // Supports: static_colors, static_sound (per-frame) + colors, blends, motion, etc. (dynamic/whole-video)
 // Reduced to 50 items to stay under D1 CPU limit under 6-worker concurrency.
 if (path === "/api/knowledge/discoveries" && request.method === "POST") {
-  const DISCOVERIES_MAX_ITEMS = 50;
+  const DISCOVERIES_MAX_ITEMS = 80;
   let body: {
     static_colors?: Array<{ key: string; r: number; g: number; b: number; brightness?: number; luminance?: number; contrast?: number; saturation?: number; chroma?: number; hue?: number; color_variance?: number; opacity?: number; depth_breakdown?: Record<string, unknown>; source_prompt?: string; name?: string }>;
     static_sound?: Array<{ key: string; amplitude?: number; weight?: number; strength_pct?: number; tone?: string; timbre?: string; depth_breakdown?: Record<string, unknown>; source_prompt?: string; name?: string }>;
@@ -109,7 +109,9 @@ if (path === "/api/knowledge/discoveries" && request.method === "POST") {
       await db.prepare("UPDATE static_colors SET count = count + 1 WHERE color_key = ?").bind(c.key).run();
     } else {
       const name = (c.name && c.name.trim()) ? c.name : await generateUniqueName(env);
-      if (!c.name || !c.name.trim()) await db.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+      if (!c.name || !c.name.trim()) {
+        try { await db.prepare("INSERT OR IGNORE INTO name_reserve (name) VALUES (?)").bind(name).run(); } catch { /* ignore */ }
+      }
       await db.prepare(
         "INSERT INTO static_colors (id, color_key, r, g, b, brightness, luminance, contrast, saturation, chroma, hue, color_variance, opacity, count, sources_json, name, depth_breakdown_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)"
       ).bind(uuid(), c.key, c.r, c.g, c.b, c.brightness ?? null, c.luminance ?? c.brightness ?? null, c.contrast ?? null, c.saturation ?? null, c.chroma ?? c.saturation ?? null, c.hue ?? null, c.color_variance ?? null, c.opacity ?? null, c.source_prompt ? JSON.stringify([c.source_prompt.slice(0, 80)]) : null, name, c.depth_breakdown ? JSON.stringify(c.depth_breakdown) : null).run();
@@ -127,7 +129,9 @@ if (path === "/api/knowledge/discoveries" && request.method === "POST") {
       await db.prepare("UPDATE static_sound SET count = count + 1 WHERE sound_key = ?").bind(key).run();
     } else {
       const name = (s.name && s.name.trim()) ? s.name : await generateUniqueName(env);
-      if (!s.name || !s.name.trim()) await db.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+      if (!s.name || !s.name.trim()) {
+        try { await db.prepare("INSERT OR IGNORE INTO name_reserve (name) VALUES (?)").bind(name).run(); } catch { /* ignore */ }
+      }
       await db.prepare(
         "INSERT INTO static_sound (id, sound_key, amplitude, weight, tone, timbre, count, sources_json, name, depth_breakdown_json, strength_pct) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)"
       ).bind(uuid(), key, s.amplitude ?? null, s.weight ?? null, s.tone ?? null, s.timbre ?? null, s.source_prompt ? JSON.stringify([s.source_prompt.slice(0, 80)]) : null, name, s.depth_breakdown ? JSON.stringify(s.depth_breakdown) : null, s.strength_pct ?? s.amplitude ?? s.weight ?? null).run();
@@ -148,7 +152,9 @@ if (path === "/api/knowledge/discoveries" && request.method === "POST") {
       } else {
         const valueStr = (item.value ?? item.key ?? key).slice(0, 200);
         const name = (item.name && item.name.trim()) ? item.name.trim() : titleCaseLabel(valueStr || key);
-        if (!(item.name && item.name.trim())) await db.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+        if (!(item.name && item.name.trim())) {
+          try { await db.prepare("INSERT OR IGNORE INTO name_reserve (name) VALUES (?)").bind(name).run(); } catch { /* ignore */ }
+        }
         await db.prepare(
           "INSERT INTO narrative_entries (id, aspect, entry_key, value, count, sources_json, name) VALUES (?, ?, ?, ?, 1, ?, ?)"
         ).bind(uuid(), aspect, key, valueStr, item.source_prompt ? JSON.stringify([item.source_prompt.slice(0, 80)]) : null, name).run();
@@ -177,7 +183,7 @@ if (path === "/api/knowledge/discoveries" && request.method === "POST") {
       }
     } else {
       const name = (c.name && String(c.name).trim()) || await generateUniqueName(env);
-      if (!c.name || !String(c.name).trim()) await db.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+      if (!c.name || !String(c.name).trim()) await db.prepare("INSERT OR IGNORE INTO name_reserve (name) VALUES (?)").bind(name).run();
       await db.prepare(
         "INSERT INTO learned_colors (id, color_key, r, g, b, count, sources_json, name, depth_breakdown_json) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)"
       ).bind(uuid(), c.key, c.r, c.g, c.b, c.source_prompt ? JSON.stringify([c.source_prompt.slice(0, 80)]) : null, name, depthJson).run();
@@ -191,7 +197,7 @@ if (path === "/api/knowledge/discoveries" && request.method === "POST") {
     if (b.name && b.name.trim()) {
       name = await resolveUniqueBlendName(env, name);
     } else {
-      await db.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+      await db.prepare("INSERT OR IGNORE INTO name_reserve (name) VALUES (?)").bind(name).run();
     }
     await db.prepare(
       "INSERT INTO learned_blends (id, name, domain, inputs_json, output_json, primitive_depths_json, source_prompt) VALUES (?, ?, ?, ?, ?, ?, ?)"
@@ -206,7 +212,7 @@ if (path === "/api/knowledge/discoveries" && request.method === "POST") {
       await db.prepare("UPDATE learned_time SET count = count + 1 WHERE profile_key = ?").bind(t.key).run();
     } else {
       const name = await generateUniqueName(env);
-      await db.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+      await db.prepare("INSERT OR IGNORE INTO name_reserve (name) VALUES (?)").bind(name).run();
       await db.prepare(
         "INSERT INTO learned_time (id, profile_key, duration, fps, count, sources_json, name) VALUES (?, ?, ?, ?, 1, ?, ?)"
       ).bind(uuid(), t.key, t.duration, t.fps, t.source_prompt ? JSON.stringify([t.source_prompt.slice(0, 80)]) : null, name).run();
@@ -226,7 +232,7 @@ if (path === "/api/knowledge/discoveries" && request.method === "POST") {
       }
     } else {
       const name = await generateUniqueName(env);
-      await db.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+      await db.prepare("INSERT OR IGNORE INTO name_reserve (name) VALUES (?)").bind(name).run();
       await db.prepare(
         "INSERT INTO learned_motion (id, profile_key, motion_level, motion_std, motion_trend, motion_direction, motion_rhythm, count, sources_json, name, depth_breakdown_json) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)"
       ).bind(uuid(), m.key, m.motion_level, m.motion_std, m.motion_trend, m.motion_direction ?? "neutral", m.motion_rhythm ?? "steady", m.source_prompt ? JSON.stringify([m.source_prompt.slice(0, 80)]) : null, name, motionDepthJson).run();
@@ -241,7 +247,7 @@ if (path === "/api/knowledge/discoveries" && request.method === "POST") {
       await db.prepare("UPDATE learned_lighting SET count = count + 1 WHERE profile_key = ?").bind(l.key).run();
     } else {
       const name = await generateUniqueName(env);
-      await db.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+      await db.prepare("INSERT OR IGNORE INTO name_reserve (name) VALUES (?)").bind(name).run();
       await db.prepare(
         "INSERT INTO learned_lighting (id, profile_key, brightness, contrast, saturation, count, sources_json, name, depth_breakdown_json) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)"
       ).bind(uuid(), l.key, l.brightness, l.contrast, l.saturation, l.source_prompt ? JSON.stringify([l.source_prompt.slice(0, 80)]) : null, name, l.depth_breakdown ? JSON.stringify(l.depth_breakdown) : null).run();
@@ -256,7 +262,7 @@ if (path === "/api/knowledge/discoveries" && request.method === "POST") {
       await db.prepare("UPDATE learned_composition SET count = count + 1 WHERE profile_key = ?").bind(c.key).run();
     } else {
       const name = await generateUniqueName(env);
-      await db.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+      await db.prepare("INSERT OR IGNORE INTO name_reserve (name) VALUES (?)").bind(name).run();
       await db.prepare(
         "INSERT INTO learned_composition (id, profile_key, center_x, center_y, luminance_balance, count, sources_json, name) VALUES (?, ?, ?, ?, ?, 1, ?, ?)"
       ).bind(uuid(), c.key, c.center_x, c.center_y, c.luminance_balance, c.source_prompt ? JSON.stringify([c.source_prompt.slice(0, 80)]) : null, name).run();
@@ -271,7 +277,7 @@ if (path === "/api/knowledge/discoveries" && request.method === "POST") {
       await db.prepare("UPDATE learned_graphics SET count = count + 1 WHERE profile_key = ?").bind(g.key).run();
     } else {
       const name = await generateUniqueName(env);
-      await db.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+      await db.prepare("INSERT OR IGNORE INTO name_reserve (name) VALUES (?)").bind(name).run();
       await db.prepare(
         "INSERT INTO learned_graphics (id, profile_key, edge_density, spatial_variance, busyness, count, sources_json, name) VALUES (?, ?, ?, ?, ?, 1, ?, ?)"
       ).bind(uuid(), g.key, g.edge_density, g.spatial_variance, g.busyness, g.source_prompt ? JSON.stringify([g.source_prompt.slice(0, 80)]) : null, name).run();
@@ -288,7 +294,7 @@ if (path === "/api/knowledge/discoveries" && request.method === "POST") {
       await db.prepare("UPDATE learned_temporal SET count = count + 1 WHERE profile_key = ?").bind(t.key).run();
     } else {
       const name = await generateUniqueName(env);
-      await db.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+      await db.prepare("INSERT OR IGNORE INTO name_reserve (name) VALUES (?)").bind(name).run();
       await db.prepare(
         "INSERT INTO learned_temporal (id, profile_key, duration, motion_trend, count, sources_json, name) VALUES (?, ?, ?, ?, 1, ?, ?)"
       )
@@ -308,7 +314,7 @@ if (path === "/api/knowledge/discoveries" && request.method === "POST") {
       await db.prepare("UPDATE learned_technical SET count = count + 1 WHERE profile_key = ?").bind(t.key).run();
     } else {
       const name = await generateUniqueName(env);
-      await db.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+      await db.prepare("INSERT OR IGNORE INTO name_reserve (name) VALUES (?)").bind(name).run();
       await db.prepare(
         "INSERT INTO learned_technical (id, profile_key, width, height, fps, count, sources_json, name) VALUES (?, ?, ?, ?, ?, 1, ?, ?)"
       )
@@ -326,7 +332,7 @@ if (path === "/api/knowledge/discoveries" && request.method === "POST") {
       await db.prepare("UPDATE learned_audio_semantic SET count = count + 1 WHERE profile_key = ?").bind(a.key).run();
     } else {
       const name = (a.name && a.name.trim()) ? a.name : await generateUniqueName(env);
-      if (!a.name || !a.name.trim()) await db.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+      if (!a.name || !a.name.trim()) await db.prepare("INSERT OR IGNORE INTO name_reserve (name) VALUES (?)").bind(name).run();
       await db.prepare(
         "INSERT INTO learned_audio_semantic (id, profile_key, role, count, sources_json, name) VALUES (?, ?, ?, 1, ?, ?)"
       ).bind(uuid(), a.key, a.role || "ambient", a.source_prompt ? JSON.stringify([a.source_prompt.slice(0, 80)]) : null, name).run();
@@ -341,7 +347,7 @@ if (path === "/api/knowledge/discoveries" && request.method === "POST") {
       await db.prepare("UPDATE learned_gradient SET count = count + 1 WHERE profile_key = ?").bind(g.key).run();
     } else {
       const name = await generateUniqueName(env);
-      await db.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+      await db.prepare("INSERT OR IGNORE INTO name_reserve (name) VALUES (?)").bind(name).run();
       await db.prepare(
         "INSERT INTO learned_gradient (id, profile_key, gradient_type, strength, count, sources_json, name, depth_breakdown_json) VALUES (?, ?, ?, ?, 1, ?, ?, ?)"
       ).bind(uuid(), g.key, g.gradient_type ?? "angled", g.strength ?? null, g.source_prompt ? JSON.stringify([g.source_prompt.slice(0, 80)]) : null, name, g.depth_breakdown ? JSON.stringify(g.depth_breakdown) : null).run();
@@ -356,7 +362,7 @@ if (path === "/api/knowledge/discoveries" && request.method === "POST") {
       await db.prepare("UPDATE learned_camera SET count = count + 1 WHERE profile_key = ?").bind(c.key).run();
     } else {
       const name = await generateUniqueName(env);
-      await db.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+      await db.prepare("INSERT OR IGNORE INTO name_reserve (name) VALUES (?)").bind(name).run();
       await db.prepare(
         "INSERT INTO learned_camera (id, profile_key, motion_type, speed, count, sources_json, name, depth_breakdown_json) VALUES (?, ?, ?, ?, 1, ?, ?, ?)"
       ).bind(uuid(), c.key, c.motion_type ?? "static", c.speed ?? null, c.source_prompt ? JSON.stringify([c.source_prompt.slice(0, 80)]) : null, name, c.depth_breakdown ? JSON.stringify(c.depth_breakdown) : null).run();
@@ -371,7 +377,7 @@ if (path === "/api/knowledge/discoveries" && request.method === "POST") {
       await db.prepare("UPDATE learned_transition SET count = count + 1 WHERE profile_key = ?").bind(t.key).run();
     } else {
       const name = await generateUniqueName(env);
-      await db.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+      await db.prepare("INSERT OR IGNORE INTO name_reserve (name) VALUES (?)").bind(name).run();
       await db.prepare(
         "INSERT INTO learned_transition (id, profile_key, type, duration_seconds, count, sources_json, name) VALUES (?, ?, ?, ?, 1, ?, ?)"
       ).bind(uuid(), t.key, t.type ?? "cut", t.duration_seconds ?? null, t.source_prompt ? JSON.stringify([t.source_prompt.slice(0, 80)]) : null, name).run();
@@ -386,7 +392,7 @@ if (path === "/api/knowledge/discoveries" && request.method === "POST") {
       await db.prepare("UPDATE learned_depth SET count = count + 1 WHERE profile_key = ?").bind(d.key).run();
     } else {
       const name = await generateUniqueName(env);
-      await db.prepare("INSERT INTO name_reserve (name) VALUES (?)").bind(name).run();
+      await db.prepare("INSERT OR IGNORE INTO name_reserve (name) VALUES (?)").bind(name).run();
       await db.prepare(
         "INSERT INTO learned_depth (id, profile_key, parallax_strength, layer_count, count, sources_json, name) VALUES (?, ?, ?, ?, 1, ?, ?)"
       ).bind(uuid(), d.key, d.parallax_strength ?? null, d.layer_count ?? null, d.source_prompt ? JSON.stringify([d.source_prompt.slice(0, 80)]) : null, name).run();
