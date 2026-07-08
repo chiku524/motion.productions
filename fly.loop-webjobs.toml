@@ -1,10 +1,10 @@
-# Explorer loop — 100% explore, frame extraction. Deploy from repository root:
-#   fly apps create motion-loop-explorer   # first time only
-#   fly deploy --config fly.loop-explorer.toml
+# Web jobs — polls pending UI/API jobs and runs generate_bridge (procedural).
+# Deploy from repository root:
+#   fly apps create motion-loop-webjobs   # first time only
+#   fly secrets set MOTION_API_SECRET=... -a motion-loop-webjobs
+#   fly deploy --config fly.loop-webjobs.toml
 #
-# Set MOTION_API_SECRET on the app (required when Worker has MOTION_API_SECRET set):
-#   fly secrets set MOTION_API_SECRET=... -a motion-loop-explorer
-app = "motion-loop-explorer"
+app = "motion-loop-webjobs"
 primary_region = "iad"
 
 kill_signal = "SIGTERM"
@@ -18,11 +18,10 @@ kill_timeout = 120
 
 [env]
   API_BASE = "https://motion.productions"
-  LOOP_EXTRACTION_FOCUS = "frame"
-  LOOP_EXPLOIT_RATIO_OVERRIDE = "0"
-  LOOP_WORKFLOW_TYPE = "explorer"
-  LOOP_WORKER_OFFSET_SECONDS = "0"
+  WORKER_START_SCRIPT = "generate_bridge"
   HEALTH_PORT = "8080"
+  BRIDGE_INTERVAL_SECONDS = "20"
+  BRIDGE_LEARN = "1"
 
 [http_service]
   internal_port = 8080

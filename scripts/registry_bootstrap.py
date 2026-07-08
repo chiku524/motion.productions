@@ -21,6 +21,7 @@ from src.knowledge.growth_per_instance import (
     ensure_static_color_in_registry,
     ensure_static_primitives_seeded,
 )
+from src.knowledge.narrative_registry import ensure_narrative_primitives_seeded
 from src.knowledge.remote_sync import post_static_discoveries
 
 
@@ -55,8 +56,10 @@ def main() -> int:
     config = load_config()
     print("Seeding static primitives (color + sound)...")
     ensure_static_primitives_seeded(config)
-    print("Seeding dynamic primitives (gradient, camera, motion, lighting, composition, time, temporal, technical, depth, transition, audio_semantic)...")
+    print("Seeding dynamic primitives (gradient, camera, motion axes, lighting, composition, time, temporal, technical, depth, transition, audio moods)...")
     ensure_dynamic_primitives_seeded(config)
+    print("Seeding narrative primitives (full NARRATIVE_ORIGINS → genre/mood/style/plots/settings/themes/scene_type)...")
+    ensure_narrative_primitives_seeded(config)
     print("Registry bootstrap: all primitives seeded.")
 
     if args.color_sweep:

@@ -49,13 +49,13 @@ def _static_sound_key(sound: dict[str, Any]) -> str:
     """
     if not sound:
         return ""
-    from .blend_depth import normalize_tone_to_primitive
-    amp = sound.get("amplitude") or sound.get("weight") or 0
+    from .blend_depth import normalize_tone_to_primitive, normalize_timbre_to_primitive
+    amp = float(sound.get("amplitude") or sound.get("weight") or 0)
     raw_tone = (sound.get("tone") or "unknown").strip().lower()
-    raw_timbre = (sound.get("timbre") or raw_tone or "unknown").strip().lower()
+    raw_timbre = (sound.get("timbre") or sound.get("primitive") or raw_tone or "unknown").strip().lower()
     tone = normalize_tone_to_primitive(raw_tone)
-    timbre = normalize_tone_to_primitive(raw_timbre)
-    return f"{round(float(amp), 2)}_{tone}_{timbre}"
+    timbre = normalize_timbre_to_primitive(raw_timbre, amplitude=amp, tone=tone)
+    return f"{round(amp, 2)}_{tone}_{timbre}"
 
 
 def derive_audio_semantic_from_spec(spec: Any) -> dict[str, Any]:
@@ -70,30 +70,44 @@ def derive_audio_semantic_from_spec(spec: Any) -> dict[str, Any]:
     return {"role": role, "type": role, "mood": str(mood), "tempo": str(tempo), "presence": str(presence)}
 
 
-def derive_static_sound_from_spec(spec: Any) -> dict[str, Any]:
+def derive_static_sound_from_spec(
+    spec: Any,
+    *,
+    prefer_primitives: list[str] | None = None,
+) -> dict[str, Any]:
     """
     Build one static sound dict from creation spec (audio_mood, audio_tempo, audio_presence).
-    §2.5: Vary tone/timbre so discoveries include mid/high (tone, hiss) not only low (rumble).
+    Prefer under-touched origin noises (rustle/click/whoosh/…) when prefer_primitives is set
+    so Pure sound coverage advances toward all SOUND_ORIGIN_PRIMITIVES.
     Per REGISTRY_FOUNDATION, Pure sound uses only primitive tones (low, mid, high, silent, neutral).
     """
     import random
-    from .blend_depth import normalize_tone_to_primitive
+    from .blend_depth import classify_sound_primitive, normalize_tone_to_primitive, SOUND_ORIGIN_PRIMITIVES
     mood = getattr(spec, "audio_mood", None) or "neutral"
     tempo = getattr(spec, "audio_tempo", None) or "medium"
     presence = getattr(spec, "audio_presence", None) or "ambient"
     weight = 0.3 if presence == "silence" else (0.7 if presence == "full" else 0.5)
-    # Use primitive tones only; vary so discoveries include mid/high not only low
     tone = normalize_tone_to_primitive(str(mood))
-    timbre = normalize_tone_to_primitive(str(presence))
     if random.random() < 0.25:
-        tone = random.choice(("mid", "neutral", "low"))
-    if random.random() < 0.2:
-        timbre = random.choice(("high", "mid"))
+        tone = random.choice(("mid", "neutral", "low", "high"))
+    primitive = classify_sound_primitive(weight, tone)
+    # Bias toward missing origin noises when coverage reports gaps (mission: touch every primitive).
+    prefer = [p for p in (prefer_primitives or []) if p in SOUND_ORIGIN_PRIMITIVES and p != "silence"]
+    if prefer and random.random() < 0.7:
+        primitive = random.choice(prefer)
+    elif random.random() < 0.45:
+        # Slightly overweight under-discovered everyday noises vs tonal defaults.
+        underused = ("rustle", "click", "whoosh", "drip", "thump", "hum", "hiss")
+        pool = [p for p in underused if p in SOUND_ORIGIN_PRIMITIVES]
+        if not pool:
+            pool = [p for p in SOUND_ORIGIN_PRIMITIVES if p != "silence"]
+        primitive = random.choice(pool)
     return {
         "amplitude": weight,
         "weight": weight,
         "tone": tone,
-        "timbre": timbre,
+        "timbre": primitive,
+        "primitive": primitive,
         "tempo": str(tempo),
     }
 
@@ -284,13 +298,27 @@ def ensure_dynamic_primitives_seeded(config: dict[str, Any] | None = None) -> No
     for ttype in (origins.get("transition") or {}).get("type", ["cut", "fade", "dissolve", "wipe"]):
         window = {"transition": {"type": ttype, "duration_seconds": 0.0}}
         ensure_dynamic_transition_in_registry(window, config=config)
-    # Audio semantic: one per presence
+    # Audio semantic: full tempo × mood × presence grid (mission: every combination seedable).
+    # Cap combinatorial explosion by seeding each axis independently plus a sparse cross-product.
     audio_origins = origins.get("audio") or {}
-    for presence in audio_origins.get("presence", ["silence", "ambient", "music", "sfx", "full"]):
-        role = "ambient" if presence in ("silence", "ambient") else ("music" if presence == "music" else "sfx" if presence == "sfx" else "music")
+    tempos = list(audio_origins.get("tempo", ["slow", "medium", "fast"]))
+    moods = list(audio_origins.get("mood", ["neutral", "calm", "tense", "uplifting", "dark"]))
+    presences = list(audio_origins.get("presence", ["silence", "ambient", "music", "sfx", "full"]))
+    for presence in presences:
+        role = (
+            "ambient" if presence in ("silence", "ambient")
+            else ("music" if presence == "music" else "sfx" if presence == "sfx" else "music")
+        )
         window = {"audio_semantic": {"role": role, "mood": "neutral", "tempo": "medium", "presence": presence}}
         ensure_dynamic_audio_semantic_in_registry(window, config=config)
-    # Motion: speed (level) + rhythm primitives
+    for tempo in tempos:
+        window = {"audio_semantic": {"role": "ambient", "mood": "neutral", "tempo": tempo, "presence": "ambient"}}
+        ensure_dynamic_audio_semantic_in_registry(window, config=config)
+    for mood in moods:
+        role = "ambient"
+        window = {"audio_semantic": {"role": role, "mood": mood, "tempo": "medium", "presence": "ambient"}}
+        ensure_dynamic_audio_semantic_in_registry(window, config=config)
+    # Motion: full MOTION_ORIGINS axes (speed, rhythm, smoothness, directionality, acceleration)
     motion_origins = origins.get("motion") or {}
     level_by_speed = {"static": 0.0, "slow": 5.0, "medium": 12.0, "fast": 25.0}
     for speed in motion_origins.get("speed", ["static", "slow", "medium", "fast"]):
@@ -300,13 +328,66 @@ def ensure_dynamic_primitives_seeded(config: dict[str, Any] | None = None) -> No
     for rhythm in motion_origins.get("rhythm", ["steady", "pulsing", "wave", "random"]):
         window = {"motion": {"level": 12.0, "trend": rhythm, "direction": "neutral", "rhythm": rhythm}}
         ensure_dynamic_motion_in_registry(window, config=config)
-    # Lighting: contrast_ratio primitives (flat/normal/high/chiaroscuro)
+    for smoothness in motion_origins.get("smoothness", ["jerky", "rough", "smooth", "fluid"]):
+        # Encode smoothness in trend label so keys stay distinct until extractor gains a dedicated field.
+        window = {
+            "motion": {
+                "level": 12.0,
+                "trend": f"smoothness:{smoothness}",
+                "direction": "neutral",
+                "rhythm": "steady",
+            }
+        }
+        ensure_dynamic_motion_in_registry(window, config=config)
+    for directionality in motion_origins.get("directionality", ["none", "horizontal", "vertical", "diagonal", "radial"]):
+        window = {
+            "motion": {
+                "level": 12.0,
+                "trend": "steady",
+                "direction": directionality,
+                "rhythm": "steady",
+            }
+        }
+        ensure_dynamic_motion_in_registry(window, config=config)
+    for accel in motion_origins.get("acceleration", ["constant", "ease_in", "ease_out", "ease_in_out"]):
+        window = {
+            "motion": {
+                "level": 12.0,
+                "trend": f"accel:{accel}",
+                "direction": "neutral",
+                "rhythm": "steady",
+            }
+        }
+        ensure_dynamic_motion_in_registry(window, config=config)
+    # Lighting: contrast_ratio + color_temperature primitives
     lighting_origins = origins.get("lighting") or {}
     for ratio in lighting_origins.get("contrast_ratio", ["flat", "normal", "high", "chiaroscuro"]):
         contrast = 25 if ratio == "flat" else (50 if ratio == "normal" else (75 if ratio == "high" else 90))
         window = {"lighting": {"brightness": 125, "contrast": contrast, "saturation": 1.0}}
         ensure_dynamic_lighting_in_registry(window, config=config)
-    # Composition: balance primitives
+    temp_brightness = {"warm": 150, "neutral": 125, "cool": 100}
+    for temp in lighting_origins.get("color_temperature", ["warm", "neutral", "cool"]):
+        window = {
+            "lighting": {
+                "brightness": temp_brightness.get(temp, 125),
+                "contrast": 50,
+                "saturation": 1.1 if temp == "warm" else (0.9 if temp == "cool" else 1.0),
+            }
+        }
+        ensure_dynamic_lighting_in_registry(window, config=config)
+    # Composition: framing + balance + symmetry (named via center/luminance proxies)
+    composition_origins = origins.get("composition") or {}
+    framing_centers = {
+        "wide": (0.5, 0.5, 0.35),
+        "medium": (0.5, 0.5, 0.5),
+        "close": (0.5, 0.45, 0.65),
+        "extreme_close": (0.5, 0.4, 0.8),
+        "pov": (0.55, 0.5, 0.55),
+    }
+    for framing in composition_origins.get("framing", list(framing_centers.keys())):
+        cx, cy, lb = framing_centers.get(framing, (0.5, 0.5, 0.5))
+        window = {"composition": {"center_x": cx, "center_y": cy, "luminance_balance": lb, "framing": framing}}
+        ensure_dynamic_composition_in_registry(window, config=config)
     balance_centers = [
         (0.2, 0.5, 0.5),   # left_heavy
         (0.5, 0.5, 0.5),   # balanced
@@ -317,6 +398,11 @@ def ensure_dynamic_primitives_seeded(config: dict[str, Any] | None = None) -> No
     for cx, cy, lb in balance_centers:
         window = {"composition": {"center_x": cx, "center_y": cy, "luminance_balance": lb}}
         ensure_dynamic_composition_in_registry(window, config=config)
+    for symmetry in composition_origins.get("symmetry", ["asymmetric", "slight", "bilateral"]):
+        # Slight center offsets encode symmetry classes until extractor stores them explicitly.
+        offset = 0.12 if symmetry == "asymmetric" else (0.04 if symmetry == "slight" else 0.0)
+        window = {"composition": {"center_x": 0.5 + offset, "center_y": 0.5, "luminance_balance": 0.5, "symmetry": symmetry}}
+        ensure_dynamic_composition_in_registry(window, config=config)
     # Time: duration + fps primitives
     time_durations = [1.0, 2.0, 5.0, 10.0]
     time_fps = [24.0, 30.0]
@@ -324,12 +410,18 @@ def ensure_dynamic_primitives_seeded(config: dict[str, Any] | None = None) -> No
         for fps in time_fps:
             window = {"time": {"duration": duration, "fps": fps}}
             ensure_dynamic_time_in_registry(window, config=config)
-    # Temporal: duration + trend
+    # Temporal: shot length + story beats + cut frequency
     temporal_origins = origins.get("temporal") or {}
     for duration in temporal_origins.get("shot_length_seconds", [1.0, 2.0, 4.0, 6.0, 10.0]):
         window = {"time": {"duration": duration}, "motion": {"trend": "steady"}}
         ensure_dynamic_temporal_in_registry(window, config=config)
-    # Technical: resolution + fps
+    for beat in temporal_origins.get("story_beats", ["setup", "development", "climax", "resolution"]):
+        window = {"time": {"duration": 2.0}, "motion": {"trend": f"beat:{beat}"}}
+        ensure_dynamic_temporal_in_registry(window, config=config)
+    for cut in temporal_origins.get("cut_frequency", ["none", "rare", "normal", "fast", "rapid"]):
+        window = {"time": {"duration": 1.0}, "motion": {"trend": f"cut:{cut}"}}
+        ensure_dynamic_temporal_in_registry(window, config=config)
+    # Technical: full resolution × fps × aspect (aspect encoded in width/height choice)
     tech_origins = origins.get("technical") or {}
     for res in tech_origins.get("resolution", [(512, 512), (1280, 720), (1920, 1080)]):
         w, h = res[0], res[1]
@@ -380,8 +472,14 @@ def ensure_static_sound_in_registry(
     amp = float(sound.get("amplitude") or sound.get("weight") or 0)
     from .blend_depth import compute_sound_depth, normalize_tone_to_primitive
     raw_tone = (sound.get("tone") or "mid").strip()
-    tone = normalize_tone_to_primitive(raw_tone)  # depth must use primitive tone only
-    depth_breakdown = compute_sound_depth(amp, tone)
+    tone = normalize_tone_to_primitive(raw_tone)
+    depth_breakdown = compute_sound_depth(
+        amp, tone,
+        primitive=sound.get("primitive"),
+        spectral_flatness=sound.get("spectral_flatness"),
+        attack_ratio=sound.get("attack_ratio"),
+        zcr=sound.get("zcr"),
+    )
     strength_pct = depth_breakdown.get("strength_pct") if isinstance(depth_breakdown, dict) else amp
     entry = {
         "key": key,

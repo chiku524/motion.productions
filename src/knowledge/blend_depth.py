@@ -1,7 +1,7 @@
 """
 Blend depth: compute how far down each side of a blend is with respect to origins.
 primitive_depths = {primitive_name: weight} — how much each origin contributed.
-Aligned with REGISTRY_FOUNDATION: Pure color depth uses origin primitives (16); pure sound uses 4 (silence, rumble, tone, hiss).
+Aligned with REGISTRY_FOUNDATION: Pure color depth uses origin primitives (16); pure sound uses everyday origin noises (see SOUND_ORIGIN_PRIMITIVES).
 """
 from typing import Any
 
@@ -54,10 +54,26 @@ def compute_color_depth(r: float, g: float, b: float) -> dict[str, float]:
     return {p1: round(w1, 3), p2: round(w2, 3)}
 
 
-# Sound: exactly 4 origin primitives. Mesh discovers new sound values (blends) derived from these with depth %.
-SOUND_ORIGIN_PRIMITIVES = ("silence", "rumble", "tone", "hiss")
-# Map frequency-band measurement (low/mid/high) to primitive names.
-_TONE_TO_NOISE = {"silent": "silence", "silence": "silence", "low": "rumble", "mid": "tone", "high": "hiss"}
+# Sound: origin primitives for everyday instant noises (per REGISTRY_FOUNDATION).
+# Measurements: silent/low/mid/high (frequency band). Primitives: named noise types at one instant.
+# Kick, snare, speech, melody, etc. remain Blended (dynamic) — not listed here.
+SOUND_ORIGIN_PRIMITIVES = (
+    "silence",   # no audible energy
+    "rumble",    # continuous low — traffic, thunder, distant engines
+    "hum",       # steady tonal drone — AC, fridge, mains buzz, fan
+    "tone",      # clear mid pitch — alerts, whistles, voiced vowels
+    "hiss",      # sustained broadband high — rain, spray, static, ventilation
+    "rustle",    # irregular friction texture — leaves, crowd, gravel, typing
+    "thump",     # low impact — footsteps, doors, heartbeat
+    "click",     # sharp transient — switch, tap, keyboard
+    "whoosh",    # sweeping air — wind gust, pass-by, swoosh
+    "drip",      # sparse rhythmic taps — water drip, tick, beep
+)
+# Legacy band mapping (low/mid/high measurements → default primitive when features absent).
+_TONE_TO_NOISE = {
+    "silent": "silence", "silence": "silence",
+    "low": "rumble", "mid": "tone", "high": "hiss", "neutral": "tone",
+}
 
 # Pure (static) sound must use only primitive tone values (REGISTRY_FOUNDATION).
 # Allowed in key/depth: low, mid, high, silent, neutral (neutral -> mid for depth).
@@ -85,19 +101,104 @@ def normalize_tone_to_primitive(tone: str) -> str:
     return _SEMANTIC_TONE_TO_PRIMITIVE.get(t, "mid")
 
 
-def compute_sound_depth(amplitude: float, tone: str) -> dict[str, Any]:
+def normalize_timbre_to_primitive(
+    timbre: str,
+    *,
+    amplitude: float = 0.5,
+    tone: str = "mid",
+) -> str:
     """
-    Depth for pure sound: **blend of origin (primitive) noises** — silence, rumble, tone, hiss.
-    The four primitives are the origin set (like 16 for color). Discovered **pure sound values**
-    are blends of these; depth % measures how much each origin/primitive makes up that value.
-    Returns origin_noises (weights summing to 1), amplitude, strength_pct. Used for depth_breakdown.
+    Return an everyday origin noise for the timbre slot of a Pure sound key.
+    Semantic mood words and legacy band labels map through classify_sound_primitive.
+    """
+    t = (timbre or "").strip().lower()
+    if t in SOUND_ORIGIN_PRIMITIVES:
+        return t
+    band = normalize_tone_to_primitive(t or tone)
+    return classify_sound_primitive(amplitude, band)
+
+
+def sanitize_pure_sound_key(key: str) -> str:
+    """Canonicalize amplitude_tone_timbre; strips semantic mood leakage from Pure keys."""
+    if not key or "_" not in key:
+        return key
+    parts = key.split("_")
+    if len(parts) < 3:
+        return key
+    try:
+        amp = round(float(parts[0]), 2)
+    except (TypeError, ValueError):
+        return key
+    tone = normalize_tone_to_primitive(parts[1])
+    timbre = normalize_timbre_to_primitive("_".join(parts[2:]), amplitude=amp, tone=tone)
+    return f"{amp}_{tone}_{timbre}"
+
+
+def classify_sound_primitive(
+    amplitude: float,
+    tone: str,
+    *,
+    spectral_flatness: float | None = None,
+    attack_ratio: float | None = None,
+    zcr: float | None = None,
+) -> str:
+    """
+    Classify one instant of audio into an everyday pure-sound primitive.
+    Uses band measurement (tone) plus optional spectral features from per-frame FFT.
+    """
+    tone_lower = normalize_tone_to_primitive(tone)
+    strength = min(1.0, max(0.0, float(amplitude)))
+    if strength < 0.01 or tone_lower in ("silent", "silence", ""):
+        return "silence"
+    flat = 0.5 if spectral_flatness is None else min(1.0, max(0.0, float(spectral_flatness)))
+    atk = 0.0 if attack_ratio is None else min(1.0, max(0.0, float(attack_ratio)))
+    z = 0.05 if zcr is None else min(1.0, max(0.0, float(zcr)))
+
+    # Impulsive everyday sounds (footsteps, clicks, drips)
+    if atk > 0.5:
+        if tone_lower == "low":
+            return "thump"
+        if tone_lower == "high" or z > 0.12:
+            return "click"
+        return "drip"
+    # Noisy / textured (wind, rain, rustling)
+    if flat > 0.4:
+        if tone_lower == "low":
+            return "rumble"
+        if tone_lower == "high":
+            return "whoosh" if atk > 0.2 else "hiss"
+        return "rustle"
+    # Tonal sustained
+    if flat < 0.22 and tone_lower == "low":
+        return "hum"
+    return _TONE_TO_NOISE.get(tone_lower, "tone")
+
+
+def compute_sound_depth(
+    amplitude: float,
+    tone: str,
+    *,
+    primitive: str | None = None,
+    spectral_flatness: float | None = None,
+    attack_ratio: float | None = None,
+    zcr: float | None = None,
+) -> dict[str, Any]:
+    """
+    Depth for pure sound: blend of origin (primitive) noises from SOUND_ORIGIN_PRIMITIVES.
+    Returns origin_noises (weights summing to 1), amplitude, strength_pct.
     """
     tone_lower = (tone or "").strip().lower()
     strength = round(min(1.0, max(0.0, float(amplitude))), 2)
     if amplitude < 0.01 or tone_lower in ("silent", "silence", ""):
         return {"origin_noises": {"silence": 1.0}, "amplitude": strength, "strength_pct": strength}
-    noise_name = _TONE_TO_NOISE.get(tone_lower, "tone")
-    # Blend: silence + dominant noise (primitives blending together for this instant)
+    noise_name = (primitive or "").strip().lower()
+    if noise_name not in SOUND_ORIGIN_PRIMITIVES or noise_name == "silence":
+        noise_name = classify_sound_primitive(
+            amplitude, tone,
+            spectral_flatness=spectral_flatness,
+            attack_ratio=attack_ratio,
+            zcr=zcr,
+        )
     s_silence = round(1.0 - strength, 2)
     s_noise = round(strength, 2)
     if s_silence <= 0:

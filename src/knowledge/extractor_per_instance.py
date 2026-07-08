@@ -134,12 +134,19 @@ def _extract_audio_segments(
             out.append({"amplitude": 0.0, "weight": 0.0, "tone": "silent", "timbre": "silent"})
             continue
         # RMS amplitude (normalize to 0–1 range; 16-bit max 32768)
-        rms = float(np.sqrt(np.mean(samples.astype(np.float64) ** 2)))
+        samples_f = samples.astype(np.float64)
+        rms = float(np.sqrt(np.mean(samples_f ** 2)))
         amplitude = min(1.0, rms / 32768.0) if rms else 0.0
         weight = amplitude
-        # Simple tone from dominant frequency (FFT)
+        tone = "silent" if amplitude < 0.01 else "mid"
+        peak_hz = 0.0
+        spectral_flatness = 0.5
+        attack_ratio = 0.0
+        zcr = 0.0
+        # Simple tone from dominant frequency (FFT) + features for everyday primitive classification
         if len(samples) >= 256:
-            fft = np.abs(np.fft.rfft(samples[: 2048]))
+            chunk = samples_f[:2048]
+            fft = np.abs(np.fft.rfft(chunk))
             freqs = np.fft.rfftfreq(2048, 1.0 / segment.frame_rate)
             if len(fft) and np.max(fft) > 0:
                 peak_idx = int(np.argmax(fft))
@@ -150,11 +157,32 @@ def _extract_audio_segments(
                     tone = "mid"
                 else:
                     tone = "high"
-            else:
-                tone = "silent" if amplitude < 0.01 else "mid"
-        else:
-            tone = "silent" if amplitude < 0.01 else "mid"
-        out.append({"amplitude": amplitude, "weight": weight, "tone": tone, "timbre": tone})
+                geom = np.exp(np.mean(np.log(fft + 1e-12)))
+                arith = np.mean(fft) + 1e-12
+                spectral_flatness = float(min(1.0, max(0.0, geom / arith)))
+            half = max(1, len(chunk) // 2)
+            attack_rms = float(np.sqrt(np.mean(chunk[:half] ** 2)))
+            tail_rms = float(np.sqrt(np.mean(chunk[half:] ** 2))) + 1e-12
+            attack_ratio = float(min(1.0, attack_rms / (attack_rms + tail_rms)))
+            signs = np.sign(chunk)
+            zcr = float(np.mean(signs[1:] != signs[:-1]))
+        from .blend_depth import classify_sound_primitive
+        primitive = classify_sound_primitive(
+            amplitude, tone,
+            spectral_flatness=spectral_flatness,
+            attack_ratio=attack_ratio,
+            zcr=zcr,
+        )
+        out.append({
+            "amplitude": amplitude,
+            "weight": weight,
+            "tone": tone,
+            "timbre": primitive,
+            "primitive": primitive,
+            "spectral_flatness": round(spectral_flatness, 3),
+            "attack_ratio": round(attack_ratio, 3),
+            "zcr": round(zcr, 3),
+        })
     return out
 
 

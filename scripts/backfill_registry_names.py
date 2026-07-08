@@ -12,6 +12,7 @@ Usage:
   py scripts/backfill_registry_names.py --table learned_blends  # one table only (faster)
 
 To recalculate depth percentages: python scripts/backfill_registry_depths.py
+For full audit + cleanup pipeline: python scripts/registry_cleanup.py all
 """
 import argparse
 import os

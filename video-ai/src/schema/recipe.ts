@@ -41,6 +41,15 @@ export const VideoRecipeSchema = z.object({
     height: z.number().int().min(320).max(3840),
     fps: z.number().int().min(12).max(60).default(30),
     title: z.string().max(200).optional(),
+    /**
+     * Render engine:
+     * - recipe (default): Node/FFmpeg solid scenes + captions
+     * - procedural: Python generate_full_video via PROCEDURAL_RENDER_URL
+     */
+    engine: z.enum(["recipe", "procedural"]).optional(),
+    /** Required when engine=procedural (prompt for the procedural pipeline). */
+    prompt: z.string().min(1).max(2000).optional(),
+    seed: z.number().int().optional(),
     /** Optional audio bed + voiceover (render service needs OPENAI_API_KEY for narration). */
     audio: z
       .object({
@@ -64,6 +73,17 @@ export const VideoRecipeSchema = z.object({
       ),
   }),
   scenes: z.array(SceneSchema).min(1).max(80),
+}).superRefine((recipe, ctx) => {
+  if ((recipe.meta.engine || "recipe") === "procedural") {
+    const p = (recipe.meta.prompt || recipe.meta.title || "").trim();
+    if (!p) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "meta.prompt (or meta.title) is required when engine=procedural",
+        path: ["meta", "prompt"],
+      });
+    }
+  }
 });
 
 export type VideoRecipe = z.infer<typeof VideoRecipeSchema>;

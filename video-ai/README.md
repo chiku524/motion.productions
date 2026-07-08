@@ -2,15 +2,25 @@
 
 Prompt-driven **recipe JSON** → **MP4** pipeline, kept separate from the main `motion.productions` Cloudflare app so it can mature and merge later.
 
+## Engines
+
+| `meta.engine` | Path | Notes |
+|---------------|------|--------|
+| `recipe` (default) | Worker → `VIDEO_AI_RENDER_URL` (Node + FFmpeg) | Solid-color scenes, captions, optional TTS/music |
+| `procedural` | Worker → `PROCEDURAL_RENDER_URL` (Python `generate_full_video`) | Full procedural engine; set `meta.prompt`; sync `/video-ai/api/render` only |
+
+Long-term consolidation: keep one recipe schema; route `engine` to the appropriate render host. The procedural path reuses the main learning-loop renderer rather than embedding Python in Node.
+
 ## Architecture
 
 | Piece | Role |
 |--------|------|
-| **Cloudflare Worker** (`src/worker`) | HTTP API: `POST /api/plan` (LLM or deterministic fallback), optional `POST /api/render` proxy, static UI from `public/`. |
-| **Shared schema + planner** (`src/schema`, `src/planner`) | Zod-validated `VideoRecipe`, OpenAI JSON planner, offline fallback when no API key. |
-| **Node render service** (`src/render`) | FFmpeg: solid-color scenes, optional captions, optional **OpenAI TTS narration** + **HTTPS background music** URL, concat, AAC mux. |
+| **Cloudflare Worker** (`src/worker` + main `cloudflare/src/videoAiApi.ts`) | HTTP API: `POST /video-ai/api/plan`, `POST /video-ai/api/render` (recipe or procedural proxy), optional async jobs for recipe engine |
+| **Shared schema + planner** (`src/schema`, `src/planner`) | Zod-validated `VideoRecipe` (`meta.engine`, `meta.prompt`), OpenAI JSON planner, offline fallback |
+| **Node render service** (`src/render`) | FFmpeg: solid-color scenes, optional captions, optional **OpenAI TTS narration** + **HTTPS background music** URL |
+| **Procedural render** (`scripts/procedural_render_server.py`, `fly.procedural-render.toml`) | `POST /render` → MP4 via Python procedural pipeline |
 
-**Why split Worker vs Node?** Workers are the right place for auth, planning, and orchestration. FFmpeg needs a long CPU-bound process and is run locally (or on a VM/container) via the render service.
+**Why split Worker vs Node/Python?** Workers are the right place for auth, planning, and orchestration. FFmpeg and procedural generation need long CPU-bound processes on Fly.
 
 ## Prerequisites
 

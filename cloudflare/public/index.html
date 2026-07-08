@@ -57,6 +57,7 @@
       </a>
       <span class="tagline">From prompt to production.</span>
       <span class="header-spacer" aria-hidden="true"></span>
+      <a href="/registries/" class="header-link">Registries</a>
       <a href="/video-ai/" class="header-link">Video AI lab</a>
     </header>
 
@@ -68,7 +69,14 @@
 
       <div class="grid-left">
       <section class="generator motion-fade-in-up">
-        <form id="generate-form" class="generator-form">
+        <div id="write-paused-notice" class="write-paused-notice" role="status">
+          <strong>Public generation is paused.</strong>
+          Creating jobs, feedback, and loop settings now require authenticated workers
+          (<code>MOTION_API_SECRET</code>). Browse the library, loop status, and
+          <a href="/registries/">registries</a> below — or use the
+          <a href="/video-ai/">Video AI lab</a> for recipe renders.
+        </div>
+        <form id="generate-form" class="generator-form" aria-disabled="true">
           <label class="label" for="prompt">Describe your video</label>
           <textarea
             id="prompt"
@@ -77,12 +85,13 @@
             placeholder="e.g. Sunset over the ocean, dreamy waves, warm tones"
             rows="3"
             required
+            disabled
           ></textarea>
 
           <div class="row">
             <div class="field">
               <label class="label" for="duration">Duration (seconds)</label>
-              <select id="duration" name="duration" class="select">
+              <select id="duration" name="duration" class="select" disabled>
                 <option value="1">1s (learning)</option>
                 <option value="2">2s</option>
                 <option value="3">3s</option>
@@ -93,8 +102,8 @@
                 <option value="30">30s</option>
               </select>
             </div>
-            <button type="submit" id="submit-btn" class="btn btn-primary">
-              Generate
+            <button type="submit" id="submit-btn" class="btn btn-primary" disabled title="Requires authenticated worker">
+              Generate (auth required)
             </button>
           </div>
         </form>
@@ -204,7 +213,7 @@
         <div class="registries-header">
           <div>
             <h2 class="registries-title">Registries</h2>
-            <p class="registries-intro">All 4 registries: <strong>Pure</strong> (Static) · <strong>Blended</strong> (Dynamic) · <strong>Semantic</strong> (Narrative) · <strong>Interpretation (Linguistics)</strong>. Primitives (origin values) and discoveries. Click “Refresh now” to update.</p>
+            <p class="registries-intro">All 4 registries: <strong>Pure</strong> (Static) · <strong>Blended</strong> (Dynamic) · <strong>Semantic</strong> (Narrative) · <strong>Interpretation (Linguistics)</strong>. <a href="/registries/" class="registries-browser-link">Open registry browser</a> for color swatches and sound samples.</p>
             <p class="registries-sub">Use this to monitor that workflows are growing and learning (target: 95%+ of runs with learning).</p>
           </div>
           <div class="registries-meta">

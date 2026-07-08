@@ -25,7 +25,7 @@ SOUND_LOOP_FPS = 24
 
 
 def _pick_audio_params(knowledge: dict) -> tuple[str, str, str]:
-    """Pick mood, tempo, presence: prefer learned_audio when available, else keyword origins."""
+    """Pick mood, tempo, presence: prefer learned_audio when available, else full AUDIO_ORIGINS."""
     learned = knowledge.get("learned_audio") or []
     if learned and isinstance(learned, list):
         entry = random.choice(learned)
@@ -34,15 +34,43 @@ def _pick_audio_params(knowledge: dict) -> tuple[str, str, str]:
             tempo = entry.get("tempo") or entry.get("output", {}).get("tempo", "medium")
             presence = entry.get("presence") or entry.get("output", {}).get("presence", "ambient")
             return (str(mood), str(tempo), str(presence))
-    from src.procedural.data.keywords import (
-        KEYWORD_TO_AUDIO_MOOD,
-        KEYWORD_TO_AUDIO_TEMPO,
-        KEYWORD_TO_AUDIO_PRESENCE,
-    )
-    mood = random.choice(list(KEYWORD_TO_AUDIO_MOOD.values()))
-    tempo = random.choice(list(KEYWORD_TO_AUDIO_TEMPO.values()))
-    presence = random.choice(list(KEYWORD_TO_AUDIO_PRESENCE.values()))
-    return (mood, tempo, presence)
+    try:
+        from src.knowledge.origins import AUDIO_ORIGINS
+        mood = random.choice(list(AUDIO_ORIGINS.get("mood") or ["neutral"]))
+        tempo = random.choice(list(AUDIO_ORIGINS.get("tempo") or ["medium"]))
+        presence = random.choice(list(AUDIO_ORIGINS.get("presence") or ["ambient"]))
+        return (mood, tempo, presence)
+    except Exception:
+        from src.procedural.data.keywords import (
+            KEYWORD_TO_AUDIO_MOOD,
+            KEYWORD_TO_AUDIO_TEMPO,
+            KEYWORD_TO_AUDIO_PRESENCE,
+        )
+        mood = random.choice(list(KEYWORD_TO_AUDIO_MOOD.values()))
+        tempo = random.choice(list(KEYWORD_TO_AUDIO_TEMPO.values()))
+        presence = random.choice(list(KEYWORD_TO_AUDIO_PRESENCE.values()))
+        return (mood, tempo, presence)
+
+
+def _pick_target_primitive(api_base: str) -> str | None:
+    """Prefer SOUND_ORIGIN_PRIMITIVES missing from coverage (rustle/click/whoosh first)."""
+    from src.knowledge.blend_depth import SOUND_ORIGIN_PRIMITIVES
+
+    missing: list[str] = []
+    if api_base:
+        try:
+            from src.api_client import api_get
+            cov = api_get(api_base, "/api/registries/coverage") or {}
+            missing = list(cov.get("static_sound_primitives_missing") or [])
+        except Exception:
+            missing = []
+    underused = ["rustle", "click", "whoosh", "drip", "hiss", "hum", "thump"]
+    pool = [p for p in underused if p in (missing or underused)]
+    if missing:
+        pool = [p for p in missing if p != "silence"] or underused
+    if not pool:
+        pool = [p for p in SOUND_ORIGIN_PRIMITIVES if p != "silence"]
+    return random.choice(pool)
 
 
 def run() -> None:
@@ -118,7 +146,11 @@ def run() -> None:
                     logger.warning("Knowledge fetch failed: %s — using empty", e)
 
             mood, tempo, presence = _pick_audio_params(knowledge)
-            source_prompt = f"sound_loop:mood={mood},tempo={tempo},presence={presence}"
+            target_primitive = _pick_target_primitive(api_base)
+            source_prompt = (
+                f"sound_loop:mood={mood},tempo={tempo},presence={presence}"
+                + (f",primitive={target_primitive}" if target_primitive else "")
+            )
 
             generate_audio_only(
                 duration,
@@ -126,6 +158,7 @@ def run() -> None:
                 mood=mood,
                 tempo=tempo,
                 presence=presence,
+                target_primitive=target_primitive,
             )
             segments = read_audio_segments_only(
                 wav_path,
@@ -151,7 +184,10 @@ def run() -> None:
                     logger.warning("POST discoveries failed (status=%s): %s", e.status_code, e)
 
             if count:
-                print(f"[{cycle}] sound discovery: +{count} (mood={mood}, tempo={tempo}, presence={presence})")
+                print(
+                    f"[{cycle}] sound discovery: +{count} "
+                    f"(mood={mood}, tempo={tempo}, presence={presence}, primitive={target_primitive})"
+                )
             else:
                 print(f"[{cycle}] no new sounds this cycle")
 

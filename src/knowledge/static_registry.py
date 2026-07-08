@@ -4,7 +4,7 @@ Pure elements only — no categories like brightness/contrast/saturation (those 
 Static holds: (1) pure color (R, G, B, opacity), (2) pure sound (amplitude, tone, timbre at sample/beat level).
 Pure blends are recorded with depth % = weights/densities of other pure elements.
 Every primitive (origin) known is seeded so the loop can blend from them.
-See docs/REGISTRIES.md.
+See docs/REGISTRY_FOUNDATION.md.
 """
 from pathlib import Path
 from typing import Any
@@ -165,15 +165,20 @@ STATIC_COLOR_PRIMITIVES = [
 
 # -----------------------------------------------------------------------------
 # SOUND: origin primitives + mesh (registry).
-# - Origin/primitive set = 4 types: silence, rumble, tone, hiss (used for depth %).
-# - Discovered pure sound *values* are blends of these primitives; depth % = how much
-#   each origin/primitive makes up the discovered value (always relevant for all discovered values).
-# - The mesh = static_sound registry = primitives + discovered blends. New discoveries
-#   are recorded with depth_breakdown = origin_noises (weights) so the mesh stays a
-#   playground of combinable values. Kick, snare, melody, speech, etc. are Blended (dynamic).
+# - Origin/primitive set = everyday instant noises (silence, rumble, hum, tone, hiss, rustle, thump, click, whoosh, drip).
+# - Discovered pure sound *values* are blends of these primitives; depth % = origin_noises weights.
+# - Kick, snare, speech, melody, etc. are Blended (dynamic), not pure primitives.
 # -----------------------------------------------------------------------------
-# Noise names (pure primitives). Tone "low"|"mid"|"high" maps to rumble|tone|hiss.
-STATIC_SOUND_NOISE_NAMES = ["silence", "rumble", "tone", "hiss"]
+from .blend_depth import SOUND_ORIGIN_PRIMITIVES
+
+STATIC_SOUND_NOISE_NAMES = list(SOUND_ORIGIN_PRIMITIVES)
+
+_NOISE_TONE_BAND: dict[str, str] = {
+    "silence": "silent",
+    "rumble": "low", "hum": "low", "thump": "low",
+    "tone": "mid", "drip": "mid", "click": "mid",
+    "hiss": "high", "rustle": "high", "whoosh": "high",
+}
 
 
 def _snd(noise: str, strength_pct: float, tone_measurement: str = "") -> dict[str, Any]:
@@ -188,13 +193,14 @@ def _snd(noise: str, strength_pct: float, tone_measurement: str = "") -> dict[st
     }
 
 
-# Minimal primitive set (origin values): silence + strength bands per noise (rumble/tone/hiss).
-# Full coverage: silence plus 0.1–0.9 step 0.1 for each of rumble, tone, hiss (known-to-man pure sounds).
+# Everyday origin values: silence + strength bands per noise primitive.
 STATIC_SOUND_PRIMITIVES = [
     _snd("silence", 0.0, "silent"),
 ]
-for noise in ("rumble", "tone", "hiss"):
-    tone_measurement = "low" if noise == "rumble" else ("mid" if noise == "tone" else "high")
+for noise in STATIC_SOUND_NOISE_NAMES:
+    if noise == "silence":
+        continue
+    tone_measurement = _NOISE_TONE_BAND.get(noise, "mid")
     for pct in (0.1, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.7, 0.75, 0.8, 0.9):
         STATIC_SOUND_PRIMITIVES.append(_snd(noise, pct, tone_measurement))
 
@@ -207,7 +213,7 @@ STATIC_ASPECTS = [
     },
     {
         "id": "sound",
-        "description": "Pure sound: origin/primitive values (silence, rumble, tone, hiss) plus mesh of discovered blends per instant. depth_breakdown = origin_noises (primitives blending together); new discoveries recorded in registry.",
+        "description": "Pure sound: everyday origin noises (silence, rumble, hum, tone, hiss, rustle, thump, click, whoosh, drip) plus discovered blends per instant. depth_breakdown = origin_noises weights.",
         "sub_aspects": ["noise", "strength_pct", "amplitude", "tone", "timbre", "depth_breakdown"],
     },
 ]

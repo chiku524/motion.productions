@@ -1,0 +1,149 @@
+# Local compute fleet — same Docker image / contracts as Fly, on your CPU.
+#
+# Quick start (from repo root):
+#   cp .env.example .env          # set MOTION_API_SECRET
+#   docker compose -f docker-compose.local.yml up -d --build webjobs procedural-render
+#
+# Full learning loops:
+#   docker compose -f docker-compose.local.yml --profile loops up -d --build
+#
+# Video AI Node FFmpeg (recipe engine):
+#   docker compose -f docker-compose.local.yml --profile video-ai up -d --build
+#
+# See docs/LOCAL_COMPUTE.md for tunnels, Fly bootstrap from scratch, and GPU notes.
+
+name: motion-local
+
+x-python-worker: &python-worker
+  build:
+    context: .
+    dockerfile: Dockerfile
+  environment:
+    API_BASE: ${API_BASE:-https://motion.productions}
+    MOTION_API_SECRET: ${MOTION_API_SECRET:-}
+    HEALTH_PORT: "8080"
+    PYTHONUNBUFFERED: "1"
+  restart: unless-stopped
+
+services:
+  # Fulfills pending /api/jobs (authenticated clients / scripts)
+  webjobs:
+    <<: *python-worker
+    environment:
+      API_BASE: ${API_BASE:-https://motion.productions}
+      MOTION_API_SECRET: ${MOTION_API_SECRET:-}
+      HEALTH_PORT: "8080"
+      WORKER_START_SCRIPT: generate_bridge
+      BRIDGE_LEARN: "1"
+      BRIDGE_INTERVAL_SECONDS: "20"
+    ports:
+      - "8081:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+  # Video AI engine=procedural → POST /render → MP4
+  procedural-render:
+    <<: *python-worker
+    environment:
+      MOTION_API_SECRET: ${MOTION_API_SECRET:-}
+      WORKER_START_SCRIPT: procedural_render
+      PORT: "8080"
+      HEALTH_PORT: "8080"
+    ports:
+      - "8082:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  explorer:
+    <<: *python-worker
+    profiles: ["loops"]
+    environment:
+      API_BASE: ${API_BASE:-https://motion.productions}
+      MOTION_API_SECRET: ${MOTION_API_SECRET:-}
+      HEALTH_PORT: "8080"
+      LOOP_EXTRACTION_FOCUS: frame
+      LOOP_EXPLOIT_RATIO_OVERRIDE: "0"
+      LOOP_WORKFLOW_TYPE: explorer
+      LOOP_WORKER_OFFSET_SECONDS: "0"
+    ports:
+      - "8083:8080"
+
+  exploiter:
+    <<: *python-worker
+    profiles: ["loops"]
+    environment:
+      API_BASE: ${API_BASE:-https://motion.productions}
+      MOTION_API_SECRET: ${MOTION_API_SECRET:-}
+      HEALTH_PORT: "8080"
+      LOOP_EXTRACTION_FOCUS: frame
+      LOOP_EXPLOIT_RATIO_OVERRIDE: "1"
+      LOOP_WORKFLOW_TYPE: exploiter
+      LOOP_WORKER_OFFSET_SECONDS: "15"
+    ports:
+      - "8084:8080"
+
+  balanced:
+    <<: *python-worker
+    profiles: ["loops"]
+    environment:
+      API_BASE: ${API_BASE:-https://motion.productions}
+      MOTION_API_SECRET: ${MOTION_API_SECRET:-}
+      HEALTH_PORT: "8080"
+      LOOP_EXTRACTION_FOCUS: window
+      LOOP_WORKFLOW_TYPE: main
+      LOOP_WORKER_OFFSET_SECONDS: "30"
+    ports:
+      - "8085:8080"
+
+  interpret:
+    <<: *python-worker
+    profiles: ["loops"]
+    environment:
+      API_BASE: ${API_BASE:-https://motion.productions}
+      MOTION_API_SECRET: ${MOTION_API_SECRET:-}
+      HEALTH_PORT: "8080"
+      WORKER_START_SCRIPT: interpret_loop
+      INTERPRET_DELAY_SECONDS: "10"
+    ports:
+      - "8086:8080"
+
+  sound:
+    <<: *python-worker
+    profiles: ["loops"]
+    environment:
+      API_BASE: ${API_BASE:-https://motion.productions}
+      MOTION_API_SECRET: ${MOTION_API_SECRET:-}
+      HEALTH_PORT: "8080"
+      WORKER_START_SCRIPT: sound_loop
+      SOUND_LOOP_DELAY_SECONDS: "15"
+      SOUND_LOOP_DURATION_SECONDS: "2.5"
+    ports:
+      - "8087:8080"
+
+  # Node + FFmpeg recipe renderer (Video AI engine=recipe)
+  video-ai-render:
+    profiles: ["video-ai"]
+    build:
+      context: .
+      dockerfile: Dockerfile.video-ai
+    environment:
+      PORT: "8080"
+      VIDEO_AI_RENDER_SECRET: ${VIDEO_AI_RENDER_SECRET:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    ports:
+      - "8788:8080"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s

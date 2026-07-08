@@ -5,6 +5,9 @@
 
 const API_BASE = '';
 
+/** Public browser writes are paused (1C): mutations require MOTION_API_SECRET on workers. */
+const PUBLIC_WRITES_ENABLED = false;
+
 const form = document.getElementById('generate-form');
 const promptInput = document.getElementById('prompt');
 const durationSelect = document.getElementById('duration');
@@ -21,6 +24,7 @@ const errorEl = document.getElementById('error');
 const errorText = document.getElementById('error-text');
 
 function logEvent(eventType, jobId = null, payload = {}) {
+  if (!PUBLIC_WRITES_ENABLED) return;
   const body = { event_type: eventType };
   if (jobId) body.job_id = jobId;
   if (Object.keys(payload).length) body.payload = payload;
@@ -72,6 +76,10 @@ function showResult(downloadUrl) {
 
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
+  if (!PUBLIC_WRITES_ENABLED) {
+    showError('Public generation is paused. Authenticated workers create jobs via the API.');
+    return;
+  }
   hideError();
   const prompt = promptInput.value.trim();
   if (!prompt) return;
@@ -136,7 +144,7 @@ downloadLink.addEventListener('click', () => {
 });
 
 function submitFeedback(rating) {
-  if (!currentJobId) return;
+  if (!PUBLIC_WRITES_ENABLED || !currentJobId) return;
   feedbackUp?.classList.add('feedback-given');
   feedbackDown?.classList.add('feedback-given');
   fetch(`${API_BASE}/api/jobs/${currentJobId}/feedback`, {
@@ -378,6 +386,10 @@ loopExploit?.addEventListener('input', () => {
 });
 
 loopSave?.addEventListener('click', async () => {
+  if (!PUBLIC_WRITES_ENABLED) {
+    alert('Loop settings require an authenticated worker (MOTION_API_SECRET). Public writes are paused.');
+    return;
+  }
   const enabled = loopEnabled.checked;
   const duration_seconds = Math.max(1, Math.min(60, parseInt(loopDuration?.value || '1', 10) || 1));
   const delay_seconds = Math.max(0, Math.min(600, parseInt(loopDelay.value, 10) || 30));
@@ -422,6 +434,11 @@ loopSave?.addEventListener('click', async () => {
 });
 
 loopEnabled?.addEventListener('change', async () => {
+  if (!PUBLIC_WRITES_ENABLED) {
+    loopEnabled.checked = !loopEnabled.checked;
+    alert('Loop toggle requires an authenticated worker (MOTION_API_SECRET). Public writes are paused.');
+    return;
+  }
   const enabled = loopEnabled.checked;
   try {
     const res = await fetch(`${API_BASE}/api/loop/config`, {
@@ -640,21 +657,35 @@ async function loadRegistries() {
   }
   if (registriesTables) registriesTables.hidden = true;
   try {
-    const [regRes, progRes] = await Promise.all([
-      fetch(`${API_BASE}/api/registries?limit=500`),
+    const fetchSec = async (section) => {
+      const r = await fetch(`${API_BASE}/api/registries?section=${section}&limit=100&offset=0`);
+      const t = await r.text();
+      if (t.trimStart().startsWith('<')) throw new Error('Registries API unavailable');
+      const d = JSON.parse(t);
+      if (!r.ok) throw new Error(d.error || 'Failed to load registries');
+      return d;
+    };
+    const [meta, staticSec, dynamicSec, narrativeSec, interpretationSec, linguisticSec, progRes] = await Promise.all([
+      fetchSec('meta'), fetchSec('static'), fetchSec('dynamic'), fetchSec('narrative'),
+      fetchSec('interpretation'), fetchSec('linguistic'),
       fetch(`${API_BASE}/api/loop/progress?last=20`),
     ]);
-    const regText = await regRes.text();
+    const data = {
+      static_primitives: meta.static_primitives,
+      dynamic_canonical: meta.dynamic_canonical,
+      static: staticSec.static || { colors: [], sound: [] },
+      dynamic: dynamicSec.dynamic || {},
+      narrative: narrativeSec.narrative || {},
+      interpretation: interpretationSec.interpretation || [],
+      linguistic: linguisticSec.linguistic || [],
+      truncated: !!(staticSec.truncated || dynamicSec.truncated || narrativeSec.truncated),
+    };
     const progText = await progRes.text();
-    if (regText.trimStart().startsWith('<')) throw new Error('Registries API unavailable');
-    let data;
-    try { data = JSON.parse(regText); } catch { throw new Error('Invalid registries response'); }
-    if (!regRes.ok) throw new Error(data.error || 'Failed to load registries');
     lastRegistriesData = data;
     lastProgressData = null;
     try { lastProgressData = JSON.parse(progText); } catch { /* ignore */ }
     renderRegistries(data);
-    registriesUpdated.textContent = `Updated ${new Date().toLocaleTimeString()}`;
+    registriesUpdated.textContent = `Updated ${new Date().toLocaleTimeString()}${data.truncated ? ' · paginated' : ''}`;
     if (registriesPrecision && !progText.trimStart().startsWith('<')) {
       try {
         const prog = JSON.parse(progText);

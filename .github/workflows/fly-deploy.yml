@@ -1,0 +1,97 @@
+# Deploy Fly.io loop workers + render services.
+# Requires repo secret FLY_API_TOKEN (fly tokens create deploy).
+#
+# Per-app secrets (set once via fly CLI):
+#   MOTION_API_SECRET, API_BASE (loops/webjobs)
+#   VIDEO_AI_RENDER_SECRET / R2 creds (video-ai)
+#   MOTION_API_SECRET (procedural-render)
+#
+name: Deploy Fly apps
+
+on:
+  workflow_dispatch:
+    inputs:
+      app:
+        description: "App to deploy (or all)"
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - motion-loop-explorer
+          - motion-loop-exploiter
+          - motion-loop-balanced
+          - motion-loop-interpret
+          - motion-loop-sound
+          - motion-loop-webjobs
+          - motion-procedural-render
+          - motion-productions
+  push:
+    branches: [main]
+    paths:
+      - "Dockerfile"
+      - "Dockerfile.video-ai"
+      - "fly.loop-*.toml"
+      - "fly.procedural-render.toml"
+      - "video-ai/**"
+      - "scripts/**"
+      - "src/**"
+      - "config/**"
+      - ".github/workflows/fly-deploy.yml"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: motion-loop-explorer
+            config: fly.loop-explorer.toml
+            cwd: .
+          - name: motion-loop-exploiter
+            config: fly.loop-exploiter.toml
+            cwd: .
+          - name: motion-loop-balanced
+            config: fly.loop-balanced.toml
+            cwd: .
+          - name: motion-loop-interpret
+            config: fly.loop-interpret.toml
+            cwd: .
+          - name: motion-loop-sound
+            config: fly.loop-sound.toml
+            cwd: .
+          - name: motion-loop-webjobs
+            config: fly.loop-webjobs.toml
+            cwd: .
+          - name: motion-procedural-render
+            config: fly.procedural-render.toml
+            cwd: .
+          - name: motion-productions
+            config: fly.toml
+            cwd: video-ai
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Skip if not selected
+        id: gate
+        run: |
+          SELECTED="${{ github.event.inputs.app || 'all' }}"
+          if [ "${{ github.event_name }}" = "push" ]; then
+            SELECTED=all
+          fi
+          if [ "$SELECTED" = "all" ] || [ "$SELECTED" = "${{ matrix.name }}" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+        if: steps.gate.outputs.run == 'true'
+
+      - name: Deploy ${{ matrix.name }}
+        if: steps.gate.outputs.run == 'true'
+        working-directory: ${{ matrix.cwd }}
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl deploy --config ${{ matrix.config }} --remote-only

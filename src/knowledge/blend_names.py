@@ -279,6 +279,27 @@ def _combine_words(words: list[str], max_len: int = 14) -> str:
     return combined if len(combined) >= 4 else ""
 
 
+def title_case_label(value: str) -> str:
+    """Convert snake_case or kebab-case value to a human-readable Title Case label."""
+    if not value or not str(value).strip():
+        return ""
+    parts = re.split(r"[\s_-]+", str(value).strip())
+    return " ".join(
+        (w[0].upper() + w[1:].lower()) if len(w) > 1 else w.upper()
+        for w in parts if w
+    )
+
+
+def narrative_display_name(aspect: str, entry_key: str, value: str = "") -> str:
+    """
+    Human-readable name for a semantic/narrative entry.
+    Uses the canonical value (e.g. 'cinematic', 'golden_hour') in Title Case
+    rather than unrelated invented words.
+    """
+    _ = aspect  # reserved for aspect-specific formatting later
+    return title_case_label(value or entry_key or "")
+
+
 def generate_blend_name(
     domain: str,
     prompt: str = "",

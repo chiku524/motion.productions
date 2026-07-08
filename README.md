@@ -6,6 +6,7 @@ Create and produce videos from text, script, or prompt — driven by base knowle
 - **Core foundation and loop:** [docs/INTENDED_LOOP.md](./docs/INTENDED_LOOP.md) — base knowledge, extraction, creation, learning loop
 - **Architecture:** [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) — procedural engine, interpreter & learning
 - **Automation & deployment:** [docs/AUTOMATION.md](./docs/AUTOMATION.md) — automate_loop, **Fly.io** workers (`fly.loop-*.toml`, `video-ai/fly.toml`)
+- **Local compute / Fly from scratch:** [docs/LOCAL_COMPUTE.md](./docs/LOCAL_COMPUTE.md) — Docker Compose on your CPU, tunnel, recreate Fly apps
 - **Deployment:** [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md) — Cloudflare Worker (D1, R2, KV), security, and Fly.io background workers (env, workflows, post-deploy checklist)
 - **Registry improvements:** [docs/REGISTRY_AND_WORKFLOW_IMPROVEMENTS.md](./docs/REGISTRY_AND_WORKFLOW_IMPROVEMENTS.md)
 - **Brand kit:** [docs/BRAND.md](./docs/BRAND.md)

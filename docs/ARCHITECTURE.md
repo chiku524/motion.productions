@@ -138,7 +138,7 @@ Clean organization: every file is in its respective directory.
 | `scripts/` | Entrypoints: generate.py, generate_bridge.py, automate_loop.py, automate.py, learn_from_api.py, learn_report.py, run_d1_migrations.py, seed_name_reserve.py. |
 | `cloudflare/` | Worker API (D1, R2, KV), migrations, static app. |
 | `src/` | Python source (see below). |
-| `Dockerfile`, `Procfile`, `fly.loop-*.toml`, `video-ai/fly.toml` | Deployment (Fly.io). |
+| `Dockerfile`, `Procfile`, `fly.loop-*.toml`, `fly.procedural-render.toml`, `video-ai/fly.toml` | Deployment (Fly.io). |
 
 **`src/` — Python package**
 
@@ -168,12 +168,16 @@ Clean organization: every file is in its respective directory.
 
 | Path | Purpose |
 |------|--------|
-| `cloudflare/src/index.ts` | Worker: API routes (jobs, upload, learning, knowledge/discoveries, for-creation). |
-| `cloudflare/migrations/` | D1 migrations: jobs, learning_runs, learned_*, static_colors, static_sound, narrative_entries. |
-| `cloudflare/public/` | Static app (HTML/CSS/JS). |
+| `cloudflare/src/index.ts` | Thin Worker entry: health, auth gate, route dispatch, assets. |
+| `cloudflare/src/routes/` | Modular API: jobs, loop, knowledge, registries, interpretation. |
+| `cloudflare/src/videoAiApi.ts` | Video AI lab: plan/render; `engine=procedural` → `PROCEDURAL_RENDER_URL`. |
+| `cloudflare/migrations/` | D1 migrations: jobs, learning_runs, learned_*, static_*, narrative, video_ai_jobs, … |
+| `cloudflare/public/` | Static app (HTML/CSS/JS), registries browser, video-ai lab. |
 | `cloudflare/wrangler.jsonc` | Wrangler config (D1, R2, KV). |
 
-**Data vs code:** Code = `src/`, `cloudflare/src/`, `scripts/`. Data/config = `config/`, `knowledge/`, `output/`. Docs = `docs/`.
+**Data vs code:** Code = `src/`, `cloudflare/src/`, `scripts/`. **Source of truth for registries = D1** (local `knowledge/` JSON is export/cache only). Config = `config/`. Docs = `docs/`.
+
+**Video AI merge path:** Recipe JSON with `meta.engine`: `recipe` (Node FFmpeg) or `procedural` (Python `generate_full_video` via Fly). See `video-ai/README.md`.
 
 ---
 

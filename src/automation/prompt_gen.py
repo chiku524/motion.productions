@@ -32,13 +32,20 @@ from ..procedural.data.keywords import (
 # Base subjects (palette-suggesting keywords)
 SUBJECTS_BASE = sorted(set(KEYWORD_TO_PALETTE.keys()))
 
-# Manus AI §4 Priority 5: when color coverage is low, bias toward warm/green to balance cool-tone skew
+# Manus AI §4 Priority 5: when color coverage is low, bias toward warm/green AND yellow/magenta
+# (depth_breakdown underuses yellow & magenta vs blue/gray/black/white).
 WARM_GREEN_SUBJECTS = [s for s in SUBJECTS_BASE if s in (
     "forest", "green", "fire", "flame", "red", "orange", "sunset", "sun", "dreamy", "dream",
-    "lavender", "pink", "purple",
+    "lavender", "pink", "purple", "yellow", "gold", "amber", "magenta", "fuchsia", "violet",
 )]
 if not WARM_GREEN_SUBJECTS:
-    WARM_GREEN_SUBJECTS = ["forest", "green", "fire", "sunset", "red", "orange", "dreamy"]
+    WARM_GREEN_SUBJECTS = ["forest", "green", "fire", "sunset", "red", "orange", "dreamy", "yellow", "magenta"]
+
+YELLOW_MAGENTA_SUBJECTS = [s for s in SUBJECTS_BASE if s in (
+    "yellow", "gold", "amber", "sun", "sunset", "orange", "magenta", "fuchsia", "pink", "purple", "violet", "lavender",
+)]
+if not YELLOW_MAGENTA_SUBJECTS:
+    YELLOW_MAGENTA_SUBJECTS = ["yellow", "gold", "magenta", "pink", "purple", "sunset"]
 
 # All modifier categories — every domain from INTENDED_LOOP represented
 _MODS_MOTION = [k for k in KEYWORD_TO_MOTION.keys() if k not in SUBJECTS_BASE]
@@ -338,15 +345,7 @@ def _is_near_duplicate(prompt: str, avoid: set[str], threshold: float = 0.8) -> 
 
 
 # API narrative aspect -> NARRATIVE_ORIGINS key (tone->mood, tension_curve->plots)
-_NARRATIVE_ASPECT_TO_ORIGIN: dict[str, str] = {
-    "genre": "genre",
-    "mood": "tone",
-    "themes": "themes",
-    "plots": "tension_curve",
-    "settings": "settings",
-    "style": "style",
-    "scene_type": "scene_type",
-}
+from ..knowledge.completion_targets import NARRATIVE_ASPECT_TO_ORIGIN as _NARRATIVE_ASPECT_TO_ORIGIN
 
 
 def generate_targeted_narrative_prompt(
@@ -521,8 +520,9 @@ def generate_procedural_prompt(
     bias_audio = secure_random() < 0.18
     bias_lighting = bias_palette_diversity and secure_random() < 0.4  # §2.7: more lighting mods when color coverage low
     bias_technical = bias_technical_modifier and secure_random() < 0.35
-    # Manus AI Priority 5: when color coverage low, bias subject toward warm/green to reduce cool-tone skew
+    # Manus AI Priority 5: when color coverage low, bias subject toward warm/green and yellow/magenta
     bias_warm_green = bias_palette_diversity and WARM_GREEN_SUBJECTS and secure_random() < 0.35
+    bias_yellow_magenta = bias_palette_diversity and YELLOW_MAGENTA_SUBJECTS and secure_random() < 0.25
     use_instructive = instructive_ratio > 0 and secure_random() < instructive_ratio
     slot_pools = _build_slot_pools(knowledge) if use_instructive else None
     use_slot_based = (
@@ -533,7 +533,12 @@ def generate_procedural_prompt(
     )
 
     for _ in range(max_attempts):
-        sub = secure_choice(WARM_GREEN_SUBJECTS) if bias_warm_green else secure_choice(sub_pool)
+        if bias_yellow_magenta:
+            sub = secure_choice(YELLOW_MAGENTA_SUBJECTS)
+        elif bias_warm_green:
+            sub = secure_choice(WARM_GREEN_SUBJECTS)
+        else:
+            sub = secure_choice(sub_pool)
         mods = _pick_diverse_mods(
             3, bias_audio=bias_audio, bias_lighting=bias_lighting, bias_technical=bias_technical
         )

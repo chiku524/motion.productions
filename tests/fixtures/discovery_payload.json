@@ -1,0 +1,40 @@
+{
+  "job_id": "11111111-1111-1111-1111-111111111111",
+  "static_colors": [
+    {
+      "key": "10,20,30",
+      "r": 10,
+      "g": 20,
+      "b": 30,
+      "name": "SlateMist",
+      "source_prompt": "ocean dusk",
+      "depth_breakdown": { "black": 40, "white": 20, "blue": 40 }
+    }
+  ],
+  "static_sound": [
+    {
+      "key": "0.5_mid_tone",
+      "amplitude": 0.5,
+      "tone": "mid",
+      "timbre": "tone",
+      "name": "SoftTone",
+      "strength_pct": 0.5,
+      "depth_breakdown": { "origin_noises": { "tone": 1.0 } }
+    }
+  ],
+  "motion": [
+    {
+      "key": "8_steady",
+      "motion_level": 8,
+      "motion_std": 1.2,
+      "motion_trend": "stable",
+      "motion_direction": "neutral",
+      "motion_rhythm": "steady",
+      "source_prompt": "ocean dusk",
+      "depth_breakdown": { "slow": 0.7, "medium": 0.3 }
+    }
+  ],
+  "narrative": {
+    "mood": [{ "key": "calm", "value": "calm", "name": "Calm", "source_prompt": "ocean dusk" }]
+  }
+}

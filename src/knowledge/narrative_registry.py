@@ -2,7 +2,7 @@
 Narrative registry: fictional/story blends for time-frames within the video.
 Plots, scripts, settings, genre, mood, themes, scene_type — the creative layer.
 Distinct from static (pure color, sound) and dynamic (blended over duration).
-Accuracy of recorded values is paramount. See docs/REGISTRIES.md.
+Accuracy of recorded values is paramount. See docs/REGISTRY_FOUNDATION.md.
 """
 from pathlib import Path
 from typing import Any
@@ -111,8 +111,8 @@ def ensure_narrative_in_registry(
         save_narrative_registry(aspect, data, config)
         return None
     names = {e.get("name", "") for e in data.get("entries", []) if e.get("name")}
-    from .blend_names import generate_sensible_name
-    name = generate_sensible_name(aspect, key, existing_names=names)
+    from .blend_names import narrative_display_name
+    name = narrative_display_name(aspect, key, value.strip())
     # depth_breakdown where applicable: single value = 100% that origin (REGISTRY_FOUNDATION)
     depth_breakdown: dict[str, Any] = {key: 1.0}
     entry: dict[str, Any] = {
@@ -208,6 +208,9 @@ def ensure_narrative_primitives_seeded(config: dict[str, Any] | None = None) -> 
     """
     Ensure every primitive (origin) narrative value is in the narrative registry.
     Idempotent: only adds entries whose key is missing. Maps NARRATIVE_ORIGINS to aspects.
+
+    Note: NARRATIVE_ORIGINS["tension_curve"] is stored under API/D1 aspect "plots"
+    (flat / slow_build / standard / immediate). Coverage treats plots as that axis.
     """
     from .origins import get_all_origins
     origins = get_all_origins()

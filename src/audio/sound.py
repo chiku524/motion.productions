@@ -224,8 +224,13 @@ def _generate_procedural_audio(
     mood: str = "neutral",
     tempo: str = "medium",
     presence: str = "ambient",
+    target_primitive: str | None = None,
 ) -> AudioSegment:
-    """Generate procedural audio from origin primitives (AUDIO_ORIGINS)."""
+    """
+    Generate procedural audio from origin primitives (AUDIO_ORIGINS).
+    When target_primitive is set (rustle/click/whoosh/…), shape the waveform so
+    Pure sound depth_breakdown can record that origin noise.
+    """
     from pydub import AudioSegment
 
     frame_rate = 44100
@@ -240,46 +245,100 @@ def _generate_procedural_audio(
         logger.warning("pydub.generators.Sine not available: %s — using silence for procedural audio", e)
         return base
 
-    # Mood: frequency and volume (origin primitives). Levels set so audio is clearly audible when unmuted.
+    try:
+        from pydub.generators import WhiteNoise
+    except ImportError:
+        WhiteNoise = None  # type: ignore[misc, assignment]
+
+    # Mood: frequency and volume (full AUDIO_ORIGINS mood set + film aliases).
     mood_config = {
         "neutral": (110, -22),
         "calm": (82, -20),
         "tense": (55, -18),
         "uplifting": (165, -20),
         "dark": (55, -18),
+        "dramatic": (82, -15),
+        "peaceful": (87, -25),
+        "chaotic": (220, -14),
+        "soft": (131, -26),
+        "harsh": (247, -12),
+        "dreamy": (174, -23),
+        "bright": (262, -15),
+        "energetic": (294, -13),
         "moody": (55, -20),
+        "melancholy": (73, -22),
+        "hopeful": (185, -17),
+        "ominous": (48, -18),
+        "playful": (330, -16),
+        "suspenseful": (92, -17),
+        "intense": (140, -12),
         "noir": (49, -19),
         "thriller": (44, -18),
     }
     freq, db = mood_config.get(mood, (110, -22))
 
-    # Tempo: tone length (origin primitive)
     tempo_ms = {"slow": 4000, "medium": 2500, "fast": 1200}.get(tempo, 2500)
     tone_dur = min(tempo_ms, duration_ms)
 
-    # Presence: intensity of audible content
     if presence == "full":
-        db = max(db - 4, -24)  # Louder for full
+        db = max(db - 4, -24)
     elif presence == "ambient":
-        db = db  # Keep quiet
-    # music/sfx: treat like ambient for now (future: add rhythm or SFX)
+        db = db
 
     tone = Sine(freq).to_audio_segment(duration=tone_dur) + db
     looped = _repeat_to_duration(tone, duration_ms)
     result = base.overlay(looped)
 
-    # §2.5: Add mid (tone) and high (hiss) layers so static_sound discoveries cover all four primitives
-    add_mid = mood in ("uplifting", "calm", "neutral") or random.random() < 0.35
-    add_high = mood in ("uplifting", "bright") or random.random() < 0.25
-    mid_freq, high_freq = 330, 1200  # Hz: tone band, hiss band
-    if add_mid:
-        mid_tone = Sine(mid_freq).to_audio_segment(duration=min(1500, duration_ms)) + (db - 8)
-        mid_looped = _repeat_to_duration(mid_tone, duration_ms)
-        result = result.overlay(mid_looped)
-    if add_high:
-        high_tone = Sine(high_freq).to_audio_segment(duration=min(800, duration_ms)) + (db - 12)
-        high_looped = _repeat_to_duration(high_tone, duration_ms)
-        result = result.overlay(high_looped)
+    # Cover all ten SOUND_ORIGIN_PRIMITIVES via spectral shape (mission: touch every origin noise).
+    prim = (target_primitive or "").strip().lower()
+    if not prim:
+        prim = random.choice(
+            ["tone", "hum", "hiss", "rumble", "rustle", "click", "whoosh", "thump", "drip", "tone"]
+        )
+
+    def _noise(dur: int, volume: int) -> AudioSegment:
+        if WhiteNoise is None:
+            return Sine(4000).to_audio_segment(duration=dur) + volume
+        return WhiteNoise().to_audio_segment(duration=dur) + volume
+
+    if prim == "hiss":
+        result = result.overlay(_noise(min(800, duration_ms), db - 10))
+    elif prim == "hum":
+        hum = Sine(60).to_audio_segment(duration=min(2000, duration_ms)) + (db - 6)
+        result = result.overlay(_repeat_to_duration(hum, duration_ms))
+    elif prim == "rumble":
+        rumble = Sine(40).to_audio_segment(duration=min(2500, duration_ms)) + (db - 4)
+        result = result.overlay(_repeat_to_duration(rumble, duration_ms))
+    elif prim == "rustle":
+        for t in range(0, duration_ms, 180):
+            result = result.overlay(_noise(min(60, duration_ms - t), db - 8), position=t)
+    elif prim == "click":
+        for t in range(0, duration_ms, max(400, tempo_ms // 2)):
+            click = Sine(2000).to_audio_segment(duration=18) + (db + 2)
+            result = result.overlay(click, position=t)
+            if WhiteNoise is not None:
+                result = result.overlay(_noise(12, db), position=t)
+    elif prim == "whoosh":
+        result = result.overlay(_noise(min(900, duration_ms), db - 6), position=max(0, duration_ms // 4))
+        result = result.overlay(Sine(800).to_audio_segment(duration=min(600, duration_ms)) + (db - 10))
+    elif prim == "thump":
+        thump = Sine(55).to_audio_segment(duration=80) + (db + 4)
+        for t in range(0, duration_ms, max(500, tempo_ms)):
+            result = result.overlay(thump, position=t)
+    elif prim == "drip":
+        for t in range(200, duration_ms, 700):
+            result = result.overlay(Sine(1200).to_audio_segment(duration=30) + (db - 2), position=t)
+    elif prim == "tone":
+        mid_tone = Sine(330).to_audio_segment(duration=min(1500, duration_ms)) + (db - 8)
+        result = result.overlay(_repeat_to_duration(mid_tone, duration_ms))
+    else:
+        if mood in ("uplifting", "calm", "neutral") or random.random() < 0.35:
+            mid_tone = Sine(330).to_audio_segment(duration=min(1500, duration_ms)) + (db - 8)
+            result = result.overlay(_repeat_to_duration(mid_tone, duration_ms))
+        if mood in ("uplifting", "bright") or random.random() < 0.25:
+            high_tone = Sine(1200).to_audio_segment(duration=min(800, duration_ms)) + (db - 12)
+            result = result.overlay(_repeat_to_duration(high_tone, duration_ms))
+
     return result
 
 
@@ -290,10 +349,12 @@ def generate_audio_only(
     mood: str = "neutral",
     tempo: str = "medium",
     presence: str = "ambient",
+    target_primitive: str | None = None,
 ) -> Path:
     """
     Generate procedural audio to a WAV file (no video). Used by the sound-only
     workflow to discover pure sound values without rendering video.
+    Pass target_primitive to bias toward a specific SOUND_ORIGIN_PRIMITIVES entry.
     """
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -303,6 +364,7 @@ def generate_audio_only(
         mood=mood,
         tempo=tempo,
         presence=presence,
+        target_primitive=target_primitive,
     )
     audio.export(str(output_path), format="wav")
     return output_path

@@ -3,7 +3,7 @@ Dynamic registry: combined frames = one instance.
 Holds lenient non-pure blends (time-bound): time, motion, audio_semantic, lighting,
 composition, graphics, temporal, technical. Successful single-value blends go to STATIC.
 Registries are 100% accurate; precise algorithms/functions live in scripts & code.
-See docs/REGISTRIES.md.
+See docs/REGISTRY_FOUNDATION.md.
 """
 from pathlib import Path
 from typing import Any

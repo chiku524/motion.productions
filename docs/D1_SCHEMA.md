@@ -2,7 +2,7 @@
 
 This document lists every D1 table, its role, and which registry it serves. There are **no unused or redundant tables**; each table is referenced by the Cloudflare Worker.
 
-**Migrations:** Run in order (`0000` … `0012`). After adding `0012_depth_breakdown_and_strength.sql`, run migrations before deploying the Worker so new columns exist.
+**Migrations:** Apply in order under `cloudflare/migrations/` (`0000` … `0020`). Large remote D1 databases can hit CPU time limit **7429** during `wrangler d1 migrations apply`; use the manual `d1-migrations.yml` workflow / `scripts/run_d1_migrations.py` in quiet windows. Some hot paths also run **runtime DDL** in the Worker (`learned_dynamic_meta`, `learned_colors.depth_breakdown_json`, `video_ai_jobs`) so production can recover when a migration import fails.
 
 ---
 
@@ -31,6 +31,10 @@ This document lists every D1 table, its role, and which registry it serves. Ther
 | **learned_time** | **Blended** | Time profiles. |
 | **learned_gradient** | **Blended** | Gradient profiles. |
 | **learned_camera** | **Blended** | Camera profiles. |
+| **learned_dynamic_meta** | **Blended** | Temporal/technical depth_breakdown sidecar (runtime DDL / migrations 0018–0019). |
+| **discovery_runs** | — | Per-job discovery recording for precision metrics (0013). |
+| **linguistic_registry** | **Interpretation** | Span → canonical linguistic mappings (0014). |
+| **video_ai_jobs** | — | Video AI async job status (0020; also runtime DDL). |
 
 ---
 
@@ -50,7 +54,11 @@ This document lists every D1 table, its role, and which registry it serves. Ther
 | 0009_workflow_type.sql | ALTER jobs (workflow_type) |
 | 0010_interpretations.sql | interpretations |
 | 0011_learned_gradient_camera.sql | learned_gradient, learned_camera |
-| 0012_depth_breakdown_and_strength.sql | ALTERs: static_colors (depth_breakdown_json), static_sound (depth_breakdown_json, strength_pct), narrative_entries (depth_breakdown_json), learned_audio_semantic (depth_breakdown_json) |
+| 0012_* | depth_breakdown / strength columns (split files for large D1) |
+| 0013_discovery_runs.sql | discovery_runs |
+| 0014_linguistic_registry.sql | linguistic_registry |
+| 0015–0019 | Additional depth columns / learned_dynamic_meta (some no-op SELECT 1 for ordering) |
+| 0020_video_ai_jobs.sql | video_ai_jobs |
 
 ---
 

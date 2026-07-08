@@ -27,6 +27,9 @@ export type VideoAiEnv = {
   OPENAI_MODEL?: string;
   VIDEO_AI_RENDER_URL?: string;
   VIDEO_AI_RENDER_SECRET?: string;
+  /** Python procedural render (engine=procedural) */
+  PROCEDURAL_RENDER_URL?: string;
+  MOTION_API_SECRET?: string;
   DB: D1Database;
   VIDEOS: R2Bucket;
 };
@@ -136,6 +139,82 @@ async function notifyRenderServiceEnqueue(
   }
 }
 
+function isProceduralRecipe(recipe: unknown): boolean {
+  if (!recipe || typeof recipe !== "object") return false;
+  const meta = (recipe as { meta?: { engine?: string } }).meta;
+  return (meta?.engine || "recipe") === "procedural";
+}
+
+function proceduralPromptFromRecipe(recipe: unknown): string {
+  if (!recipe || typeof recipe !== "object") return "";
+  const meta = (recipe as { meta?: { prompt?: string; title?: string } }).meta || {};
+  return String(meta.prompt || meta.title || "").trim();
+}
+
+function proceduralDurationFromRecipe(recipe: unknown): number {
+  if (!recipe || typeof recipe !== "object") return 6;
+  const scenes = (recipe as { scenes?: { durationSec?: number }[] }).scenes;
+  if (!Array.isArray(scenes) || !scenes.length) return 6;
+  const total = scenes.reduce((s, sc) => s + (Number(sc.durationSec) || 0), 0);
+  return Math.max(0.5, Math.min(total || 6, 60));
+}
+
+async function proxyProceduralRender(
+  env: VideoAiEnv,
+  recipe: unknown,
+): Promise<Response> {
+  const base = env.PROCEDURAL_RENDER_URL?.replace(/\/$/, "");
+  if (!base) {
+    return json(
+      {
+        error:
+          "PROCEDURAL_RENDER_URL is not configured. Deploy fly.procedural-render.toml and set the Worker secret.",
+      },
+      501,
+    );
+  }
+  const prompt = proceduralPromptFromRecipe(recipe);
+  if (!prompt) {
+    return json({ error: "meta.prompt is required when engine=procedural" }, 400);
+  }
+  const meta =
+    recipe && typeof recipe === "object"
+      ? ((recipe as { meta?: Record<string, unknown> }).meta || {})
+      : {};
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const secret = (env.MOTION_API_SECRET || env.VIDEO_AI_RENDER_SECRET || "").trim();
+  if (secret) {
+    headers["Authorization"] = `Bearer ${secret}`;
+    headers["X-Motion-Api-Key"] = secret;
+  }
+  const payload = {
+    prompt,
+    duration_seconds: proceduralDurationFromRecipe(recipe),
+    width: meta.width,
+    height: meta.height,
+    fps: meta.fps,
+    seed: meta.seed,
+    recipe,
+  };
+  const url = `${base}/render`;
+  let res = await fetch(url, { method: "POST", headers, body: JSON.stringify(payload) });
+  if (res.status === 503) {
+    await new Promise((r) => setTimeout(r, 2500));
+    res = await fetch(url, { method: "POST", headers, body: JSON.stringify(payload) });
+  }
+  if (!res.ok) {
+    const text = await res.text();
+    return json({ error: `Procedural render ${res.status}`, detail: text.slice(0, 400) }, 502);
+  }
+  return new Response(res.body, {
+    headers: {
+      "Content-Type": "video/mp4",
+      "Cache-Control": "no-store",
+      ...corsHeaders,
+    },
+  });
+}
+
 export async function handleVideoAiApi(
   request: Request,
   env: VideoAiEnv,
@@ -195,17 +274,6 @@ export async function handleVideoAiApi(
   }
 
   if (route === "/render" && request.method === "POST") {
-    const base = env.VIDEO_AI_RENDER_URL?.replace(/\/$/, "");
-    if (!base) {
-      return json(
-        {
-          error:
-            "VIDEO_AI_RENDER_URL is not configured. For MP4 output, run the Node render service (see video-ai/README.md) and set this variable on the Worker, or use local http://127.0.0.1:8788/render.",
-        },
-        501,
-      );
-    }
-
     let recipe: unknown;
     try {
       const body = await request.json();
@@ -215,6 +283,21 @@ export async function handleVideoAiApi(
           : body;
     } catch {
       return json({ error: "Invalid JSON" }, 400);
+    }
+
+    if (isProceduralRecipe(recipe)) {
+      return proxyProceduralRender(env, recipe);
+    }
+
+    const base = env.VIDEO_AI_RENDER_URL?.replace(/\/$/, "");
+    if (!base) {
+      return json(
+        {
+          error:
+            "VIDEO_AI_RENDER_URL is not configured. For MP4 output, run the Node render service (see video-ai/README.md) and set this variable on the Worker, or use local http://127.0.0.1:8788/render.",
+        },
+        501,
+      );
     }
 
     const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -245,17 +328,6 @@ export async function handleVideoAiApi(
   }
 
   if (route === "/jobs" && request.method === "POST") {
-    const base = env.VIDEO_AI_RENDER_URL?.replace(/\/$/, "");
-    if (!base) {
-      return json(
-        {
-          error:
-            "VIDEO_AI_RENDER_URL is not configured. Set it on the Worker and give the render host R2 credentials for async jobs (see video-ai/README.md).",
-        },
-        501,
-      );
-    }
-
     let recipe: unknown;
     try {
       const body = await request.json();
@@ -268,6 +340,26 @@ export async function handleVideoAiApi(
     }
     if (recipe === undefined || recipe === null || typeof recipe !== "object") {
       return json({ error: "Missing recipe" }, 400);
+    }
+    if (isProceduralRecipe(recipe)) {
+      return json(
+        {
+          error:
+            "engine=procedural does not support async R2 jobs yet. Use POST /video-ai/api/render (sync) with PROCEDURAL_RENDER_URL configured.",
+        },
+        501,
+      );
+    }
+
+    const base = env.VIDEO_AI_RENDER_URL?.replace(/\/$/, "");
+    if (!base) {
+      return json(
+        {
+          error:
+            "VIDEO_AI_RENDER_URL is not configured. Set it on the Worker and give the render host R2 credentials for async jobs (see video-ai/README.md).",
+        },
+        501,
+      );
     }
 
     const jobId = crypto.randomUUID();

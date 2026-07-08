@@ -2,9 +2,11 @@
 HTTP client for API calls. Uses requests + browser-like headers so Cloudflare
 WAF/Bot Fight Mode does not block server-side automation.
 Step 1 (ENHANCEMENTS): explicit success/failure, retries, and error context.
+When MOTION_API_SECRET or API_SECRET is set, sends Authorization: Bearer <secret>.
 """
 import json
 import logging
+import os
 import random
 import time
 
@@ -19,6 +21,17 @@ _API_HEADERS = {
     "Origin": "https://motion.productions",
     "Referer": "https://motion.productions/",
 }
+
+
+def _auth_headers() -> dict[str, str]:
+    """Attach API secret when configured (Fly workers / local scripts)."""
+    secret = (os.environ.get("MOTION_API_SECRET") or os.environ.get("API_SECRET") or "").strip()
+    if not secret:
+        return {}
+    return {
+        "Authorization": f"Bearer {secret}",
+        "X-Motion-Api-Key": secret,
+    }
 
 # Retry config: only retry on transient failures
 DEFAULT_MAX_RETRIES = 3
@@ -82,7 +95,7 @@ def api_request(
     )
     if needs_jitter:
         time.sleep(random.uniform(0, D1_JITTER_MAX_SECONDS))
-    headers = dict(_API_HEADERS)
+    headers = {**_API_HEADERS, **_auth_headers()}
     if raw_body is not None:
         body = raw_body
         if content_type:
@@ -180,8 +193,7 @@ def api_post(api_base: str, path: str, data: dict | None = None, raw_body: bytes
 def api_post_binary(api_base: str, path: str, body: bytes, content_type: str = "application/octet-stream", timeout: int = 120) -> None:
     """POST raw bytes (e.g. video upload). Returns None; raises APIError on error."""
     url = f"{api_base.rstrip('/')}{path}"
-    headers = dict(_API_HEADERS)
-    headers["Content-Type"] = content_type
+    headers = {**_API_HEADERS, **_auth_headers(), "Content-Type": content_type}
     try:
         resp = requests.post(url, data=body, headers=headers, timeout=timeout)
         resp.raise_for_status()

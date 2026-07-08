@@ -17,6 +17,12 @@ This document is the **authoritative foundation** for all registries. Everything
 
 ---
 
+## Source of truth = D1
+
+**Cloudflare D1** is the production source of truth for all four registries. Python workers grow registries by `POST /api/knowledge/discoveries` (and related endpoints). Local JSON under `knowledge/` (if present) is **export/cache only** — do not treat it as authoritative for production coverage or naming. Use `GET /api/registries` / `scripts/registry_cleanup.py` / JSON exports for offline analysis.
+
+---
+
 ## 2. Pure registry (Static) — rules
 
 - **Only pure elements.** One frame → one pixel (color) or one sample (sound). Adding opacity to an RGB produces a **pure blend** (still pure); each such blend gets a **name** and is stored as one entry.

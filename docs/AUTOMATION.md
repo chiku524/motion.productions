@@ -60,6 +60,8 @@ python scripts/automate.py --duration 5 --interval 120
 
 ## Deploy loop workers (Fly.io)
 
+**Apps deleted / starting over?** Use **[LOCAL_COMPUTE.md](LOCAL_COMPUTE.md)** — Docker Compose on your machine first, then `scripts/fly_bootstrap.sh` + deploys to recreate Fly from scratch.
+
 ### Prerequisites
 
 - API deployed at motion.productions
@@ -77,7 +79,9 @@ fly deploy --config fly.loop-explorer.toml
 
 Repeat with the other config files as needed. Full matrix and operational checklist: **[docs/DEPLOYMENT.md](DEPLOYMENT.md)** (Fly.io section).
 
-Default **`CMD`** is `python scripts/worker_start.py` (**`WORKER_START_SCRIPT`** selects `automate_loop` vs `interpret_loop` vs `sound_loop`).
+Default **`CMD`** is `python scripts/worker_start.py` (**`WORKER_START_SCRIPT`** selects `automate_loop` vs `interpret_loop` vs `sound_loop` vs `generate_bridge` vs `procedural_render`).
+
+**Local Docker (same image):** `docker compose -f docker-compose.local.yml up -d --build` — see [LOCAL_COMPUTE.md](LOCAL_COMPUTE.md).
 
 **Video AI** (FFmpeg render for the Worker): deploy from **`video-ai/`** with **`video-ai/fly.toml`** — see **`video-ai/README.md`**.
 

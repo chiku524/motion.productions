@@ -13,6 +13,7 @@ Requires: the API must be deployed. Jobs stay "pending" until this script (or si
 processes them and uploads the video.
 """
 import argparse
+import os
 import time
 from pathlib import Path
 
@@ -23,7 +24,7 @@ from src.procedural import ProceduralVideoGenerator
 
 
 def fetch_pending_jobs(api_base: str) -> list[dict]:
-    out = api_get(api_base, "/api/jobs?status=pending")
+    out = api_get(api_base, "/api/jobs?status=pending&limit=5")
     return out.get("jobs", [])
 
 
@@ -147,16 +148,27 @@ def process_job(job: dict, api_base: str, config: dict, learn: bool) -> bool:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Process pending Motion jobs and upload videos.")
-    parser.add_argument("--api-base", default="https://motion.productions", help="API base URL")
+    parser.add_argument("--api-base", default=os.environ.get("API_BASE", "https://motion.productions"), help="API base URL")
     parser.add_argument("--once", action="store_true", help="Process one job and exit")
     parser.add_argument("--learn", action="store_true", help="Log runs for learning")
-    parser.add_argument("--interval", type=int, default=30, help="Poll interval (seconds)")
+    parser.add_argument("--interval", type=int, default=int(os.environ.get("BRIDGE_INTERVAL_SECONDS", "30")), help="Poll interval (seconds)")
     parser.add_argument("--config", type=Path, default=None, help="Config YAML path")
+    parser.add_argument("--health-port", type=int, default=None, help="Health HTTP port; env HEALTH_PORT")
     args = parser.parse_args()
+
+    from src.workflow_utils import setup_graceful_shutdown, start_health_server, request_shutdown
+
+    setup_graceful_shutdown()
+    health_port = args.health_port if args.health_port is not None else int(os.environ.get("HEALTH_PORT", "0"))
+    if health_port:
+        start_health_server(health_port)
 
     config = load_config(args.config)
 
     while True:
+        if request_shutdown():
+            print("Shutdown requested. Exiting.")
+            return
         jobs = fetch_pending_jobs(args.api_base)
         if not jobs:
             if args.once:
