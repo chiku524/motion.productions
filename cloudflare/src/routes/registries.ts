@@ -418,18 +418,52 @@ if (path === "/api/registries/coverage" && request.method === "GET") {
   let countsReliable = true;
   const soundPrimitives = new Set<string>();
 
-  try {
-    const sc = await db.prepare("SELECT COUNT(*) as c FROM static_colors").first<{ c: number }>();
-    staticColorsCount = sc?.c ?? 0;
-  } catch {
-    countsReliable = false;
+  async function countTable(sql: string): Promise<number | null> {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const row = await db.prepare(sql).first<{ c: number }>();
+        return row?.c ?? 0;
+      } catch {
+        if (attempt === 0) {
+          await new Promise((r) => setTimeout(r, 50));
+          continue;
+        }
+        return null;
+      }
+    }
+    return null;
   }
-  try {
-    const ss = await db.prepare("SELECT COUNT(*) as c FROM static_sound").first<{ c: number }>();
-    staticSoundCount = ss?.c ?? 0;
-  } catch {
-    countsReliable = false;
+
+  const scCount = await countTable("SELECT COUNT(*) as c FROM static_colors");
+  if (scCount == null) countsReliable = false;
+  else staticColorsCount = scCount;
+
+  const ssCount = await countTable("SELECT COUNT(*) as c FROM static_sound");
+  if (ssCount == null) countsReliable = false;
+  else staticSoundCount = ssCount;
+
+  // If COUNT failed or returned 0 under load, fall back to a cheap existence probe + prior cache.
+  if (countsReliable === false || (staticColorsCount === 0 && staticSoundCount > 0)) {
+    try {
+      const probe = await db.prepare("SELECT color_key FROM static_colors LIMIT 1").first<{ color_key: string }>();
+      if (probe?.color_key && env.MOTION_KV) {
+        const prev = await env.MOTION_KV.get(coverageCacheKey);
+        if (prev) {
+          const parsed = JSON.parse(prev) as { static_colors_count?: number };
+          if ((parsed.static_colors_count ?? 0) > 0) {
+            staticColorsCount = parsed.static_colors_count as number;
+            countsReliable = true;
+          }
+        }
+      }
+      // Still unknown: report at least 1 so UI/loop do not treat registry as empty.
+      if (probe?.color_key && staticColorsCount === 0) {
+        staticColorsCount = 1;
+        countsReliable = false;
+      }
+    } catch { /* ignore */ }
   }
+
   try {
     const rows = await db.prepare("SELECT depth_breakdown_json FROM static_sound LIMIT 500")
       .all<{ depth_breakdown_json: string | null }>();
