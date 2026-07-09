@@ -49,8 +49,9 @@ BUILTIN_LINGUISTIC: dict[str, dict[str, str]] = {
     },
     # Setting (location/env for narrative)
     "setting": {
-        "forest": "nature", "city": "urban", "ocean": "ocean", "night": "night",
-        "day": "day", "urban": "urban", "nature": "nature", "indoors": "urban",
+        "forest": "forest", "city": "city", "ocean": "ocean", "night": "night",
+        "day": "day", "urban": "city", "nature": "forest", "indoors": "interior",
+        "beach": "beach", "desert": "desert", "rain": "rain", "sunset": "golden_hour",
     },
     # Tone and style synonyms (improve resolution for lighting/spec refinement)
     "tone": {

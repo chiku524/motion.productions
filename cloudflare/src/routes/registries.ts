@@ -15,6 +15,8 @@ import { COLOR_PRIMARIES_FOR_API, COLOR_PRIMITIVE_NAMES } from "../colorPrimarie
 import {
   STATIC_COLOR_ESTIMATED_CELLS,
   ENTITY_ESTIMATED_CELLS,
+  SETTING_ESTIMATED_CELLS,
+  SETTING_PRIMITIVES,
   NARRATIVE_ORIGIN_SIZES,
   DYNAMIC_CANONICAL,
 } from "../registryConstants.generated";
@@ -550,6 +552,16 @@ if (path === "/api/registries/coverage" && request.method === "GET") {
       ? Math.min(100, Math.round((100 * learnedEntitiesCount) / ENTITY_ESTIMATED_CELLS * 100) / 100)
       : 0;
 
+  // Setting backdrop coverage: distinct narrative settings that match SETTING_PRIMITIVES
+  const settingKeys = new Set(
+    (narrative["settings"]?.entry_keys || []).map((k) => String(k).toLowerCase()),
+  );
+  const settingsPresent = SETTING_PRIMITIVES.filter((s) => settingKeys.has(s));
+  const settingsCoveragePct =
+    SETTING_ESTIMATED_CELLS > 0
+      ? Math.min(100, Math.round((100 * settingsPresent.length) / SETTING_ESTIMATED_CELLS * 100) / 100)
+      : 0;
+
   const coverage = {
     static_colors_count: staticColorsCount,
     static_colors_estimated_cells: STATIC_COLOR_ESTIMATED_CELLS,
@@ -579,6 +591,10 @@ if (path === "/api/registries/coverage" && request.method === "GET") {
     learned_entities_count: learnedEntitiesCount,
     learned_entities_estimated_cells: ENTITY_ESTIMATED_CELLS,
     learned_entities_coverage_pct: entitiesCoveragePct,
+    setting_primitives_present: settingsPresent,
+    setting_primitives_missing: SETTING_PRIMITIVES.filter((s) => !settingKeys.has(s)),
+    setting_estimated_cells: SETTING_ESTIMATED_CELLS,
+    setting_coverage_pct: settingsCoveragePct,
     narrative,
     /** plots aspect stores tension_curve origins (flat/slow_build/standard/immediate). */
     tension_curve_note: "narrative.plots == NARRATIVE_ORIGINS.tension_curve",
@@ -593,6 +609,7 @@ if (path === "/api/registries/coverage" && request.method === "GET") {
       static_color_estimated_cells: STATIC_COLOR_ESTIMATED_CELLS,
       static_sound_num_primitives: SOUND_PRIMARIES_FOR_COVERAGE.length,
       entity_estimated_cells: ENTITY_ESTIMATED_CELLS,
+      setting_estimated_cells: SETTING_ESTIMATED_CELLS,
       narrative_origin_sizes: { ...NARRATIVE_ORIGIN_SIZES },
       dynamic_canonical_sizes: {
         gradient: DYNAMIC_CANONICAL.gradient_type.length,

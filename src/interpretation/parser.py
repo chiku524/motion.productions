@@ -31,6 +31,8 @@ from ..procedural.data.keywords import (
     KEYWORD_TO_ENTITY_KIND,
     KEYWORD_TO_EXPRESSION,
     KEYWORD_TO_PERSONALITY,
+    KEYWORD_TO_SETTING,
+    SETTING_VISUAL_DEFAULTS,
     STYLE_PHRASE_TO_STYLE,
     KEYWORD_TO_STYLE,
     MOOD_TO_TONE,
@@ -297,6 +299,26 @@ def _resolve_lighting_hints(words: list[str], linguistic_registry: dict[str, dic
                 hints.append(p)
                 seen.add(p)
     return hints if hints else [DEFAULT_LIGHTING]
+
+
+def _resolve_setting(words: list[str], linguistic_registry: dict[str, dict[str, str]] | None = None) -> str | None:
+    """Resolve environment/setting for mini-scene backgrounds + narrative registry."""
+    lookup = _merge_linguistic("setting", KEYWORD_TO_SETTING, linguistic_registry)
+    for w in words:
+        if w in lookup:
+            return lookup[w]
+    return None
+
+
+def _resolve_theme(words: list[str], linguistic_registry: dict[str, dict[str, str]] | None = None) -> str | None:
+    """Resolve narrative theme when present in prompt."""
+    from .language_standard import BUILTIN_LINGUISTIC
+    base = dict(BUILTIN_LINGUISTIC.get("theme") or {})
+    lookup = _merge_linguistic("theme", base, linguistic_registry)
+    for w in words:
+        if w in lookup:
+            return lookup[w]
+    return None
 
 
 def _resolve_composition_balance_hints(words: list[str], linguistic_registry: dict[str, dict[str, str]] | None = None) -> list[str]:
@@ -653,6 +675,21 @@ def interpret_user_prompt(
     shot = _resolve_shot(words, linguistic_registry)
     transition = _resolve_transition(words, linguistic_registry)
     lighting = _resolve_lighting(words, linguistic_registry)
+    setting = _resolve_setting(words, linguistic_registry)
+    theme = _resolve_theme(words, linguistic_registry)
+    # Setting fills in palette/lighting/gradient when prompt didn't specify them strongly
+    if setting and setting in SETTING_VISUAL_DEFAULTS:
+        vis = SETTING_VISUAL_DEFAULTS[setting]
+        if palette == DEFAULT_PALETTE and vis.get("palette"):
+            palette = vis["palette"]
+            if vis["palette"] not in palette_hints:
+                palette_hints = [vis["palette"]] + [h for h in palette_hints if h != vis["palette"]]
+        if lighting == DEFAULT_LIGHTING and vis.get("lighting"):
+            lighting = vis["lighting"]
+            if lighting not in lighting_hints:
+                lighting_hints = [lighting] + [h for h in lighting_hints if h != lighting]
+        if gradient == DEFAULT_GRADIENT and vis.get("gradient"):
+            gradient = vis["gradient"]
     genre_resolved = _resolve_genre(words, linguistic_registry)
     composition_balance = _resolve_composition_balance(words, linguistic_registry)
     composition_symmetry = _resolve_composition_symmetry(words, linguistic_registry)
@@ -697,7 +734,7 @@ def interpret_user_prompt(
         KEYWORD_TO_AUDIO_PRESENCE, KEYWORD_TO_AUDIO_GENRE,
         KEYWORD_TO_MOTION_DIRECTIONALITY, KEYWORD_TO_MOTION_SMOOTHNESS,
         KEYWORD_TO_MOTION_RHYTHM, KEYWORD_TO_SFX_KIND, KEYWORD_TO_ENTITY_KIND,
-        KEYWORD_TO_EXPRESSION, KEYWORD_TO_PERSONALITY,
+        KEYWORD_TO_EXPRESSION, KEYWORD_TO_PERSONALITY, KEYWORD_TO_SETTING,
     )
     contributing: list[str] = []
     for w in words:
@@ -752,6 +789,8 @@ def interpret_user_prompt(
         duration_seconds=duration,
         style=style,
         tone=tone,
+        setting=setting,
+        theme=theme,
         keywords=contributing,
         avoid_motion=avoid_motion,
         avoid_palette=avoid_palette,

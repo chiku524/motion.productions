@@ -528,6 +528,18 @@ def generate_targeted_entity_prompt(
     }
     label = labels.get(kind, "shape")
     color = secure_choice(["red", "blue", "green", "neon", "warm", "cool"])
+    setting = secure_choice([
+        "at night",
+        "in a neon city",
+        "at sunset",
+        "in a forest",
+        "by the ocean",
+        "in the rain",
+        "in a desert",
+        "underwater",
+        "in a studio",
+        "",
+    ])
     music = secure_choice([
         "deep house beat",
         "techno music",
@@ -535,14 +547,15 @@ def generate_targeted_entity_prompt(
         "cinematic music",
         "soft vocals",
     ])
+    setting_bit = f" {setting}" if setting else ""
     if kind == "character":
         expr = secure_choice(["happy", "calm", "playful", "shy", ""])
-        prompt = f"a {expr + ' ' if expr else ''}{label} walking {traj} with {music}".strip()
+        prompt = f"a {expr + ' ' if expr else ''}{label} walking {traj}{setting_bit} with {music}".strip()
         prompt = " ".join(prompt.split())
     elif bounce:
-        prompt = f"a {color} {label} bouncing {traj} with {music}"
+        prompt = f"a {color} {label} bouncing {traj}{setting_bit} with {music}"
     else:
-        prompt = f"a {color} {label} drifting {traj} with {music}"
+        prompt = f"a {color} {label} drifting {traj}{setting_bit} with {music}"
     if prompt in avoid or _is_near_duplicate(prompt, avoid):
         return None
     return prompt
@@ -605,7 +618,95 @@ _MINI_SCENE_TEMPLATES: list[str] = [
     "an arrow spins and flourishes toward the camera with cinematic music",
     "a person does a double take then walks away with soft vocals",
     "comedy beat: ball enters then bounces then exits with click SFX",
+    # Setting-themed backgrounds (discoverable narrative settings)
+    "a red ball bouncing left at sunset with warm ambient vocals",
+    "a person walking right through a neon city with techno music",
+    "a blue orb drifting upward by the ocean with calm ambient music",
+    "a character walking left in a forest with soft vocals",
+    "a green block bouncing at night with tense techno",
+    "an arrow flying toward the camera in the rain with cinematic music",
+    "a happy person walking left at golden hour with uplifting house music",
+    "a ball bouncing in a desert with deep house beat",
+    "a shy character walking right underwater with dreamy ambient",
+    "a neon arrow sweeping left in a city night with whoosh and house beat",
+    "studio product vibe: white circle pulsing in a clean studio with soft clicks",
+    "mountain mood: silhouette walking left under a cool sky with ambient pad",
 ]
+
+
+_SETTING_PHRASES = [
+    "at sunset",
+    "at night",
+    "in a neon city",
+    "by the ocean",
+    "in a forest",
+    "in the rain",
+    "in a desert",
+    "underwater",
+    "in a studio",
+    "at golden hour",
+]
+
+
+def mutate_liked_prompt(prompt: str, *, avoid: set[str] | None = None) -> str | None:
+    """
+    Exploit human-liked prompts by mutating setting / expression / direction
+    instead of replaying the exact string — grows discovery while keeping quality.
+    """
+    avoid = avoid or set()
+    base = (prompt or "").strip()
+    if not base or len(base) < 8:
+        return None
+    lower = base.lower()
+    variants: list[str] = []
+
+    # Swap / inject setting
+    setting = secure_choice(_SETTING_PHRASES)
+    replaced = False
+    for phrase in _SETTING_PHRASES:
+        if phrase in lower:
+            variants.append(base.replace(phrase, setting).replace(phrase.title(), setting))
+            # case-insensitive replace once
+            idx = lower.find(phrase)
+            if idx >= 0:
+                variants.append(base[:idx] + setting + base[idx + len(phrase) :])
+            replaced = True
+            break
+    if not replaced:
+        # Insert setting before "with" if present
+        if " with " in lower:
+            i = lower.rfind(" with ")
+            variants.append(base[:i] + f" {setting}" + base[i:])
+        else:
+            variants.append(f"{base} {setting}")
+
+    # Flip left/right
+    if " left" in lower:
+        variants.append(base.replace(" left", " right").replace(" Left", " Right"))
+    elif " right" in lower:
+        variants.append(base.replace(" right", " left").replace(" Right", " Left"))
+
+    # Expression swap for characters
+    for old, new in (("happy", "calm"), ("calm", "playful"), ("playful", "shy"), ("shy", "happy"),
+                     ("sad", "happy"), ("angry", "calm")):
+        if old in lower:
+            variants.append(base.replace(old, new).replace(old.title(), new))
+            break
+
+    candidates = []
+    seen: set[str] = set()
+    for v in variants:
+        v = " ".join(v.split()).strip()
+        if not v or v == base or v in avoid or v in seen:
+            continue
+        # Only reject if too close to *other* avoided prompts (not the parent)
+        if _is_near_duplicate(v, avoid - {base}):
+            continue
+        seen.add(v)
+        candidates.append(v)
+    if not candidates:
+        return None
+    return secure_choice(candidates)
 
 
 def generate_mini_scene_prompt(

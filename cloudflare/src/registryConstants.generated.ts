@@ -7,6 +7,10 @@ export const STATIC_SOUND_NUM_PRIMITIVES = 10;
 
 export const ENTITY_ESTIMATED_CELLS = 56;
 
+export const SETTING_ESTIMATED_CELLS = 19;
+
+export const SETTING_PRIMITIVES = ["city", "neon", "ocean", "beach", "underwater", "forest", "night", "noir", "golden_hour", "day", "desert", "mountain", "space", "studio", "interior", "exterior", "rain", "moody", "abstract"] as const;
+
 export const SOUND_ORIGIN_PRIMARIES = ["silence", "rumble", "hum", "tone", "hiss", "rustle", "thump", "click", "whoosh", "drip"] as const;
 
 export const NARRATIVE_ORIGIN_SIZES: Record<string, number> = {
@@ -164,5 +168,51 @@ export const DYNAMIC_CANONICAL = {
     "toward",
     "away",
     "none"
+  ],
+  "expression": [
+    "neutral",
+    "happy",
+    "sad",
+    "angry",
+    "calm",
+    "excited",
+    "nervous"
+  ],
+  "personality": [
+    "neutral",
+    "playful",
+    "serious",
+    "energetic",
+    "shy",
+    "confident"
+  ],
+  "gag": [
+    "none",
+    "squash",
+    "spin",
+    "wink",
+    "flourish",
+    "double_take"
+  ],
+  "setting": [
+    "city",
+    "neon",
+    "ocean",
+    "beach",
+    "underwater",
+    "forest",
+    "night",
+    "noir",
+    "golden_hour",
+    "day",
+    "desert",
+    "mountain",
+    "space",
+    "studio",
+    "interior",
+    "exterior",
+    "rain",
+    "moody",
+    "abstract"
   ]
 } as const;

@@ -78,6 +78,10 @@ class InterpretedInstruction:
     style: str | None = None
     tone: str | None = None
 
+    # Setting / theme (mini-scene backgrounds + narrative registry)
+    setting: str | None = None  # city | ocean | night | forest | golden_hour | …
+    theme: str | None = None
+
     # Keywords extracted (for lookup and learning)
     keywords: list[str] = field(default_factory=list)
 

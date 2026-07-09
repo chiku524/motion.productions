@@ -80,6 +80,51 @@ def _gradient_value(
     return np.clip(v, 0, 1)
 
 
+def _apply_setting_backdrop(
+    r: "np.ndarray",
+    g: "np.ndarray",
+    b: "np.ndarray",
+    yy: "np.ndarray",
+    setting: str,
+    intensity: float,
+) -> tuple["np.ndarray", "np.ndarray", "np.ndarray"]:
+    """
+    Soft horizon / ground / sky bands for setting-themed mini-scene backgrounds.
+    Keeps the look procedural and primitive so settings remain discoverable.
+    """
+    s = (setting or "").strip().lower()
+    amp = 0.22 * max(0.3, min(1.0, intensity))
+    ground = np.clip((yy - 0.62) / 0.38, 0, 1) ** 1.4
+    sky = np.clip((0.38 - yy) / 0.38, 0, 1) ** 1.2
+    # (ground_rgb_delta, sky_rgb_delta)
+    deltas: dict[str, tuple[tuple[float, float, float], tuple[float, float, float]]] = {
+        "city": ((18, 8, 28), (-10, -5, 35)),
+        "neon": ((25, 0, 40), (-5, 20, 45)),
+        "ocean": ((-15, 10, 35), (-20, 25, 50)),
+        "beach": ((40, 28, 8), (20, 35, 55)),
+        "underwater": ((-30, 15, 40), (-40, 20, 55)),
+        "forest": ((-10, 35, -5), (-15, 20, 10)),
+        "night": ((-25, -20, -5), (-35, -25, 15)),
+        "noir": ((-30, -30, -25), (-40, -35, -20)),
+        "golden_hour": ((45, 22, -5), (50, 30, 5)),
+        "day": ((15, 18, 5), (10, 25, 45)),
+        "desert": ((50, 30, 5), (35, 40, 20)),
+        "mountain": ((10, 15, 20), (5, 20, 40)),
+        "space": ((-40, -35, -10), (-50, -40, 20)),
+        "studio": ((8, 8, 10), (12, 12, 15)),
+        "interior": ((12, 8, 5), (5, 5, 8)),
+        "exterior": ((15, 20, 8), (8, 22, 40)),
+        "rain": ((-20, -5, 15), (-25, 5, 25)),
+        "moody": ((-15, -10, 5), (-25, -15, 20)),
+        "abstract": ((20, -10, 35), (10, 15, 40)),
+    }
+    ground_d, sky_d = deltas.get(s, ((10, 10, 10), (8, 12, 20)))
+    r = np.clip(r + ground * (ground_d[0] * amp) + sky * (sky_d[0] * amp), 0, 255)
+    g = np.clip(g + ground * (ground_d[1] * amp) + sky * (sky_d[1] * amp), 0, 255)
+    b = np.clip(b + ground * (ground_d[2] * amp) + sky * (sky_d[2] * amp), 0, 255)
+    return r, g, b
+
+
 def _render_pure_per_frame(
     xx: "np.ndarray",
     yy: "np.ndarray",
@@ -332,6 +377,11 @@ def render_frame(
         r = np.clip(r + (n - 0.5) * amp, 0, 255)
         g = np.clip(g + (n - 0.5) * amp, 0, 255)
         b = np.clip(b + (n - 0.5) * amp, 0, 255)
+
+        # Setting backdrop primitives: horizon / ground / sky bands (discoverable themes)
+        setting = getattr(spec, "setting", None)
+        if setting:
+            r, g, b = _apply_setting_backdrop(r, g, b, yy, str(setting), intensity)
 
     # Shape overlay (soft circle or rect) — legacy single overlay
     shape_overlay = getattr(spec, "shape_overlay", "none") or "none"

@@ -61,6 +61,21 @@ ENTITY_KINDS = ["circle", "rect", "arrow", "character"]
 ENTITY_TRAJECTORIES = ["left", "right", "up", "down", "toward", "away", "none"]
 ENTITY_ESTIMATED_CELLS = len(ENTITY_KINDS) * len(ENTITY_TRAJECTORIES) * 2  # × bounce on/off
 
+# Expression / personality / gag axes (Phase D/F) — coverage for character fidelity
+EXPRESSION_VALUES = ["neutral", "happy", "sad", "angry", "calm", "excited", "nervous"]
+PERSONALITY_VALUES = ["neutral", "playful", "serious", "energetic", "shy", "confident"]
+GAG_VALUES = ["none", "squash", "spin", "wink", "flourish", "double_take"]
+# Character expression×personality + gag primitives (rough cell estimate for coverage UI)
+EXPRESSION_PERSONALITY_CELLS = (len(EXPRESSION_VALUES) - 1) * (len(PERSONALITY_VALUES) - 1)  # skip all-neutral
+GAG_ESTIMATED_CELLS = len(GAG_VALUES) - 1  # non-none gags
+
+# Setting backdrop primitives (mini-scene backgrounds)
+SETTING_PRIMITIVES = [
+    "city", "neon", "ocean", "beach", "underwater", "forest", "night", "noir",
+    "golden_hour", "day", "desert", "mountain", "space", "studio", "interior",
+    "exterior", "rain", "moody", "abstract",
+]
+SETTING_ESTIMATED_CELLS = len(SETTING_PRIMITIVES)
 # Canonical lists for Worker/UI (keep in sync via gen_registry_constants_ts.py)
 DYNAMIC_CANONICAL = {
     "gradient_type": list(GRAPHICS_ORIGINS["gradient_type"]),
@@ -84,6 +99,10 @@ DYNAMIC_CANONICAL = {
     ],
     "entity_kind": list(ENTITY_KINDS),
     "entity_trajectory": list(ENTITY_TRAJECTORIES),
+    "expression": list(EXPRESSION_VALUES),
+    "personality": list(PERSONALITY_VALUES),
+    "gag": list(GAG_VALUES),
+    "setting": list(SETTING_PRIMITIVES),
 }
 
 

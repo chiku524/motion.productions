@@ -94,6 +94,7 @@ def pick_prompt(
         generate_targeted_blended_prompt,
         generate_targeted_entity_prompt,
         generate_targeted_narrative_prompt,
+        mutate_liked_prompt,
     )
 
     good = state.get("good_prompts", [])
@@ -148,6 +149,12 @@ def pick_prompt(
         pool = natural or [p for p in good if p not in recent and p not in bad] or [p for p in good if p not in bad] or good
         chosen = secure_choice(pool)
         if chosen and chosen not in bad:
+            # Prefer mutating liked prompts (~65%) so exploit still discovers new settings/axes
+            if secure_random() < 0.65:
+                variant = mutate_liked_prompt(chosen, avoid=recent | bad)
+                if variant:
+                    logger.info("Liked-prompt variant: %s", variant[:70] + ("..." if len(variant) > 70 else ""))
+                    return (variant, True, {"source": "exploit_good_variant", "parent": chosen[:80]})
             return (chosen, True, {"source": "exploit_good"})
 
     # Fill thin entity space with targeted entity mini-scenes

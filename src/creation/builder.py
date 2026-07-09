@@ -19,7 +19,10 @@ from ..knowledge.origins import GRAPHICS_ORIGINS, CAMERA_ORIGINS
 from ..procedural.data.keywords import (
     DEFAULT_CAMERA,
     DEFAULT_GRADIENT,
+    DEFAULT_LIGHTING,
     DEFAULT_MOTION,
+    DEFAULT_PALETTE,
+    SETTING_VISUAL_DEFAULTS,
 )
 from ..procedural.data.palettes import PALETTES
 from ..procedural.parser import SceneSpec
@@ -235,7 +238,20 @@ def build_spec_from_instruction(
         pool = _pool_from_knowledge(knowledge, "learned_camera", "origin_camera", _CAMERA_VALID)
         camera = secure_choice(pool) if pool else secure_choice([v for v in CAMERA_ORIGINS["motion_type"] if v in _CAMERA_VALID] or list(_CAMERA_VALID))
 
-    # Pure-per-frame creation (§7): pool = origin primitives + discovered static (learned) colors
+    # Setting → themed palette / lighting / gradient (before pure-pool decision)
+    setting = getattr(instruction, "setting", None)
+    if setting:
+        vis = SETTING_VISUAL_DEFAULTS.get(setting) or {}
+        if vis.get("palette") and palette in (DEFAULT_PALETTE, "default"):
+            palette = vis["palette"]
+            if vis["palette"] in PALETTES:
+                palette_colors = list(PALETTES[vis["palette"]])
+        if vis.get("lighting") and lighting in (DEFAULT_LIGHTING, "neutral"):
+            lighting = vis["lighting"]
+        if vis.get("gradient") and gradient == DEFAULT_GRADIENT:
+            gradient = vis["gradient"]
+
+    # Pure-per-frame pool built early; mode finalized after entities (mini-scenes → blended)
     pure_colors = _build_pure_color_pool(knowledge, instruction, avoid_palette=avoid_palette)
     creation_mode = "pure_per_frame" if pure_colors else "blended"
 
@@ -382,6 +398,15 @@ def build_spec_from_instruction(
         ):
             sfx_events = infer_bounce_events(duration_hint)
 
+    # Mini-scenes with entities: blended palette gradients (setting themes), not rainbow mesh
+    wants_pure = any(
+        w in (getattr(instruction, "raw_prompt", "") or "").lower()
+        for w in ("pure mesh", "pure color", "color mesh", "per-frame pure", "rainbow mesh")
+    )
+    if (entities or scene_layers) and not wants_pure:
+        creation_mode = "blended"
+        pure_colors = None
+
     spec = SceneSpec(
         palette_name=palette,
         motion_type=motion,
@@ -397,6 +422,7 @@ def build_spec_from_instruction(
         lighting_preset=lighting,
         genre=genre_val,
         style=style_val or "cinematic",
+        setting=setting,
         composition_balance=composition_balance,
         composition_symmetry=composition_symmetry,
         pacing_factor=pacing_factor,

@@ -14,6 +14,9 @@ def entity_profile_key(
     bounce: bool = False,
     color_hint: str | None = None,
     directionality: str = "none",
+    expression: str = "neutral",
+    personality: str = "neutral",
+    gag: str = "none",
 ) -> str:
     """Stable composite key for an entity profile (matches Worker upsert)."""
     kind = (kind or "circle").strip().lower() or "circle"
@@ -21,7 +24,14 @@ def entity_profile_key(
     bounce_s = "1" if bounce else "0"
     color = (color_hint or "none").strip().lower() or "none"
     direc = (directionality or "none").strip().lower() or "none"
-    return f"{kind}_{traj}_{bounce_s}_{color}_{direc}"
+    expr = (expression or "neutral").strip().lower() or "neutral"
+    pers = (personality or "neutral").strip().lower() or "neutral"
+    gag_s = (gag or "none").strip().lower() or "none"
+    # Keep base key compatible; append expression/personality/gag when non-default
+    base = f"{kind}_{traj}_{bounce_s}_{color}_{direc}"
+    if expr != "neutral" or pers != "neutral" or gag_s != "none":
+        return f"{base}_{expr}_{pers}_{gag_s}"
+    return base
 
 
 def _normalize_entity(ent: dict[str, Any]) -> dict[str, Any] | None:
@@ -36,6 +46,11 @@ def _normalize_entity(ent: dict[str, Any]) -> dict[str, Any] | None:
     if color_hint is not None:
         color_hint = str(color_hint).strip().lower() or None
     directionality = str(ent.get("directionality") or "none").strip().lower() or "none"
+    expression = str(ent.get("expression") or "neutral").strip().lower() or "neutral"
+    personality = str(ent.get("personality") or "neutral").strip().lower() or "neutral"
+    gag = str(ent.get("gag") or "none").strip().lower() or "none"
+    if bounce and gag == "none":
+        gag = "squash"
     label = str(ent.get("label") or kind).strip()[:80]
     key = entity_profile_key(
         kind,
@@ -43,6 +58,9 @@ def _normalize_entity(ent: dict[str, Any]) -> dict[str, Any] | None:
         bounce=bounce,
         color_hint=color_hint,
         directionality=directionality,
+        expression=expression,
+        personality=personality,
+        gag=gag,
     )
     return {
         "key": key,
@@ -52,6 +70,9 @@ def _normalize_entity(ent: dict[str, Any]) -> dict[str, Any] | None:
         "color_hint": color_hint,
         "label": label,
         "directionality": directionality,
+        "expression": expression,
+        "personality": personality,
+        "gag": gag,
         "sfx_on": list(ent.get("sfx_on") or []),
     }
 
@@ -110,6 +131,9 @@ def entities_from_instruction_or_spec(
                 "directionality": "horizontal" if traj in ("left", "right") else (
                     "vertical" if traj in ("up", "down") else "none"
                 ),
+                "expression": layer.get("expression") or "neutral",
+                "personality": layer.get("personality") or "neutral",
+                "gag": layer.get("gag") or "none",
                 "sfx_on": layer.get("sfx_on") or [],
             })
             if not norm or norm["key"] in seen:
@@ -143,6 +167,9 @@ def grow_entities_from_spec(
             "color_hint": ent.get("color_hint"),
             "label": ent.get("label"),
             "directionality": ent.get("directionality") or "none",
+            "expression": ent.get("expression") or "neutral",
+            "personality": ent.get("personality") or "neutral",
+            "gag": ent.get("gag") or "none",
             "entity_json": {
                 "kind": ent["kind"],
                 "trajectory": ent["trajectory"],
@@ -150,6 +177,9 @@ def grow_entities_from_spec(
                 "color_hint": ent.get("color_hint"),
                 "label": ent.get("label"),
                 "directionality": ent.get("directionality"),
+                "expression": ent.get("expression") or "neutral",
+                "personality": ent.get("personality") or "neutral",
+                "gag": ent.get("gag") or "none",
                 "sfx_on": ent.get("sfx_on") or [],
             },
         }

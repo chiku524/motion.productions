@@ -156,6 +156,32 @@ def extract_linguistic_mappings(
                             "variant_type": _infer_variant_type(w, pers),
                         })
 
+    # Setting / theme from instruction (mini-scene backgrounds)
+    setting = str(instr_dict.get("setting") or "").strip().lower()
+    if setting:
+        from ..procedural.data.keywords import KEYWORD_TO_SETTING
+        matched = False
+        for w in words:
+            if w in KEYWORD_TO_SETTING and KEYWORD_TO_SETTING[w] == setting:
+                if (w, "setting") not in seen:
+                    seen.add((w, "setting"))
+                    out.append({
+                        "span": w,
+                        "canonical": setting,
+                        "domain": "setting",
+                        "variant_type": _infer_variant_type(w, setting),
+                    })
+                    matched = True
+                    break
+        if not matched and (setting, "setting") not in seen:
+            seen.add((setting, "setting"))
+            out.append({
+                "span": setting,
+                "canonical": setting,
+                "domain": "setting",
+                "variant_type": "canonical",
+            })
+
     # Then-script clause actions → motion / sfx growth
     try:
         from ..creation.script_parse import split_script_clauses, _clause_action

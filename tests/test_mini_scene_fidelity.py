@@ -82,8 +82,12 @@ class TestMiniSceneFidelity(unittest.TestCase):
             bounce=True,
             color_hint=bouncing[0].get("color_hint"),
             directionality=bouncing[0].get("directionality"),
+            expression=bouncing[0].get("expression") or "neutral",
+            personality=bouncing[0].get("personality") or "neutral",
+            gag=bouncing[0].get("gag") or "none",
         )
         self.assertEqual(bouncing[0]["key"], key)
+        self.assertIn(bouncing[0].get("gag"), ("squash", "none", "spin", "flourish", "wink", "double_take"))
 
     def test_character_expression_personality(self):
         prompt = "a happy playful person walking left with uplifting house music"
@@ -112,6 +116,39 @@ class TestMiniSceneFidelity(unittest.TestCase):
         bouncing = [l for l in spec.scene_layers if l.get("bounce") or l.get("gag") == "squash"]
         self.assertTrue(bouncing or any(l.get("gag") for l in spec.scene_layers))
 
+    def test_setting_themed_blended_background(self):
+        """Mini-scenes with entities must use blended mode + setting, not rainbow pure mesh."""
+        prompt = "a red ball bouncing left at sunset with warm ambient vocals"
+        instruction = interpret_user_prompt(prompt)
+        self.assertEqual(getattr(instruction, "setting", None), "golden_hour")
+        instruction.duration_seconds = 5.0
+        spec = build_spec_from_instruction(instruction, knowledge={})
+        self.assertEqual(spec.creation_mode, "blended")
+        self.assertTrue(spec.pure_colors is None or spec.pure_colors == [])
+        self.assertEqual(spec.setting, "golden_hour")
+        self.assertIn(spec.palette_name, ("warm_sunset", "fire", "default"))
+        self.assertTrue(spec.scene_layers)
+
+    def test_neon_city_setting(self):
+        prompt = "a person walking right through a neon city with techno music"
+        instruction = interpret_user_prompt(prompt)
+        self.assertIn(getattr(instruction, "setting", None), ("city", "neon"))
+        instruction.duration_seconds = 5.0
+        spec = build_spec_from_instruction(instruction, knowledge={})
+        self.assertEqual(spec.creation_mode, "blended")
+        self.assertIn(spec.setting, ("city", "neon"))
+
+    def test_mutate_liked_prompt(self):
+        from src.automation.prompt_gen import mutate_liked_prompt
+        base = "a red ball bouncing left with deep house beat"
+        variant = mutate_liked_prompt(base, avoid=set())
+        self.assertIsNotNone(variant)
+        self.assertNotEqual(variant, base)
+        # Avoiding the produced variant should not return that same string
+        again = mutate_liked_prompt(base, avoid={variant})
+        if again is not None:
+            self.assertNotEqual(again, variant)
+
     def test_linguistic_extracts_expression(self):
         from src.interpretation.linguistic import extract_linguistic_mappings
         prompt = "a happy playful person walking left with uplifting house music"
@@ -120,6 +157,15 @@ class TestMiniSceneFidelity(unittest.TestCase):
         domains = {m["domain"] for m in mappings}
         self.assertIn("expression", domains)
         self.assertIn("personality", domains)
+
+    def test_linguistic_extracts_setting(self):
+        from src.interpretation.linguistic import extract_linguistic_mappings
+        prompt = "a blue orb drifting upward by the ocean with calm ambient music"
+        instruction = interpret_user_prompt(prompt)
+        self.assertEqual(getattr(instruction, "setting", None), "ocean")
+        mappings = extract_linguistic_mappings(prompt, instruction)
+        domains = {m["domain"] for m in mappings}
+        self.assertIn("setting", domains)
 
     def test_targeted_entity_prompt_fills_gaps(self):
         from src.automation.prompt_gen import generate_targeted_entity_prompt

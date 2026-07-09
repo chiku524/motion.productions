@@ -66,6 +66,7 @@ class SceneSpec:
     lighting_preset: str = "neutral"  # noir | golden_hour | neon | documentary | moody
     genre: str = "general"            # documentary | thriller | ad | tutorial | educational
     style: str = "cinematic"           # cinematic | abstract | minimal | realistic | anime
+    setting: str | None = None         # city | ocean | night | forest | golden_hour | …
     composition_balance: str = "balanced"
     composition_symmetry: str = "slight"
     pacing_factor: float = 1.0

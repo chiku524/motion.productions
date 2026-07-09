@@ -176,6 +176,19 @@ def extract_narrative_from_spec(
     lighting = getattr(spec, "lighting_preset", None) or "neutral"
     if lighting:
         out["settings"].append(str(lighting).strip())
+    # Prefer explicit setting from instruction/spec (mini-scene backgrounds)
+    setting = getattr(instruction, "setting", None) if instruction is not None else None
+    if not setting:
+        setting = getattr(spec, "setting", None)
+    if setting and str(setting).strip():
+        s = str(setting).strip()
+        if s.lower() not in {x.strip().lower() for x in out["settings"]}:
+            out["settings"].insert(0, s)
+    theme = getattr(instruction, "theme", None) if instruction is not None else None
+    if theme and str(theme).strip():
+        t = str(theme).strip()
+        if t.lower() not in {x.strip().lower() for x in out["themes"]}:
+            out["themes"].insert(0, t)
     shot = getattr(spec, "shot_type", None) or "medium"
     if shot:
         out["scene_type"].append(str(shot).strip())
