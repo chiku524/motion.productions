@@ -170,6 +170,17 @@
             return [m.key, m.name, m.trend || '—', m.count, (b && b !== '—' ? b : (m.depth_pct != null ? `${m.depth_pct}%` : '—'))];
           }))
         : '<p class="registries-empty">No motion discoveries yet.</p>'}
+      <h3 class="registries-pane-title">Blended — Entities</h3>
+      ${dynamic.entities && dynamic.entities.length
+        ? registriesTable(['Name', 'Kind', 'Trajectory', 'Bounce', 'Color', 'Count'], dynamic.entities.map((e) => [
+            e.name || e.label || e.key || '—',
+            e.kind || '—',
+            e.trajectory || '—',
+            e.bounce ? 'yes' : 'no',
+            e.color_hint || '—',
+            e.count ?? '—',
+          ]))
+        : '<p class="registries-empty">No entity discoveries yet.</p>'}
       <h3 class="registries-pane-title">Blended — Sound</h3>
       ${dynamic.sound && dynamic.sound.length
         ? registriesTable(['Sample', 'Name', 'Key', 'Depth %'], dynamic.sound.map((s) => {

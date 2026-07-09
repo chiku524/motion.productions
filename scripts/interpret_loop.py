@@ -147,6 +147,7 @@ def run() -> None:
                             fetch_linguistic_registry, api_base,
                         )
                         batch: list[dict] = []
+                        backfill_extracted: list[dict] = []
                         for prompt in prompts:
                             try:
                                 instruction = interpret_user_prompt(
@@ -156,6 +157,10 @@ def run() -> None:
                                 )
                                 payload = instruction.to_api_dict() if hasattr(instruction, "to_api_dict") else instruction.to_dict()
                                 batch.append({"prompt": prompt, "instruction": payload, "source": "backfill"})
+                                extracted = extract_linguistic_mappings(prompt, instruction)
+                                for e in extracted:
+                                    e["variant_type"] = e.get("variant_type", "synonym")
+                                backfill_extracted.extend(extracted)
                             except Exception as e:
                                 logger.warning("Backfill interpret failed for %s: %s", prompt[:40], e)
                         if batch:
@@ -171,6 +176,15 @@ def run() -> None:
                                     n += resp.get("inserted", 0)
                                 if n:
                                     print(f"[{cycle}] backfill: {n} interpreted")
+                                if backfill_extracted:
+                                    try:
+                                        result = post_linguistic_growth(api_base, backfill_extracted)
+                                        print(
+                                            f"[{cycle}] backfill linguistic: "
+                                            f"+{result.get('inserted', 0)} / ~{result.get('updated', 0)}"
+                                        )
+                                    except Exception as e:
+                                        logger.warning("Backfill linguistic growth failed: %s", e)
                             except APIError as e:
                                 logger.warning("POST /api/interpretations/batch failed: %s — falling back to single POSTs", e)
                                 for it in batch:

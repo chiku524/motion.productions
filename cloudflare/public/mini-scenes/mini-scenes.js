@@ -1,5 +1,6 @@
 /**
  * Mini-scenes gallery: recent short completed jobs for human review.
+ * Thumbs up promotes the prompt into loop good_prompts (exploit pool).
  */
 const API_BASE = "";
 const LIMIT = 24;
@@ -37,6 +38,17 @@ function workflowLabel(wt) {
   return String(wt).replace(/_/g, " ");
 }
 
+function submitFeedback(jobId, rating, btn) {
+  if (!jobId) return;
+  const card = btn?.closest?.(".library-card");
+  card?.querySelectorAll?.(".btn-feedback")?.forEach((b) => b.classList.add("feedback-given"));
+  fetch(`${API_BASE}/api/jobs/${jobId}/feedback`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ rating }),
+  }).catch(() => {});
+}
+
 async function loadMiniScenes() {
   if (!listEl) return;
   try {
@@ -61,18 +73,31 @@ async function loadMiniScenes() {
         const fullPrompt = (job.prompt || "").trim();
         const displayPrompt = shortenPrompt(fullPrompt);
         const label = workflowLabel(job.workflow_type);
+        const id = escapeHtml(job.id);
         return `
-        <article class="library-card">
+        <article class="library-card" data-job-id="${id}">
           <video class="library-video" src="${url}" controls playsinline preload="metadata"></video>
           <div class="library-card-body">
             <span class="library-badge library-badge--main">${escapeHtml(label)}</span>
             <p class="library-prompt" title="${escapeHtml(fullPrompt)}">${escapeHtml(displayPrompt)}</p>
             <p class="library-meta">${formatDate(job.updated_at || job.created_at)}${job.duration_seconds ? ` · ${job.duration_seconds}s` : ""}</p>
-            <a href="${url}" class="library-download" download="motion-${job.id}.mp4">Download</a>
+            <div class="library-feedback">
+              <button type="button" class="btn-feedback" data-rating="2" data-job="${id}" title="Good mini-scene — teach the loop" aria-label="Thumbs up">👍</button>
+              <button type="button" class="btn-feedback" data-rating="1" data-job="${id}" title="Not useful" aria-label="Thumbs down">👎</button>
+              <a href="${url}" class="library-download" download="motion-${id}.mp4">Download</a>
+            </div>
           </div>
         </article>`;
       })
       .join("");
+
+    listEl.querySelectorAll(".btn-feedback").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const jobId = btn.getAttribute("data-job");
+        const rating = parseInt(btn.getAttribute("data-rating") || "0", 10);
+        submitFeedback(jobId, rating, btn);
+      });
+    });
   } catch {
     loadingEl?.remove();
     listEl.innerHTML = '<p class="library-empty">Could not load mini-scenes. Refresh to try again.</p>';

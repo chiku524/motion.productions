@@ -45,9 +45,27 @@ if (path === "/api/loop/state" && request.method === "POST") {
   // Sanitize: only allow safe JSON; KV has 1 write/sec limit per key — client should space saves
   const state: Record<string, unknown> = {};
   state.run_count = typeof raw.run_count === "number" && Number.isFinite(raw.run_count) ? Math.floor(raw.run_count) : 0;
-  state.good_prompts = Array.isArray(raw.good_prompts)
-    ? raw.good_prompts.slice(-200).map((p) => String(p ?? "").slice(0, 500))
+  const incomingGood = Array.isArray(raw.good_prompts)
+    ? raw.good_prompts.map((p) => String(p ?? "").slice(0, 500)).filter(Boolean)
     : [];
+  // Merge with existing KV good_prompts so gallery thumbs-up promotions survive worker state saves
+  let existingGood: string[] = [];
+  try {
+    const prevRaw = await kv.get("loop_state");
+    if (prevRaw) {
+      const prev = JSON.parse(prevRaw) as { good_prompts?: unknown };
+      if (Array.isArray(prev.good_prompts)) {
+        existingGood = prev.good_prompts.map((p) => String(p ?? "").slice(0, 500)).filter(Boolean);
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  const mergedGood = [...existingGood];
+  for (const p of incomingGood) {
+    if (!mergedGood.includes(p)) mergedGood.push(p);
+  }
+  state.good_prompts = mergedGood.slice(-200);
   state.recent_prompts = Array.isArray(raw.recent_prompts)
     ? raw.recent_prompts.slice(-200).map((p) => String(p ?? "").slice(0, 500))
     : [];

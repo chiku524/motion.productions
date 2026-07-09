@@ -790,6 +790,13 @@ body {
 .library-download:hover {
   color: var(--color-primary-hover);
 }
+.library-feedback {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.35rem;
+  flex-wrap: wrap;
+}
 
 /* Loop compact in dashboard */
 .loop-compact { margin-top: 0; }

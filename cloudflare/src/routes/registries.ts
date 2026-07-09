@@ -929,6 +929,33 @@ if (path === "/api/registries" && request.method === "GET") {
   const learnedCameraRows = await db.prepare(
     "SELECT profile_key, motion_type, name, count, depth_breakdown_json FROM learned_camera ORDER BY count DESC LIMIT ?"
   ).bind(regLimit).all<{ profile_key: string; motion_type: string; name: string; count: number; depth_breakdown_json: string | null }>();
+  let learnedEntityRows: Array<{
+    profile_key: string;
+    kind: string;
+    trajectory: string | null;
+    bounce: number;
+    color_hint: string | null;
+    label: string | null;
+    name: string | null;
+    count: number;
+  }> = [];
+  try {
+    const er = await db.prepare(
+      "SELECT profile_key, kind, trajectory, bounce, color_hint, label, name, count FROM learned_entities ORDER BY count DESC LIMIT ?"
+    ).bind(regLimit).all<{
+      profile_key: string;
+      kind: string;
+      trajectory: string | null;
+      bounce: number;
+      color_hint: string | null;
+      label: string | null;
+      name: string | null;
+      count: number;
+    }>();
+    learnedEntityRows = er.results || [];
+  } catch {
+    // learned_entities may not exist until migration 0021
+  }
   let learnedAudioSemanticRows: Array<{ profile_key: string; role: string; name: string; count: number }> = [];
   try {
     const r = await db.prepare(
@@ -1363,6 +1390,16 @@ if (path === "/api/registries" && request.method === "GET") {
       temporal: temporalBlends,
       technical: technicalBlends,
       blends: otherBlends,
+      entities: learnedEntityRows.map((r) => ({
+        key: r.profile_key,
+        kind: r.kind,
+        trajectory: r.trajectory || "none",
+        bounce: !!r.bounce,
+        color_hint: r.color_hint || null,
+        label: r.label || null,
+        name: r.name || r.label || r.kind,
+        count: r.count,
+      })),
   };
   const staticColorsPage = pageSlice(staticPayload.colors || []);
   const staticSoundPage = pageSlice(staticPayload.sound || []);

@@ -208,9 +208,21 @@ def _load_state(api_base: str) -> dict:
     try:
         data = api_request_with_retry(api_base, "GET", "/api/loop/state", timeout=15)
         s = data.get("state", {})
+        good = list(s.get("good_prompts", []))[-200:]
+        # Merge human thumbs-up prompts from feedback so gallery review teaches exploit
+        try:
+            fb = api_request_with_retry(api_base, "GET", "/api/feedback?limit=40", timeout=15)
+            for row in fb.get("feedback") or []:
+                if int(row.get("rating") or 0) == 2:
+                    p = (row.get("prompt") or "").strip()
+                    if p and p not in good:
+                        good.append(p)
+            good = good[-200:]
+        except Exception:
+            pass
         return {
             "run_count": int(s.get("run_count", 0)),
-            "good_prompts": list(s.get("good_prompts", []))[-200:],
+            "good_prompts": good,
             "recent_prompts": list(s.get("recent_prompts", []))[-200:],
             "duration_base": float(s.get("duration_base", 6.0)),
             "exploit_count": int(s.get("exploit_count", 0)),
