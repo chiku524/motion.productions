@@ -29,6 +29,8 @@ from ..procedural.data.keywords import (
     KEYWORD_TO_MOTION_RHYTHM,
     KEYWORD_TO_SFX_KIND,
     KEYWORD_TO_ENTITY_KIND,
+    KEYWORD_TO_EXPRESSION,
+    KEYWORD_TO_PERSONALITY,
     STYLE_PHRASE_TO_STYLE,
     KEYWORD_TO_STYLE,
     MOOD_TO_TONE,
@@ -482,6 +484,16 @@ def _resolve_entities(words: list[str], prompt: str) -> list[dict]:
         if w in KEYWORD_TO_PALETTE:
             color_hint = KEYWORD_TO_PALETTE[w]
             break
+    expression = "neutral"
+    for w in words:
+        if w in KEYWORD_TO_EXPRESSION:
+            expression = KEYWORD_TO_EXPRESSION[w]
+            break
+    personality = "neutral"
+    for w in words:
+        if w in KEYWORD_TO_PERSONALITY:
+            personality = KEYWORD_TO_PERSONALITY[w]
+            break
     for w in words:
         if w in KEYWORD_TO_ENTITY_KIND:
             kind = KEYWORD_TO_ENTITY_KIND[w]
@@ -498,6 +510,8 @@ def _resolve_entities(words: list[str], prompt: str) -> list[dict]:
                 "trajectory": traj,
                 "bounce": bounce,
                 "sfx_on": ["bounce"] if bounce else [],
+                "expression": expression if kind == "character" else "neutral",
+                "personality": personality if kind == "character" else "neutral",
             })
     return entities
 
@@ -666,6 +680,7 @@ def interpret_user_prompt(
         KEYWORD_TO_AUDIO_PRESENCE, KEYWORD_TO_AUDIO_GENRE,
         KEYWORD_TO_MOTION_DIRECTIONALITY, KEYWORD_TO_MOTION_SMOOTHNESS,
         KEYWORD_TO_MOTION_RHYTHM, KEYWORD_TO_SFX_KIND, KEYWORD_TO_ENTITY_KIND,
+        KEYWORD_TO_EXPRESSION, KEYWORD_TO_PERSONALITY,
     )
     contributing: list[str] = []
     for w in words:

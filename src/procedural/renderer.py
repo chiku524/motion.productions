@@ -166,13 +166,58 @@ def _composite_scene_layers(
             mask = (body | head).astype(np.float32)
             alpha = (mask * opacity)[..., None]
         elif kind == "character":
-            # Head + body (two circles/rects)
+            # Head + body (two circles/rects) with expression face marks
             head_r = radius * 0.45
             body_r = radius * 0.7
-            head_m = (np.sqrt((xx - cx) ** 2 + (yy - (cy - radius * 0.55)) ** 2) < head_r).astype(np.float32)
+            head_cy = cy - radius * 0.55
+            head_m = (np.sqrt((xx - cx) ** 2 + (yy - head_cy) ** 2) < head_r).astype(np.float32)
             body_m = ((np.abs(xx - cx) < body_r * 0.55) & (np.abs(yy - (cy + radius * 0.15)) < body_r)).astype(np.float32)
             mask = np.clip(head_m + body_m, 0, 1)
+            # Eyes
+            eye_y = head_cy - head_r * 0.15
+            eye_dx = head_r * 0.35
+            eye_r = head_r * 0.12
+            left_eye = (np.sqrt((xx - (cx - eye_dx)) ** 2 + (yy - eye_y) ** 2) < eye_r).astype(np.float32)
+            right_eye = (np.sqrt((xx - (cx + eye_dx)) ** 2 + (yy - eye_y) ** 2) < eye_r).astype(np.float32)
+            expression = str(layer.get("expression") or "neutral").lower()
+            mouth_y = head_cy + head_r * 0.35
+            mouth = np.zeros_like(mask)
+            if expression == "happy":
+                # Upward curve (smile): thin arc below eyes
+                mouth = (
+                    (np.abs(yy - (mouth_y - 0.01 * np.cos((xx - cx) / max(1e-6, head_r * 0.5) * 3.14))) < head_r * 0.08)
+                    & (np.abs(xx - cx) < head_r * 0.45)
+                    & (yy > mouth_y - head_r * 0.2)
+                ).astype(np.float32)
+            elif expression == "sad":
+                mouth = (
+                    (np.abs(yy - (mouth_y + 0.012 * np.cos((xx - cx) / max(1e-6, head_r * 0.5) * 3.14))) < head_r * 0.08)
+                    & (np.abs(xx - cx) < head_r * 0.4)
+                ).astype(np.float32)
+            elif expression == "angry":
+                # Flat frown + slightly lower brows via thicker eyes
+                mouth = ((np.abs(yy - mouth_y) < head_r * 0.06) & (np.abs(xx - cx) < head_r * 0.35)).astype(np.float32)
+                left_eye = (np.sqrt((xx - (cx - eye_dx)) ** 2 + (yy - (eye_y + head_r * 0.05)) ** 2) < eye_r * 1.15).astype(np.float32)
+                right_eye = (np.sqrt((xx - (cx + eye_dx)) ** 2 + (yy - (eye_y + head_r * 0.05)) ** 2) < eye_r * 1.15).astype(np.float32)
+            elif expression == "excited":
+                mouth = ((np.sqrt((xx - cx) ** 2 + (yy - mouth_y) ** 2) < head_r * 0.22) & (yy > mouth_y - head_r * 0.05)).astype(np.float32)
+            elif expression == "nervous":
+                mouth = ((np.abs(yy - mouth_y) < head_r * 0.05) & (np.abs(xx - cx) < head_r * 0.2)).astype(np.float32)
+            elif expression == "calm":
+                mouth = ((np.abs(yy - mouth_y) < head_r * 0.05) & (np.abs(xx - cx) < head_r * 0.3)).astype(np.float32)
+            else:
+                mouth = ((np.abs(yy - mouth_y) < head_r * 0.05) & (np.abs(xx - cx) < head_r * 0.28)).astype(np.float32)
+            # Darken face features on the character color
+            face = np.clip(left_eye + right_eye + mouth, 0, 1)
+            mask = np.clip(mask + face * 0.35, 0, 1)
             alpha = (mask * opacity)[..., None]
+            # Slightly darker features
+            feature_alpha = (face * opacity * 0.55)[..., None]
+            color_arr = np.array([cr, cg, cb], dtype=np.float32).reshape(1, 1, 3)
+            dark = color_arr * 0.35
+            out = out * (1.0 - alpha) + color_arr * alpha
+            out = out * (1.0 - feature_alpha) + dark * feature_alpha
+            continue
         else:
             # circle
             dist = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)

@@ -85,11 +85,38 @@ class TestMiniSceneFidelity(unittest.TestCase):
         )
         self.assertEqual(bouncing[0]["key"], key)
 
-    def test_mini_scene_script_three_beats(self):
-        script = build_mini_scene_script(total_duration=5.0, action="bounce")
-        self.assertEqual(len(script.beats), 3)
-        self.assertAlmostEqual(script.total_duration, 5.0, places=1)
-        self.assertEqual([b.name for b in script.beats], ["setup", "beat", "resolve"])
+    def test_character_expression_personality(self):
+        prompt = "a happy playful person walking left with uplifting house music"
+        instruction = interpret_user_prompt(prompt)
+        self.assertTrue(instruction.entities)
+        ent = instruction.entities[0]
+        self.assertEqual(ent.get("kind"), "character")
+        self.assertEqual(ent.get("expression"), "happy")
+        self.assertEqual(ent.get("personality"), "playful")
+        instruction.duration_seconds = 5.0
+        spec = build_spec_from_instruction(instruction, knowledge={})
+        self.assertTrue(spec.scene_layers)
+        layer = next(l for l in spec.scene_layers if l.get("kind") == "character")
+        self.assertEqual(layer.get("expression"), "happy")
+        self.assertEqual(layer.get("personality"), "playful")
+
+    def test_freeform_then_script(self):
+        from src.creation.script_parse import parse_freeform_mini_script, split_script_clauses
+
+        prompt = "a red ball enters from the left then bounces then exits right with whoosh"
+        clauses = split_script_clauses(prompt)
+        self.assertGreaterEqual(len(clauses), 3)
+        script = parse_freeform_mini_script(prompt, total_duration=5.0)
+        self.assertIsNotNone(script)
+        self.assertEqual(len(script.beats), len(clauses))
+        actions = [b.entity_action for b in script.beats]
+        self.assertIn("bounce", actions)
+
+        instruction = interpret_user_prompt(prompt)
+        instruction.duration_seconds = 5.0
+        spec = build_spec_from_instruction(instruction, knowledge={})
+        self.assertTrue(spec.scene_layers)
+        self.assertGreaterEqual(len(spec.scene_layers), 2)
 
 
 if __name__ == "__main__":

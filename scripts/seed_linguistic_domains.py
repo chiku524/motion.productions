@@ -134,6 +134,18 @@ SEED_ITEMS: list[dict[str, str]] = [
     {"span": "red ball", "canonical": "circle", "domain": "entity", "variant_type": "synonym"},
     {"span": "bouncing ball", "canonical": "circle", "domain": "entity", "variant_type": "synonym"},
     {"span": "a person", "canonical": "character", "domain": "entity", "variant_type": "synonym"},
+    {"span": "silhouette figure", "canonical": "character", "domain": "entity", "variant_type": "synonym"},
+    # expression
+    {"span": "happy face", "canonical": "happy", "domain": "expression", "variant_type": "synonym"},
+    {"span": "smiling person", "canonical": "happy", "domain": "expression", "variant_type": "synonym"},
+    {"span": "sad mood", "canonical": "sad", "domain": "expression", "variant_type": "synonym"},
+    {"span": "angry look", "canonical": "angry", "domain": "expression", "variant_type": "synonym"},
+    {"span": "calm expression", "canonical": "calm", "domain": "expression", "variant_type": "synonym"},
+    # personality
+    {"span": "playful character", "canonical": "playful", "domain": "personality", "variant_type": "synonym"},
+    {"span": "shy figure", "canonical": "shy", "domain": "personality", "variant_type": "synonym"},
+    {"span": "energetic walk", "canonical": "energetic", "domain": "personality", "variant_type": "synonym"},
+    {"span": "confident stride", "canonical": "confident", "domain": "personality", "variant_type": "synonym"},
 ]
 
 

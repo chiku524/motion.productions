@@ -274,9 +274,28 @@ def build_spec_from_instruction(
         if not text_overlay and narr.beats:
             text_overlay = narr.beats[0].text
 
+    # Phase E: free-form "then" mini-scripts override single-entity expansion
+    freeform_applied = False
+    if duration_hint <= 12.0 and not getattr(instruction, "educational_template", None):
+        from .script_parse import freeform_entities_from_prompt, split_script_clauses
+        if split_script_clauses(getattr(instruction, "raw_prompt", "") or ""):
+            base = entities[0] if entities and isinstance(entities[0], dict) else None
+            parsed = freeform_entities_from_prompt(
+                instruction.raw_prompt,
+                base_entity=base,
+                total_duration=duration_hint,
+            )
+            if parsed:
+                ents, sfx_from_script = parsed
+                entities = ents
+                instruction.entities = entities
+                instruction.sfx_events = sfx_from_script
+                freeform_applied = True
+
     # Short mini-scenes: if we have a single bouncing/walking entity, expand to a 3-beat arc
     if (
-        entities
+        not freeform_applied
+        and entities
         and duration_hint <= 8.0
         and len(entities) == 1
         and isinstance(entities[0], dict)
@@ -292,11 +311,13 @@ def build_spec_from_instruction(
         )
         kind = entities[0].get("kind") or "circle"
         ents, sfx_from_script = script_to_entities_and_sfx(narr, entity_kind=kind if kind != "character" else "circle")
-        # Preserve character kind / color from the original entity
+        # Preserve character kind / color / expression from the original entity
         for e in ents:
             e["kind"] = kind
             e["color_hint"] = entities[0].get("color_hint")
             e["directionality"] = entities[0].get("directionality") or e.get("directionality")
+            e["expression"] = entities[0].get("expression") or "neutral"
+            e["personality"] = entities[0].get("personality") or "neutral"
         entities = ents
         instruction.entities = entities
         if not getattr(instruction, "sfx_events", None):
@@ -318,6 +339,8 @@ def build_spec_from_instruction(
                 "trajectory": pick.get("trajectory") or "left",
                 "bounce": bool(pick.get("bounce")),
                 "sfx_on": ["bounce"] if pick.get("bounce") else [],
+                "expression": "neutral",
+                "personality": "neutral",
             }]
             instruction.entities = entities
 
@@ -330,13 +353,17 @@ def build_spec_from_instruction(
         duration_seconds=duration_hint,
         palette_colors=palette_colors,
     )
-    # Attach walk-cycle keyframes for characters
+    # Attach walk-cycle keyframes for characters (personality modulates bob)
     for layer in graph.layers:
         if layer.kind == "character" and len(layer.keyframes) <= 2:
             direction = "left"
             if layer.keyframes and layer.keyframes[-1].x > layer.keyframes[0].x:
                 direction = "right"
-            layer.keyframes = walk_cycle_keyframes(duration=duration_hint, direction=direction)
+            layer.keyframes = walk_cycle_keyframes(
+                duration=duration_hint,
+                direction=direction,
+                personality=layer.personality or "neutral",
+            )
     scene_layers = graph.to_dict_list() if graph.layers else None
     if scene_layers and shape == "none":
         shape = "circle"  # ensure overlay path exists as fallback

@@ -538,6 +538,13 @@ _MINI_SCENE_TEMPLATES: list[str] = [
     "tech demo: clean white circle sliding left to right with click SFX",
     "horror tease: dark frame, slow drift toward camera, tense low music",
     "sports hype: fast bounce left-right with punchy beat and impacts",
+    # Expression / personality + then-beat scripts (Phase D/E)
+    "a happy playful person walking left with uplifting house music",
+    "a sad shy character walking right with calm ambient music",
+    "an angry energetic figure walking toward the camera with tense techno",
+    "a red ball enters from the left then bounces then exits right with whoosh",
+    "a person walks in then waves toward the camera then walks away with soft vocals",
+    "a blue orb drifts left then rises then pulses with ambient music",
 ]
 
 

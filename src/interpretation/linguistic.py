@@ -30,6 +30,8 @@ from ..procedural.data.keywords import (
     KEYWORD_TO_MOTION_RHYTHM,
     KEYWORD_TO_SFX_KIND,
     KEYWORD_TO_ENTITY_KIND,
+    KEYWORD_TO_EXPRESSION,
+    KEYWORD_TO_PERSONALITY,
 )
 
 # Domain -> (keyword_dict, instruction_field)
@@ -54,6 +56,8 @@ _DOMAIN_MAPPINGS: list[tuple[str, dict[str, str], str]] = [
     ("motion_rhythm", KEYWORD_TO_MOTION_RHYTHM, "motion_rhythm"),
     ("sfx", KEYWORD_TO_SFX_KIND, "audio_presence"),
     ("entity", KEYWORD_TO_ENTITY_KIND, "shape_overlay"),
+    ("expression", KEYWORD_TO_EXPRESSION, "tone"),
+    ("personality", KEYWORD_TO_PERSONALITY, "style"),
 ]
 
 

@@ -413,6 +413,51 @@ KEYWORD_TO_ENTITY_KIND: dict[str, str] = {
     "character": "character",
     "figure": "character",
     "human": "character",
+    "silhouette": "character",
+}
+
+# Character expression (Phase D) — drawn on head+body primitive
+KEYWORD_TO_EXPRESSION: dict[str, str] = {
+    "happy": "happy",
+    "happily": "happy",
+    "cheerful": "happy",
+    "smiling": "happy",
+    "smile": "happy",
+    "joyful": "happy",
+    "uplifting": "happy",
+    "sad": "sad",
+    "sadly": "sad",
+    "melancholy": "sad",
+    "melancholic": "sad",
+    "gloomy": "sad",
+    "angry": "angry",
+    "mad": "angry",
+    "furious": "angry",
+    "tense": "angry",
+    "calm": "calm",
+    "peaceful": "calm",
+    "serene": "calm",
+    "relaxed": "calm",
+    "excited": "excited",
+    "energetic": "excited",
+    "hype": "excited",
+    "nervous": "nervous",
+    "anxious": "nervous",
+    "shy": "nervous",
+}
+
+# Character personality (Phase D) — modulates walk bob / scale
+KEYWORD_TO_PERSONALITY: dict[str, str] = {
+    "playful": "playful",
+    "silly": "playful",
+    "serious": "serious",
+    "stoic": "serious",
+    "energetic": "energetic",
+    "bouncy": "energetic",
+    "shy": "shy",
+    "timid": "shy",
+    "confident": "confident",
+    "bold": "confident",
 }
 
 DEFAULT_COMPOSITION_BALANCE = "balanced"

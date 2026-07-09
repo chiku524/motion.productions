@@ -183,11 +183,11 @@ Every domain from INTENDED_LOOP is represented in prompts and interpretation (co
 
 ## Phase D: Character system
 
-**Goal:** Simple characters that can appear and move (primitive, animation, placement, expression). **Status:** In progress — stylized head+body primitive + walk-cycle keyframes; expression/personality still pending.
+**Goal:** Simple characters that can appear and move (primitive, animation, placement, expression). **Status:** Core done — stylized head+body + walk-cycle keyframes; expression faces (happy/sad/angry/calm/excited/nervous) and personality-modulated walk bob.
 
 ## Phase E: Script parsing
 
-**Goal:** User provides a script; system breaks it into scenes and actions. **Status:** Partial — 5s mini-scene scripts (setup→beat→resolve) + educational multi-beat for longer clips; free-form script parsing still pending.
+**Goal:** User provides a script; system breaks it into scenes and actions. **Status:** Partial — 5s mini-scene scripts (setup→beat→resolve), educational multi-beat for longer clips, and free-form `then` / `→` clause splitting into ordered beats.
 
 ## Phase F: Entertainment layer
 

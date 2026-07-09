@@ -28,6 +28,8 @@ class SceneLayer:
     keyframes: list[LayerKeyframe] = field(default_factory=list)
     sfx_on: list[str] = field(default_factory=list)  # e.g. ["bounce"]
     bounce: bool = False
+    expression: str = "neutral"  # happy | sad | angry | calm | excited | nervous | neutral
+    personality: str = "neutral"  # playful | serious | energetic | shy | confident | neutral
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -230,6 +232,8 @@ def build_scene_graph_from_instruction(
                 keyframes=kfs,
                 sfx_on=sfx_on,
                 bounce=bounce,
+                expression=str(ent.get("expression") or "neutral"),
+                personality=str(ent.get("personality") or "neutral"),
             )
         )
     return SceneGraph(layers=layers)
@@ -281,16 +285,32 @@ def walk_cycle_keyframes(
     *,
     duration: float,
     direction: str = "left",
+    personality: str = "neutral",
 ) -> list[LayerKeyframe]:
-    """Simple character walk: horizontal drift with bobbing (Phase 5)."""
+    """Simple character walk: horizontal drift with bobbing (Phase D personality)."""
     duration = max(1.0, float(duration))
     x0, x1 = (0.8, 0.2) if direction == "left" else (0.2, 0.8)
-    steps = max(4, int(duration / 0.35))
+    # Personality modulates step rate and bob amplitude
+    pers = (personality or "neutral").lower()
+    step_sec = 0.35
+    bob = 0.04
+    scale_base = 1.0
+    if pers == "energetic":
+        step_sec, bob, scale_base = 0.22, 0.07, 1.08
+    elif pers == "playful":
+        step_sec, bob, scale_base = 0.28, 0.06, 1.05
+    elif pers == "shy":
+        step_sec, bob, scale_base = 0.45, 0.02, 0.9
+    elif pers == "serious":
+        step_sec, bob, scale_base = 0.4, 0.015, 1.0
+    elif pers == "confident":
+        step_sec, bob, scale_base = 0.32, 0.035, 1.1
+    steps = max(4, int(duration / step_sec))
     kfs: list[LayerKeyframe] = []
     for i in range(steps + 1):
         u = i / steps
         t = duration * u
         x = x0 + (x1 - x0) * u
-        y = 0.55 + (0.04 if i % 2 else -0.02)
-        kfs.append(LayerKeyframe(t=t, x=x, y=y, scale=1.0))
+        y = 0.55 + (bob if i % 2 else -bob * 0.5)
+        kfs.append(LayerKeyframe(t=t, x=x, y=y, scale=scale_base))
     return kfs
