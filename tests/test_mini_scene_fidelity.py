@@ -149,6 +149,29 @@ class TestMiniSceneFidelity(unittest.TestCase):
         if again is not None:
             self.assertNotEqual(again, variant)
 
+    def test_setting_props_forest_trees(self):
+        prompt = "a person walking left in a forest with soft vocals"
+        instruction = interpret_user_prompt(prompt)
+        self.assertEqual(getattr(instruction, "setting", None), "forest")
+        instruction.duration_seconds = 5.0
+        spec = build_spec_from_instruction(instruction, knowledge={})
+        self.assertEqual(spec.creation_mode, "blended")
+        kinds = {l.get("kind") for l in (spec.scene_layers or [])}
+        self.assertIn("tree", kinds)
+        self.assertIn("character", kinds)
+
+    def test_setting_props_ocean_fish(self):
+        prompt = "a fish jumping in the ocean with soft whoosh and calm ambient music"
+        instruction = interpret_user_prompt(prompt)
+        self.assertEqual(getattr(instruction, "setting", None), "ocean")
+        self.assertTrue(any(e.get("kind") == "fish" for e in instruction.entities))
+        instruction.duration_seconds = 5.0
+        spec = build_spec_from_instruction(instruction, knowledge={})
+        kinds = {l.get("kind") for l in (spec.scene_layers or [])}
+        self.assertIn("fish", kinds)
+        # Waves often auto-spawn for ocean setting
+        self.assertTrue("wave" in kinds or "fish" in kinds)
+
     def test_linguistic_extracts_expression(self):
         from src.interpretation.linguistic import extract_linguistic_mappings
         prompt = "a happy playful person walking left with uplifting house music"

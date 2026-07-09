@@ -5,7 +5,7 @@ export const STATIC_COLOR_ESTIMATED_CELLS = 27951;
 
 export const STATIC_SOUND_NUM_PRIMITIVES = 10;
 
-export const ENTITY_ESTIMATED_CELLS = 56;
+export const ENTITY_ESTIMATED_CELLS = 126;
 
 export const SETTING_ESTIMATED_CELLS = 19;
 
@@ -158,7 +158,12 @@ export const DYNAMIC_CANONICAL = {
     "circle",
     "rect",
     "arrow",
-    "character"
+    "character",
+    "tree",
+    "fish",
+    "wave",
+    "building",
+    "cloud"
   ],
   "entity_trajectory": [
     "left",

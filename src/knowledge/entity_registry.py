@@ -38,7 +38,7 @@ def _normalize_entity(ent: dict[str, Any]) -> dict[str, Any] | None:
     if not isinstance(ent, dict):
         return None
     kind = str(ent.get("kind") or "circle").strip().lower()
-    if kind not in ("circle", "rect", "arrow", "character"):
+    if kind not in ("circle", "rect", "arrow", "character", "tree", "fish", "wave", "building", "cloud"):
         kind = "circle"
     traj = str(ent.get("trajectory") or "none").strip().lower() or "none"
     bounce = bool(ent.get("bounce"))

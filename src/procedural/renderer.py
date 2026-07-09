@@ -279,6 +279,74 @@ def _composite_scene_layers(
             out = out * (1.0 - alpha) + color_arr * alpha
             out = out * (1.0 - feature_alpha) + dark * feature_alpha
             continue
+        elif kind == "tree":
+            # Trunk + canopy (stylized)
+            trunk_w, trunk_h = radius * 0.22, radius * 0.85
+            trunk = (
+                (np.abs(xx_l - cx) < trunk_w * 0.5)
+                & (yy_l > cy - trunk_h * 0.1)
+                & (yy_l < cy + trunk_h * 0.55)
+            ).astype(np.float32)
+            canopy_cy = cy - radius * 0.35
+            canopy = (np.sqrt((xx_l - cx) ** 2 + (yy_l - canopy_cy) ** 2) < radius * 0.7).astype(np.float32)
+            mask = np.clip(trunk * 0.7 + canopy, 0, 1)
+            alpha = (mask * opacity)[..., None]
+            color_arr = np.array([cr, cg, cb], dtype=np.float32).reshape(1, 1, 3)
+            trunk_c = np.array([90, 55, 30], dtype=np.float32).reshape(1, 1, 3)
+            out = out * (1.0 - (canopy * opacity)[..., None]) + color_arr * (canopy * opacity)[..., None]
+            out = out * (1.0 - (trunk * opacity * 0.9)[..., None]) + trunk_c * (trunk * opacity * 0.9)[..., None]
+            continue
+        elif kind == "fish":
+            # Oval body + triangle tail
+            body = (
+                ((xx_l - cx) / max(1e-6, radius * 0.9)) ** 2
+                + ((yy_l - cy) / max(1e-6, radius * 0.45)) ** 2
+            ) < 1.0
+            tail = (
+                (xx_l < cx - radius * 0.55)
+                & (xx_l > cx - radius * 1.15)
+                & (np.abs(yy_l - cy) < (cx - radius * 0.4 - xx_l) * 0.9)
+            )
+            mask = (body | tail).astype(np.float32)
+            eye = (np.sqrt((xx_l - (cx + radius * 0.35)) ** 2 + (yy_l - (cy - radius * 0.08)) ** 2) < radius * 0.1).astype(np.float32)
+            alpha = (mask * opacity)[..., None]
+            color_arr = np.array([cr, cg, cb], dtype=np.float32).reshape(1, 1, 3)
+            out = out * (1.0 - alpha) + color_arr * alpha
+            eye_a = (eye * opacity * 0.7)[..., None]
+            out = out * (1.0 - eye_a) + np.array([20, 20, 30], dtype=np.float32) * eye_a
+            continue
+        elif kind == "wave":
+            # Soft sine band near cy
+            band = np.abs(yy_l - (cy + 0.03 * np.sin(xx_l * 18.0 + t * 3.0))) < radius * 0.35
+            fade = np.clip(1.0 - np.abs(xx_l - cx) / max(1e-6, radius * 2.2), 0, 1)
+            mask = (band.astype(np.float32) * fade)
+            alpha = (mask * opacity * 0.75)[..., None]
+        elif kind == "building":
+            half_w, half_h = radius * 0.55, radius * 1.2
+            body = ((np.abs(xx_l - cx) < half_w) & (np.abs(yy_l - cy) < half_h)).astype(np.float32)
+            # Window grid
+            wx = np.floor((xx_l - (cx - half_w)) / max(1e-6, half_w * 0.35))
+            wy = np.floor((yy_l - (cy - half_h)) / max(1e-6, half_h * 0.22))
+            windows = (
+                (np.mod(wx, 2) == 0)
+                & (np.mod(wy, 2) == 0)
+                & (np.abs(xx_l - cx) < half_w * 0.85)
+                & (np.abs(yy_l - cy) < half_h * 0.85)
+            ).astype(np.float32)
+            mask = body
+            alpha = (mask * opacity)[..., None]
+            color_arr = np.array([cr, cg, cb], dtype=np.float32).reshape(1, 1, 3)
+            out = out * (1.0 - alpha) + color_arr * alpha
+            win_a = (windows * opacity * 0.45)[..., None]
+            out = out * (1.0 - win_a) + np.array([220, 200, 90], dtype=np.float32) * win_a
+            continue
+        elif kind == "cloud":
+            # Three overlapping soft circles
+            c1 = np.sqrt((xx_l - (cx - radius * 0.45)) ** 2 + (yy_l - cy) ** 2) < radius * 0.55
+            c2 = np.sqrt((xx_l - cx) ** 2 + (yy_l - (cy - radius * 0.15)) ** 2) < radius * 0.65
+            c3 = np.sqrt((xx_l - (cx + radius * 0.4)) ** 2 + (yy_l - cy) ** 2) < radius * 0.5
+            mask = (c1 | c2 | c3).astype(np.float32)
+            alpha = (mask * opacity * 0.7)[..., None]
         else:
             # circle
             dist = np.sqrt((xx_l - cx) ** 2 + (yy_l - cy) ** 2)

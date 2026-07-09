@@ -631,6 +631,13 @@ _MINI_SCENE_TEMPLATES: list[str] = [
     "a neon arrow sweeping left in a city night with whoosh and house beat",
     "studio product vibe: white circle pulsing in a clean studio with soft clicks",
     "mountain mood: silhouette walking left under a cool sky with ambient pad",
+    # Setting props (trees / fish / waves / buildings)
+    "a fish jumping in the ocean with soft whoosh and calm ambient music",
+    "trees in a forest with a person walking left and soft vocals",
+    "ocean waves with a blue ball bouncing and deep house beat",
+    "city buildings at night with a neon arrow sweeping left",
+    "clouds drifting at golden hour with a calm character walking right",
+    "underwater fish swimming left with dreamy ambient music",
 ]
 
 

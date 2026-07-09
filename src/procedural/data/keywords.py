@@ -414,6 +414,20 @@ KEYWORD_TO_ENTITY_KIND: dict[str, str] = {
     "figure": "character",
     "human": "character",
     "silhouette": "character",
+    # Setting props (stylized scenery)
+    "tree": "tree",
+    "trees": "tree",
+    "pine": "tree",
+    "fish": "fish",
+    "salmon": "fish",
+    "wave": "wave",
+    "waves": "wave",
+    "building": "building",
+    "buildings": "building",
+    "skyscraper": "building",
+    "tower": "building",
+    "cloud": "cloud",
+    "clouds": "cloud",
 }
 
 # Setting / environment (mini-scene backgrounds) — maps to narrative settings + visual look

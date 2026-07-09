@@ -1,12 +1,19 @@
 """
 Scene graph: stylized entity layers with keyframed motion (Phase 2+).
 
-No external assets required — circle/rect/arrow/character primitives only.
+No external assets required — circle/rect/arrow/character + setting props
+(tree/fish/wave/building/cloud).
 """
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from typing import Any
+
+_ENTITY_KINDS = frozenset({
+    "circle", "rect", "arrow", "character",
+    "tree", "fish", "wave", "building", "cloud",
+})
+_PROP_KINDS = frozenset({"tree", "fish", "wave", "building", "cloud"})
 
 
 @dataclass
@@ -22,7 +29,7 @@ class LayerKeyframe:
 @dataclass
 class SceneLayer:
     id: str
-    kind: str  # circle | rect | arrow | character
+    kind: str  # circle | rect | arrow | character | tree | fish | wave | building | cloud
     color: tuple[int, int, int] = (220, 60, 60)
     z: int = 1
     keyframes: list[LayerKeyframe] = field(default_factory=list)
@@ -235,20 +242,32 @@ def _offset_keyframes(kfs: list[LayerKeyframe], t_start: float, t_end: float) ->
     return out
 
 
-def _color_from_hint(hint: str | None, palette_colors: list[tuple[int, int, int]] | None) -> tuple[int, int, int]:
-    if palette_colors:
-        return tuple(int(c) for c in palette_colors[len(palette_colors) // 2][:3])  # type: ignore[return-value]
-    # Named palette midpoints (fallback)
+def _color_from_hint(
+    hint: str | None,
+    palette_colors: list[tuple[int, int, int]] | None = None,
+    *,
+    prop_color: tuple[int, int, int] | None = None,
+) -> tuple[int, int, int]:
+    if prop_color and isinstance(prop_color, (list, tuple)) and len(prop_color) >= 3:
+        return (int(prop_color[0]), int(prop_color[1]), int(prop_color[2]))
     named = {
         "warm": (220, 90, 50),
         "cool": (60, 120, 200),
-        "neon": (255, 40, 180),
-        "forest": (40, 140, 70),
-        "red": (220, 50, 50),
-        "blue": (50, 90, 220),
+        "red": (220, 60, 60),
+        "blue": (50, 100, 220),
+        "green": (40, 160, 80),
+        "fire": (230, 90, 40),
+        "ocean": (40, 120, 200),
+        "neon": (180, 60, 220),
+        "forest": (34, 120, 55),
+        "night": (40, 40, 80),
+        "warm_sunset": (240, 120, 50),
     }
     if hint and hint in named:
         return named[hint]
+    if palette_colors:
+        mid = palette_colors[len(palette_colors) // 2]
+        return (int(mid[0]), int(mid[1]), int(mid[2]))
     return (220, 60, 60)
 
 
@@ -259,6 +278,13 @@ def build_scene_graph_from_instruction(
     palette_colors: list[tuple[int, int, int]] | None = None,
 ) -> SceneGraph:
     """Build a SceneGraph from InterpretedInstruction.entities."""
+    from .props import (
+        drift_prop_keyframes,
+        jump_arc_keyframes,
+        static_prop_keyframes,
+        PROP_COLORS,
+    )
+
     duration = float(
         duration_seconds
         or getattr(instruction, "duration_seconds", None)
@@ -270,7 +296,7 @@ def build_scene_graph_from_instruction(
         if not isinstance(ent, dict):
             continue
         kind = str(ent.get("kind") or "circle")
-        if kind not in ("circle", "rect", "arrow", "character"):
+        if kind not in _ENTITY_KINDS:
             kind = "circle"
         traj = str(ent.get("trajectory") or "none")
         bounce = bool(ent.get("bounce"))
@@ -279,7 +305,7 @@ def build_scene_graph_from_instruction(
         t_start = ent.get("t_start")
         t_end = ent.get("t_end")
         # Infer trajectory from directionality if missing
-        if traj == "none":
+        if traj == "none" and kind not in _PROP_KINDS:
             d = str(ent.get("directionality") or getattr(instruction, "motion_directionality", "none"))
             if d == "horizontal":
                 traj = "left"
@@ -289,23 +315,59 @@ def build_scene_graph_from_instruction(
                 traj = "right"
             elif d == "radial":
                 traj = "toward"
-        color = _color_from_hint(ent.get("color_hint"), palette_colors)
-        # Sequential beat window vs full-clip animation
-        if t_start is not None and t_end is not None:
+        prop_color = ent.get("prop_color")
+        if isinstance(prop_color, (list, tuple)) and len(prop_color) >= 3:
+            color = (int(prop_color[0]), int(prop_color[1]), int(prop_color[2]))
+        elif kind in PROP_COLORS and not ent.get("color_hint"):
+            color = PROP_COLORS[kind]
+        else:
+            color = _color_from_hint(ent.get("color_hint"), palette_colors)
+
+        is_prop = bool(ent.get("is_prop")) or kind in _PROP_KINDS
+        prop_motion = str(ent.get("prop_motion") or traj or "none")
+
+        if is_prop and kind in _PROP_KINDS:
+            px = float(ent.get("prop_x", 0.5))
+            py = float(ent.get("prop_y", 0.5))
+            pscale = float(ent.get("prop_scale", 1.0))
+            if prop_motion == "jump" or (kind == "fish" and bounce):
+                raw_kfs = jump_arc_keyframes(duration=duration, start_x=px, end_x=min(0.9, px + 0.55), water_y=py)
+            elif prop_motion in ("left", "right", "up", "down") and kind in ("wave", "cloud", "fish"):
+                raw_kfs = drift_prop_keyframes(duration=duration, trajectory=prop_motion, y=py, scale=pscale)
+            else:
+                raw_kfs = static_prop_keyframes(
+                    duration=duration, x=px, y=py, scale=pscale, sway=kind in ("tree", "building")
+                )
+            kfs = [
+                LayerKeyframe(
+                    t=float(k["t"]),
+                    x=float(k["x"]),
+                    y=float(k["y"]),
+                    scale=float(k.get("scale", 1.0)),
+                    rot=float(k.get("rot", 0.0)),
+                    opacity=float(k.get("opacity", 1.0)),
+                )
+                for k in raw_kfs
+            ]
+            z = int(ent.get("z", 0))
+        elif t_start is not None and t_end is not None:
             local_dur = max(0.35, float(t_end) - float(t_start))
             local_kfs = _trajectory_path(traj, duration=local_dur, bounce=bounce, gag=gag, pacing=pacing)
             kfs = _offset_keyframes(local_kfs, float(t_start), float(t_end))
+            z = i + 1
         else:
             kfs = _trajectory_path(traj, duration=duration, bounce=bounce, gag=gag, pacing=pacing)
+            z = i + 1
+
         sfx_on = list(ent.get("sfx_on") or [])
-        if bounce and "bounce" not in sfx_on:
+        if bounce and "bounce" not in sfx_on and kind not in _PROP_KINDS:
             sfx_on.append("bounce")
         layers.append(
             SceneLayer(
                 id=str(ent.get("id") or f"e{i}"),
                 kind=kind,
                 color=color,
-                z=i + 1,
+                z=z if is_prop else (i + 1 if not is_prop else z),
                 keyframes=kfs,
                 sfx_on=sfx_on,
                 bounce=bounce,

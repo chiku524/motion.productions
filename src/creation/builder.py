@@ -364,6 +364,13 @@ def build_spec_from_instruction(
     for ent in entities:
         if isinstance(ent, dict) and ent.get("kind") == "character" and not ent.get("trajectory"):
             ent["trajectory"] = "left" if motion_directionality == "horizontal" else "right"
+
+    # Setting props: trees/fish/waves/buildings/clouds behind foreground entities
+    if setting and (entities or duration_hint <= 8.0):
+        from .props import merge_setting_props
+        entities = merge_setting_props(entities, setting, duration=duration_hint)
+        instruction.entities = entities
+
     graph = build_scene_graph_from_instruction(
         instruction,
         duration_seconds=duration_hint,

@@ -57,7 +57,7 @@ DYNAMIC_AUDIO_MOOD = len(AUDIO_ORIGINS["mood"])
 DYNAMIC_AUDIO_PRESENCE = len(AUDIO_ORIGINS["presence"])
 
 # Entity profiles (Phase C): kind × trajectory × bounce — mission-critical scene axes
-ENTITY_KINDS = ["circle", "rect", "arrow", "character"]
+ENTITY_KINDS = ["circle", "rect", "arrow", "character", "tree", "fish", "wave", "building", "cloud"]
 ENTITY_TRAJECTORIES = ["left", "right", "up", "down", "toward", "away", "none"]
 ENTITY_ESTIMATED_CELLS = len(ENTITY_KINDS) * len(ENTITY_TRAJECTORIES) * 2  # × bounce on/off
 

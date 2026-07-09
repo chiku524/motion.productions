@@ -539,18 +539,39 @@ def _resolve_entities(words: list[str], prompt: str) -> list[dict]:
             if key in seen:
                 continue
             seen.add(key)
+            prop_kinds = ("tree", "fish", "wave", "building", "cloud")
+            is_prop = kind in prop_kinds
+            ent_bounce = bounce
+            ent_traj = traj
+            prop_motion = traj if traj != "none" else "none"
+            if kind == "fish" and any(x in words for x in ("jump", "jumping", "jumps", "leap", "leaping")):
+                ent_bounce = True
+                prop_motion = "jump"
+                if ent_traj == "none":
+                    ent_traj = "right"
+            if kind == "tree" and ent_traj == "none":
+                prop_motion = "none"
+            if kind in ("wave", "cloud") and ent_traj == "none":
+                prop_motion = "left"
             entities.append({
                 "id": f"e{len(entities)}",
                 "kind": kind,
                 "label": w,
                 "color_hint": color_hint,
                 "directionality": direction,
-                "trajectory": traj,
-                "bounce": bounce,
-                "sfx_on": ["bounce"] if bounce else [],
+                "trajectory": ent_traj,
+                "bounce": ent_bounce,
+                "sfx_on": (["bounce"] if ent_bounce and not is_prop else [])
+                + (["whoosh"] if kind == "fish" and prop_motion == "jump" else []),
                 "expression": expression if kind == "character" else "neutral",
                 "personality": personality if kind == "character" else "neutral",
-                "gag": gag if gag != "none" else ("squash" if bounce else "none"),
+                "gag": gag if gag != "none" else ("squash" if ent_bounce and not is_prop else "none"),
+                "is_prop": is_prop,
+                "prop_motion": prop_motion,
+                "prop_x": 0.25 if kind == "fish" else 0.5,
+                "prop_y": 0.7 if kind in ("fish", "wave", "tree", "building") else 0.25,
+                "prop_scale": 1.0,
+                "z": 0 if is_prop and kind in ("tree", "building", "wave", "cloud") else 2,
             })
     return entities
 
