@@ -18,6 +18,7 @@ REGISTRY_DOMAINS = [
     "temporal",
     "technical",
     "blends",
+    "entities",
 ]
 _REGISTRY_FILE_MAP = {
     "color": ("learned_colors", "colors", lambda d: len(d.get("colors", {}))),
@@ -28,6 +29,7 @@ _REGISTRY_FILE_MAP = {
     "temporal": ("learned_temporal", "profiles", lambda d: len(d.get("profiles", []))),
     "technical": ("learned_technical", "profiles", lambda d: len(d.get("profiles", []))),
     "blends": ("learned_blends", "blends", lambda d: len(d.get("blends", []))),
+    "entities": ("learned_entities", "profiles", lambda d: len(d.get("profiles", []))),
 }
 
 

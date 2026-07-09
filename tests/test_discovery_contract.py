@@ -60,6 +60,7 @@ class TestDiscoveryContract(unittest.TestCase):
             "static_colors",
             "learned_colors",
             "learned_motion",
+            "learned_entities",
             "interpretation_prompts",
             "good_prompts",
         }
@@ -68,6 +69,7 @@ class TestDiscoveryContract(unittest.TestCase):
             "static_colors": {},
             "learned_colors": {},
             "learned_motion": {},
+            "learned_entities": [],
             "interpretation_prompts": [{"prompt": "ocean sunset", "instruction": {}}],
             "good_prompts": ["calm waves"],
         }

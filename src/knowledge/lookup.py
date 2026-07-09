@@ -72,6 +72,7 @@ def get_knowledge_for_creation(
             knowledge["learned_audio"] = data.get("learned_audio", [])
             knowledge["learned_gradient"] = data.get("learned_gradient", [])
             knowledge["learned_camera"] = data.get("learned_camera", [])
+            knowledge["learned_entities"] = data.get("learned_entities", [])
             knowledge["origin_gradient"] = data.get("origin_gradient", [])
             knowledge["origin_camera"] = data.get("origin_camera", [])
             knowledge["origin_motion"] = data.get("origin_motion", [])
@@ -87,6 +88,7 @@ def get_knowledge_for_creation(
             knowledge["learned_audio"] = []
             knowledge["learned_gradient"] = []
             knowledge["learned_camera"] = []
+            knowledge["learned_entities"] = []
             knowledge["origin_gradient"] = []
             knowledge["origin_camera"] = []
             knowledge["origin_motion"] = []
@@ -96,6 +98,8 @@ def get_knowledge_for_creation(
         knowledge["interpretation_prompts"] = []
     if "static_sound" not in knowledge:
         knowledge["static_sound"] = []
+    if "learned_entities" not in knowledge:
+        knowledge["learned_entities"] = []
     if not knowledge.get("learned_colors"):
         try:
             learned_colors = load_registry("learned_colors", config)

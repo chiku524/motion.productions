@@ -28,7 +28,7 @@ def _chunk_discoveries(discoveries: dict[str, Any]) -> list[dict[str, Any]]:
     list_keys = (
         "static_colors", "static_sound", "colors", "blends", "motion", "lighting",
         "composition", "graphics", "temporal", "technical", "audio_semantic",
-        "time", "gradient", "camera", "transition", "depth",
+        "time", "gradient", "camera", "transition", "depth", "entities",
     )
 
     def flush() -> None:
@@ -178,7 +178,7 @@ def post_dynamic_discoveries(
     POST per-window dynamic discoveries (motion, lighting, composition, graphics, temporal, technical)
     to /api/knowledge/discoveries. Only sends keys that have at least one entry.
     """
-    dynamic_keys = ("motion", "time", "gradient", "camera", "lighting", "composition", "graphics", "temporal", "technical", "audio_semantic", "transition", "depth")
+    dynamic_keys = ("motion", "time", "gradient", "camera", "lighting", "composition", "graphics", "temporal", "technical", "audio_semantic", "transition", "depth", "entities")
     discoveries: dict[str, Any] = {
         k: novel_for_sync.get(k, []) for k in dynamic_keys if novel_for_sync.get(k)
     }
@@ -204,7 +204,7 @@ def post_all_discoveries(
         "static_colors": static_colors or [],
         "static_sound": static_sound or [],
     }
-    dynamic_keys = ("motion", "time", "gradient", "camera", "lighting", "composition", "graphics", "temporal", "technical", "audio_semantic", "transition", "depth")
+    dynamic_keys = ("motion", "time", "gradient", "camera", "lighting", "composition", "graphics", "temporal", "technical", "audio_semantic", "transition", "depth", "entities")
     for k in dynamic_keys:
         if dynamic_novel.get(k):
             discoveries[k] = dynamic_novel[k]

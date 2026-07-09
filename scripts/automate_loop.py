@@ -653,6 +653,19 @@ def run() -> None:
                     narrative_added, narrative_novel = grow_narrative_from_spec(
                         spec, prompt=prompt, config=config, instruction=instruction, collect_novel_for_sync=True
                     )
+                # Phase C: persist stylized entities from this run into learned_entities
+                entity_novel: list = []
+                try:
+                    from src.knowledge.entity_registry import grow_entities_from_spec
+                    entity_added, entity_novel = grow_entities_from_spec(
+                        instruction, spec, prompt=prompt, collect_novel_for_sync=bool(args.api_base)
+                    )
+                    if entity_added:
+                        novel_for_sync["entities"] = entity_novel
+                        added["dynamic_entities"] = added.get("dynamic_entities", 0) + entity_added
+                        logger.info("Growth [entities]: %s profiles", entity_added)
+                except Exception as e:
+                    logger.warning("Entity growth failed: %s", e)
                 if args.api_base:
                     if extraction_focus == "frame":
                         post_static_discoveries(
@@ -661,6 +674,13 @@ def run() -> None:
                             novel_for_sync.get("static_sound") or [],
                             job_id=job_id,
                         )
+                        # Entities are spec-derived; still sync on frame workers
+                        if novel_for_sync.get("entities"):
+                            post_dynamic_discoveries(
+                                args.api_base,
+                                {"entities": novel_for_sync["entities"]},
+                                job_id=job_id,
+                            )
                     elif extraction_focus == "window":
                         post_dynamic_discoveries(args.api_base, novel_for_sync, job_id=job_id)
                         if narrative_novel and any(narrative_novel.values()):

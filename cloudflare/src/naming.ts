@@ -158,6 +158,7 @@ export async function cascadeNameUpdate(env: Env, oldName: string, newName: stri
     { table: "learned_gradient", col: "sources_json" },
     { table: "learned_camera", col: "sources_json" },
     { table: "learned_time", col: "sources_json" },
+    { table: "learned_entities", col: "sources_json" },
     { table: "narrative_entries", col: "sources_json" },
   ];
   for (const { table, col } of tables) {

@@ -179,7 +179,7 @@ Every domain from INTENDED_LOOP is represented in prompts and interpretation (co
 
 ## Phase C: Object/entity primitives
 
-**Goal:** Discrete objects and props before characters (entity model, object library, place in scene, object animation). **Status:** In progress — scene graph layers (circle/rect/arrow) with keyframed trajectories + bounce→SFX; D1 `learned_entities` still pending.
+**Goal:** Discrete objects and props before characters (entity model, object library, place in scene, object animation). **Status:** Done for core path — scene graph layers (circle/rect/arrow/character) with keyframed trajectories + bounce→SFX; D1 `learned_entities` (migration 0021) + discovery sync + for-creation return.
 
 ## Phase D: Character system
 
@@ -187,7 +187,7 @@ Every domain from INTENDED_LOOP is represented in prompts and interpretation (co
 
 ## Phase E: Script parsing
 
-**Goal:** User provides a script; system breaks it into scenes and actions. **Status:** Pending (partial: text overlay sync).
+**Goal:** User provides a script; system breaks it into scenes and actions. **Status:** Partial — 5s mini-scene scripts (setup→beat→resolve) + educational multi-beat for longer clips; free-form script parsing still pending.
 
 ## Phase F: Entertainment layer
 

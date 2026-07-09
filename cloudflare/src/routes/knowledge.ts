@@ -88,6 +88,18 @@ if (path === "/api/knowledge/discoveries" && request.method === "POST") {
     camera?: Array<{ key: string; motion_type: string; speed?: string; depth_breakdown?: Record<string, unknown>; source_prompt?: string }>;
     transition?: Array<{ key: string; type: string; duration_seconds?: number; source_prompt?: string }>;
     depth?: Array<{ key: string; parallax_strength?: number; layer_count?: number; source_prompt?: string }>;
+    entities?: Array<{
+      key: string;
+      kind: string;
+      trajectory?: string;
+      bounce?: number | boolean;
+      color_hint?: string;
+      label?: string;
+      directionality?: string;
+      entity_json?: Record<string, unknown>;
+      source_prompt?: string;
+      name?: string;
+    }>;
     narrative?: Record<string, Array<{ key: string; value?: string; source_prompt?: string; name?: string }>>;
     job_id?: string;
   };
@@ -96,7 +108,7 @@ if (path === "/api/knowledge/discoveries" && request.method === "POST") {
   } catch {
     return err("Invalid JSON");
   }
-  const results: Record<string, number> = { static_colors: 0, static_sound: 0, narrative: 0, colors: 0, blends: 0, motion: 0, lighting: 0, composition: 0, graphics: 0, temporal: 0, technical: 0, audio_semantic: 0, time: 0, gradient: 0, camera: 0, transition: 0, depth: 0 };
+  const results: Record<string, number> = { static_colors: 0, static_sound: 0, narrative: 0, colors: 0, blends: 0, motion: 0, lighting: 0, composition: 0, graphics: 0, temporal: 0, technical: 0, audio_semantic: 0, time: 0, gradient: 0, camera: 0, transition: 0, depth: 0, entities: 0 };
   let itemsProcessed = 0;
   let truncated = false;
   let novelStaticColors = 0;
@@ -406,6 +418,41 @@ if (path === "/api/knowledge/discoveries" && request.method === "POST") {
     results.depth++;
     itemsProcessed++;
   }
+  for (const e of body.entities || []) {
+    if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
+    const existing = await db.prepare("SELECT id FROM learned_entities WHERE profile_key = ?").bind(e.key).first();
+    const bounceVal = e.bounce === true || e.bounce === 1 ? 1 : 0;
+    const entityJson =
+      e.entity_json && typeof e.entity_json === "object" ? JSON.stringify(e.entity_json) : null;
+    if (existing) {
+      await db.prepare("UPDATE learned_entities SET count = count + 1 WHERE profile_key = ?").bind(e.key).run();
+      if (entityJson) {
+        await db.prepare("UPDATE learned_entities SET entity_json = ? WHERE profile_key = ?").bind(entityJson, e.key).run();
+      }
+    } else {
+      const name = (e.name && e.name.trim()) ? e.name : await generateUniqueName(env);
+      if (!e.name || !e.name.trim()) {
+        try { await db.prepare("INSERT OR IGNORE INTO name_reserve (name) VALUES (?)").bind(name).run(); } catch { /* ignore */ }
+      }
+      await db.prepare(
+        "INSERT INTO learned_entities (id, profile_key, kind, trajectory, bounce, color_hint, label, directionality, count, sources_json, name, entity_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)"
+      ).bind(
+        uuid(),
+        e.key,
+        e.kind || "circle",
+        e.trajectory ?? "none",
+        bounceVal,
+        e.color_hint ?? null,
+        e.label ?? null,
+        e.directionality ?? "none",
+        e.source_prompt ? JSON.stringify([e.source_prompt.slice(0, 80)]) : null,
+        name,
+        entityJson
+      ).run();
+    }
+    results.entities++;
+    itemsProcessed++;
+  }
   const jobId = typeof (body as { job_id?: string }).job_id === "string" ? (body as { job_id: string }).job_id.trim() : null;
   // Record discovery run when job_id present (even if no discovery rows) so diagnostics show "attempted"
   if (jobId) {
@@ -561,12 +608,57 @@ if (path === "/api/knowledge/for-creation" && request.method === "GET") {
     count: r.count,
     created_at: r.created_at ?? undefined,
   }));
+  // Separate query so for-creation still works before migration 0021 is applied
+  let learned_entities: Array<{
+    key: string;
+    kind: string;
+    trajectory?: string;
+    bounce: boolean;
+    color_hint?: string | null;
+    label?: string | null;
+    directionality?: string | null;
+    count: number;
+    name?: string | null;
+  }> = [];
+  try {
+    type EntityRow = {
+      profile_key: string;
+      kind: string;
+      trajectory: string | null;
+      bounce: number;
+      color_hint: string | null;
+      label: string | null;
+      directionality: string | null;
+      count: number;
+      name: string | null;
+    };
+    const entityResult = await db
+      .prepare(
+        "SELECT profile_key, kind, trajectory, bounce, color_hint, label, directionality, count, name FROM learned_entities ORDER BY count DESC LIMIT ?"
+      )
+      .bind(limit)
+      .all<EntityRow>();
+    learned_entities = (entityResult.results || []).map((r) => ({
+      key: r.profile_key,
+      kind: r.kind,
+      trajectory: r.trajectory ?? undefined,
+      bounce: !!r.bounce,
+      color_hint: r.color_hint,
+      label: r.label,
+      directionality: r.directionality,
+      count: r.count,
+      name: r.name,
+    }));
+  } catch {
+    learned_entities = [];
+  }
   const payload = {
     learned_colors: colors,
     learned_motion: motion,
     learned_audio,
     learned_gradient,
     learned_camera,
+    learned_entities,
     origin_gradient,
     origin_camera,
     origin_motion,

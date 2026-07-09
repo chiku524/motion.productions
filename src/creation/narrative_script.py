@@ -30,6 +30,46 @@ class NarrativeScript:
         return sum(b.duration_sec for b in self.beats)
 
 
+def build_mini_scene_script(
+    *,
+    total_duration: float = 5.0,
+    action: str = "bounce",
+    topic: str | None = None,
+) -> NarrativeScript:
+    """
+    Compact 3-beat arc for ~5s everyday mini-scenes: setup → beat → resolve.
+    """
+    total_duration = max(3.0, float(total_duration))
+    weights = [0.25, 0.45, 0.30]
+    names = ["setup", "beat", "resolve"]
+    label = (topic or action).strip() or action
+    texts = [None, None, None]
+    if topic:
+        texts = [label[:40], None, None]
+    action_map = {
+        "bounce": ["toward", "bounce", "right"],
+        "walk": ["left", "walk", "right"],
+        "drift": ["left", "right", "toward"],
+        "toward": ["toward", "toward", "away"],
+    }
+    actions = action_map.get(action, ["left", action if action else "bounce", "right"])
+    sections = ["intro", "drop", "break"]
+    sfx_sets = [["whoosh"], ["bounce"] if "bounce" in actions or action == "bounce" else ["click"], []]
+    beats: list[ScriptBeat] = []
+    for w, name, text, act, section, sfx in zip(weights, names, texts, actions, sections, sfx_sets):
+        beats.append(
+            ScriptBeat(
+                name=name,
+                duration_sec=round(total_duration * w, 2),
+                text=text,
+                music_section=section,
+                entity_action=act,
+                sfx=list(sfx),
+            )
+        )
+    return NarrativeScript(topic=label, beats=beats)
+
+
 def build_educational_script(
     topic: str,
     *,
@@ -38,9 +78,12 @@ def build_educational_script(
 ) -> NarrativeScript:
     """
     Allocate a 4-beat educational arc. Durations scale to total_duration.
+    For short clips (<=8s), use the compact mini-scene script instead.
     """
     topic = (topic or "the topic").strip() or "the topic"
-    total_duration = max(8.0, float(total_duration))
+    total_duration = max(5.0, float(total_duration))
+    if total_duration <= 8.0:
+        return build_mini_scene_script(total_duration=total_duration, action="bounce", topic=topic)
     weights = [0.15, 0.35, 0.30, 0.20]  # hook, concept, example, recap
     names = ["hook", "concept", "example", "recap"]
     texts = [

@@ -107,7 +107,7 @@ TRANSITION_ORIGINS = {
 # -----------------------------------------------------------------------------
 GRAPHICS_ORIGINS = {
     "gradient_type": ["vertical", "horizontal", "radial", "angled"],
-    "shape_overlay": ["none", "circle", "rect"],
+    "shape_overlay": ["none", "circle", "rect", "arrow", "character"],
     "edge_density_range": (0.0, 1.0),
     "spatial_variance_range": (0.0, 1.0),
     "busyness_range": (0.0, 1.0),

@@ -23,7 +23,7 @@ from ..procedural.data.keywords import (
 )
 from ..procedural.data.palettes import PALETTES
 from ..procedural.parser import SceneSpec
-from ..random_utils import secure_choice, weighted_choice_favor_underused, weighted_choice_favor_recent
+from ..random_utils import secure_choice, secure_random, weighted_choice_favor_underused, weighted_choice_favor_recent
 
 logger = logging.getLogger(__name__)
 
@@ -265,7 +265,7 @@ def build_spec_from_instruction(
     # Phase 5 / Roadmap B: educational template → multi-beat entities + SFX
     if getattr(instruction, "educational_template", None) and not entities:
         topic = (getattr(instruction, "text_overlay", None) or "the topic").strip()
-        narr = build_educational_script(topic, total_duration=max(8.0, duration_hint))
+        narr = build_educational_script(topic, total_duration=max(5.0, duration_hint))
         ents, sfx_from_script = script_to_entities_and_sfx(narr)
         entities = ents
         instruction.entities = entities
@@ -273,6 +273,53 @@ def build_spec_from_instruction(
             instruction.sfx_events = sfx_from_script
         if not text_overlay and narr.beats:
             text_overlay = narr.beats[0].text
+
+    # Short mini-scenes: if we have a single bouncing/walking entity, expand to a 3-beat arc
+    if (
+        entities
+        and duration_hint <= 8.0
+        and len(entities) == 1
+        and isinstance(entities[0], dict)
+        and (entities[0].get("bounce") or entities[0].get("kind") == "character")
+        and not getattr(instruction, "educational_template", None)
+    ):
+        from .narrative_script import build_mini_scene_script
+        action = "walk" if entities[0].get("kind") == "character" else "bounce"
+        narr = build_mini_scene_script(
+            total_duration=duration_hint,
+            action=action,
+            topic=entities[0].get("label"),
+        )
+        kind = entities[0].get("kind") or "circle"
+        ents, sfx_from_script = script_to_entities_and_sfx(narr, entity_kind=kind if kind != "character" else "circle")
+        # Preserve character kind / color from the original entity
+        for e in ents:
+            e["kind"] = kind
+            e["color_hint"] = entities[0].get("color_hint")
+            e["directionality"] = entities[0].get("directionality") or e.get("directionality")
+        entities = ents
+        instruction.entities = entities
+        if not getattr(instruction, "sfx_events", None):
+            instruction.sfx_events = sfx_from_script
+
+    # Optionally enrich missing entity slots from learned_entities (variety without overriding prompt)
+    learned_ents = (knowledge or {}).get("learned_entities") or []
+    if not entities and learned_ents and secure_random() < 0.25:
+        pick = learned_ents[0] if len(learned_ents) == 1 else None
+        if pick is None:
+            pick = secure_choice(learned_ents)
+        if isinstance(pick, dict) and pick.get("kind"):
+            entities = [{
+                "id": "learned0",
+                "kind": pick.get("kind") or "circle",
+                "label": pick.get("label") or pick.get("kind"),
+                "color_hint": pick.get("color_hint"),
+                "directionality": pick.get("directionality") or "none",
+                "trajectory": pick.get("trajectory") or "left",
+                "bounce": bool(pick.get("bounce")),
+                "sfx_on": ["bounce"] if pick.get("bounce") else [],
+            }]
+            instruction.entities = entities
 
     # Phase 5: character walk cycles when entity kind is character
     for ent in entities:

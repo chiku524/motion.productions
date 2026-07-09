@@ -2,7 +2,7 @@
 
 This document lists every D1 table, its role, and which registry it serves. There are **no unused or redundant tables**; each table is referenced by the Cloudflare Worker.
 
-**Migrations:** Apply in order under `cloudflare/migrations/` (`0000` … `0020`). Large remote D1 databases can hit CPU time limit **7429** during `wrangler d1 migrations apply`; use the manual `d1-migrations.yml` workflow / `scripts/run_d1_migrations.py` in quiet windows. Some hot paths also run **runtime DDL** in the Worker (`learned_dynamic_meta`, `learned_colors.depth_breakdown_json`, `video_ai_jobs`) so production can recover when a migration import fails.
+**Migrations:** Apply in order under `cloudflare/migrations/` (`0000` … `0021`). Large remote D1 databases can hit CPU time limit **7429** during `wrangler d1 migrations apply`; use the manual `d1-migrations.yml` workflow / `scripts/run_d1_migrations.py` in quiet windows. Some hot paths also run **runtime DDL** in the Worker (`learned_dynamic_meta`, `learned_colors.depth_breakdown_json`, `video_ai_jobs`) so production can recover when a migration import fails.
 
 ---
 
@@ -31,6 +31,7 @@ This document lists every D1 table, its role, and which registry it serves. Ther
 | **learned_time** | **Blended** | Time profiles. |
 | **learned_gradient** | **Blended** | Gradient profiles. |
 | **learned_camera** | **Blended** | Camera profiles. |
+| **learned_entities** | **Blended** | Stylized scene entities (kind, trajectory, bounce, color_hint). |
 | **learned_dynamic_meta** | **Blended** | Temporal/technical depth_breakdown sidecar (runtime DDL / migrations 0018–0019). |
 | **discovery_runs** | — | Per-job discovery recording for precision metrics (0013). |
 | **linguistic_registry** | **Interpretation** | Span → canonical linguistic mappings (0014). |
@@ -59,6 +60,7 @@ This document lists every D1 table, its role, and which registry it serves. Ther
 | 0014_linguistic_registry.sql | linguistic_registry |
 | 0015–0019 | Additional depth columns / learned_dynamic_meta (some no-op SELECT 1 for ordering) |
 | 0020_video_ai_jobs.sql | video_ai_jobs |
+| 0021_learned_entities.sql | learned_entities |
 
 ---
 
