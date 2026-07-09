@@ -57,14 +57,19 @@ def mix_audio_to_video(
     presence: str = "ambient",
     cut_times: list[float] | None = None,
     pure_sounds: list[dict] | None = None,
+    audio_genre: str = "none",
+    audio_vocals: bool = False,
+    sfx_events: list[dict] | None = None,
+    vocal_phrase: str | None = None,
 ) -> Path:
     """
-    Add audio to a video. Phase 6.
+    Add audio to a video. Phase 6+.
     - If audio_path: mix that file.
-    - Else if pure_sounds (from registry mesh): mix multiple per-instant sounds into one track.
-    - Else: generate procedural ambient from origins (tempo, mood, presence).
-    - Always writes to a temp file first to avoid ffmpeg in-place corruption.
-    Raises RuntimeError if pydub is missing or ffmpeg/ffprobe are not on PATH.
+    - Else if presence=music or audio_genre set: in-house arrangement engine.
+    - Else if pure_sounds: mix registry mesh.
+    - Else: procedural ambient from origins.
+    - Overlay event SFX (bounce etc.) and optional offline vocals.
+    - cut_times: soft click accents at scene cuts.
     """
     try:
         from pydub import AudioSegment
@@ -79,14 +84,12 @@ def mix_audio_to_video(
     output_path = output_path or video_path.parent / (video_path.stem + "_with_audio" + video_path.suffix)
     in_place = output_path.resolve() == video_path.resolve()
 
-    # Write to temp first when overwriting same file (ffmpeg in-place can fail)
     final_output = output_path
     if in_place:
         fd, tmp_out = tempfile.mkstemp(suffix=".mp4", prefix="mux_")
         os.close(fd)
         output_path = Path(tmp_out)
 
-    # Get video duration from ffprobe
     try:
         out = subprocess.run(
             [
@@ -106,23 +109,39 @@ def mix_audio_to_video(
         logger.warning("ffprobe failed for %s: %s — using duration 5.0s", video_path, e)
         duration = 5.0
 
+    duration_ms = int(duration * 1000)
+
     if audio_path and audio_path.exists():
         audio = AudioSegment.from_file(str(audio_path))
-        audio = audio[: int(duration * 1000)]
-    elif pure_sounds and len(pure_sounds) > 0:
-        # Mix multiple pure sounds from the registry (per-instant mesh)
-        audio = generate_audio_from_pure_sounds(
-            pure_sounds,
-            duration_ms=int(duration * 1000),
-        )
+        audio = audio[:duration_ms]
     else:
-        # Procedural audio from origins: mood, tempo, presence
-        audio = _generate_procedural_audio(
-            duration_ms=int(duration * 1000),
+        audio = _build_audio_bed(
+            duration_ms=duration_ms,
             mood=mood,
             tempo=tempo,
             presence=presence,
+            pure_sounds=pure_sounds,
+            audio_genre=audio_genre,
         )
+
+    # Cut accents + event SFX
+    from .event_sfx import schedule_sfx_events, cut_accent_events
+    events = list(sfx_events or [])
+    events.extend(cut_accent_events(cut_times))
+    audio = schedule_sfx_events(audio, events, duration_ms=duration_ms)
+
+    # Offline vocals
+    if audio_vocals or (presence == "music" and audio_genre not in ("none", "")):
+        from .vocals import mix_vocals_into
+        # Only force vocal bed when explicitly requested
+        if audio_vocals:
+            audio = mix_vocals_into(
+                audio,
+                enable=True,
+                mood=mood,
+                phrase=vocal_phrase,
+                duration_ms=duration_ms,
+            )
 
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
         tmp_wav = f.name
@@ -145,6 +164,51 @@ def mix_audio_to_video(
         shutil.move(str(output_path), str(final_output))
         return final_output
     return output_path
+
+
+def _build_audio_bed(
+    *,
+    duration_ms: int,
+    mood: str,
+    tempo: str,
+    presence: str,
+    pure_sounds: list[dict] | None,
+    audio_genre: str,
+):
+    """Select music arrangement vs ambient vs sfx-only bed."""
+    from pydub import AudioSegment
+
+    presence = (presence or "ambient").lower()
+    genre = (audio_genre or "none").lower()
+
+    if presence == "silence":
+        return AudioSegment.silent(duration=duration_ms, frame_rate=44100)
+
+    use_music = presence in ("music", "full") or genre not in ("none", "", "ambient")
+    if use_music and genre in ("none", "", "ambient") and presence == "music":
+        genre = "deep_house"
+
+    if use_music and genre not in ("none", ""):
+        from .music import generate_arrangement_audio, duck_under_sfx
+        music = generate_arrangement_audio(
+            duration_ms, genre=genre if genre != "ambient" else "ambient", tempo=tempo, mood=mood
+        )
+        if presence == "full":
+            # Layer light ambient under music
+            amb = _generate_procedural_audio(duration_ms, mood=mood, tempo=tempo, presence="ambient")
+            music = music.overlay(amb + (-8))
+        return music
+
+    if presence == "sfx":
+        # Sparse transient bed only (events overlay later)
+        base = AudioSegment.silent(duration=duration_ms, frame_rate=44100)
+        sparse = _generate_procedural_audio(duration_ms, mood=mood, tempo=tempo, presence="sfx")
+        return base.overlay(sparse + (-4))
+
+    if pure_sounds and len(pure_sounds) > 0:
+        return generate_audio_from_pure_sounds(pure_sounds, duration_ms=duration_ms)
+
+    return _generate_procedural_audio(duration_ms, mood=mood, tempo=tempo, presence=presence)
 
 
 def _tone_to_freq_db(tone: str, amplitude: float) -> tuple[float, float]:
@@ -282,12 +346,32 @@ def _generate_procedural_audio(
 
     if presence == "full":
         db = max(db - 4, -24)
+    elif presence == "sfx":
+        # Sparse transient-oriented bed (events add the real hits)
+        db = db - 6
+    elif presence == "music":
+        # Fallback if arrangement engine unavailable — harmonic stack
+        db = db - 2
     elif presence == "ambient":
         db = db
 
     tone = Sine(freq).to_audio_segment(duration=tone_dur) + db
     looped = _repeat_to_duration(tone, duration_ms)
     result = base.overlay(looped)
+
+    if presence == "music":
+        # Extra harmonic layers for music-like bed fallback
+        for mul, g_off in ((1.5, -10), (2.0, -14), (3.0, -18)):
+            harm = Sine(freq * mul).to_audio_segment(duration=min(tone_dur, duration_ms)) + (db + g_off)
+            result = result.overlay(_repeat_to_duration(harm, duration_ms))
+
+    if presence == "sfx":
+        # Only sparse clicks/thumps — no continuous bed dominance
+        result = base
+        for t in range(0, duration_ms, max(500, tempo_ms)):
+            thump = Sine(60).to_audio_segment(duration=70).fade_out(65) + (db + 2)
+            result = result.overlay(thump, position=t)
+        return result
 
     # Cover all ten SOUND_ORIGIN_PRIMITIVES via spectral shape (mission: touch every origin noise).
     prim = (target_primitive or "").strip().lower()

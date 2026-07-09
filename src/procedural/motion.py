@@ -45,6 +45,39 @@ def get_motion_func(motion_type: str) -> Callable[[float], float]:
     return lambda t: flow(t, 0.3)
 
 
+def directionality_offsets(
+    directionality: str,
+    motion_val: float,
+    *,
+    smoothness: str = "smooth",
+) -> tuple[float, float]:
+    """
+    Map MOTION_ORIGINS.directionality + motion value → (dx, dy) drift in 0–1 space.
+    Used to bias gradient sampling and layer motion.
+    """
+    d = (directionality or "none").lower()
+    amp = 0.28
+    if smoothness == "jerky":
+        # Quantize motion for stepped feel
+        motion_val = round(motion_val * 6) / 6.0
+        amp = 0.32
+    elif smoothness == "fluid":
+        amp = 0.34
+    elif smoothness == "rough":
+        amp = 0.30
+
+    if d == "horizontal":
+        return motion_val * amp, 0.0
+    if d == "vertical":
+        return 0.0, motion_val * amp
+    if d == "diagonal":
+        return motion_val * amp * 0.7, motion_val * amp * 0.7
+    if d == "radial":
+        # Expand/contract feel via equal xy push from center (handled in gradient)
+        return motion_val * amp * 0.5, motion_val * amp * 0.5
+    return 0.0, 0.0
+
+
 def get_camera_params(
     camera_motion: str, t: float
 ) -> tuple[float, float, float, float]:

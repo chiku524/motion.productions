@@ -105,6 +105,8 @@ services:
       LOOP_WORKER_OFFSET_SECONDS: "30"
       # Free-tier safe: longer gaps so D1 stays calm with sound (+ optional interpret)
       LOOP_DELAY_SECONDS: "55"
+      # Prefer 5s mini-scenes (API loop_config.duration_seconds is source of truth)
+      LOOP_DURATION_SECONDS: "5"
       DISCOVERIES_CHUNK_PAUSE_SECONDS: "1.5"
     ports:
       - "8085:8080"

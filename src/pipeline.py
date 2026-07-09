@@ -58,7 +58,11 @@ def generate_full_video(
         )
         # Phase 6: mandatory audio (every mp4 has an audio track); use spec.pure_sounds when available
         spec = getattr(generator, "_last_spec", None)
-        output_path = _add_audio(output_path, config, prompt, spec=spec)
+        cut_times = getattr(generator, "_last_cut_times", None) or getattr(spec, "cut_times", None)
+        instruction = getattr(generator, "_last_instruction", None)
+        output_path = _add_audio(
+            output_path, config, prompt, spec=spec, instruction=instruction, cut_times=cut_times
+        )
         return output_path
 
     # Long-form: segments with temporal continuation, then concat
@@ -100,7 +104,11 @@ def generate_full_video(
 
     # Phase 6: mandatory audio (every mp4 has an audio track)
     spec = getattr(generator, "_last_spec", None)
-    output_path = _add_audio(output_path, config, effective_prompt, spec=spec)
+    cut_times = getattr(generator, "_last_cut_times", None) or getattr(spec, "cut_times", None)
+    instruction = getattr(generator, "_last_instruction", None)
+    output_path = _add_audio(
+        output_path, config, effective_prompt, spec=spec, instruction=instruction, cut_times=cut_times
+    )
 
     # Optional: remove segment files to save space (keep for debugging initially)
     # for p in segment_paths:
@@ -116,6 +124,7 @@ def _add_audio(
     *,
     instruction: Any = None,
     spec: Any = None,
+    cut_times: list[float] | None = None,
 ) -> Path:
     """Always add procedural audio to the video. When spec.pure_sounds is set, mixes multiple
     pure sounds from the registry; else uses mood, tempo, presence (from instruction or prompt)."""
@@ -132,13 +141,23 @@ def _add_audio(
     mood = "neutral"
     tempo = "medium"
     presence = "ambient"
+    audio_genre = "none"
+    audio_vocals = False
+    sfx_events = None
+    vocal_phrase = None
     pure_sounds = getattr(spec, "pure_sounds", None) if spec else None
+    if cut_times is None and spec is not None:
+        cut_times = getattr(spec, "cut_times", None)
     if spec is not None and instruction is None and hasattr(spec, "audio_mood"):
         instruction = spec
     if instruction is not None:
         mood = getattr(instruction, "audio_mood", None) or "neutral"
         tempo = getattr(instruction, "audio_tempo", None) or "medium"
         presence = getattr(instruction, "audio_presence", None) or "ambient"
+        audio_genre = getattr(instruction, "audio_genre", None) or "none"
+        audio_vocals = bool(getattr(instruction, "audio_vocals", False))
+        sfx_events = getattr(instruction, "sfx_events", None)
+        vocal_phrase = getattr(instruction, "text_overlay", None)
     elif prompt and not pure_sounds:
         try:
             from .interpretation import interpret_user_prompt
@@ -146,16 +165,30 @@ def _add_audio(
             mood = getattr(inst, "audio_mood", None) or "neutral"
             tempo = getattr(inst, "audio_tempo", None) or "medium"
             presence = getattr(inst, "audio_presence", None) or "ambient"
+            audio_genre = getattr(inst, "audio_genre", None) or "none"
+            audio_vocals = bool(getattr(inst, "audio_vocals", False))
+            sfx_events = getattr(inst, "sfx_events", None)
+            vocal_phrase = getattr(inst, "text_overlay", None)
         except Exception as e:
             logger.debug("Could not interpret prompt for audio params: %s — using defaults", e)
             if any(w in prompt.lower() for w in ("moody", "noir", "dark")):
                 mood = "moody"
+
+    if spec is not None:
+        sfx_events = getattr(spec, "sfx_events", None) or sfx_events
+        audio_genre = getattr(spec, "audio_genre", None) or audio_genre
+        audio_vocals = bool(getattr(spec, "audio_vocals", False) or audio_vocals)
 
     try:
         out = mix_audio_to_video(
             output_path, output_path=output_path,
             mood=mood, tempo=tempo, presence=presence,
             pure_sounds=pure_sounds,
+            cut_times=cut_times,
+            audio_genre=audio_genre,
+            audio_vocals=audio_vocals,
+            sfx_events=sfx_events,
+            vocal_phrase=vocal_phrase,
         )
         out_path = Path(out)
         _verify_audio_track(out_path)

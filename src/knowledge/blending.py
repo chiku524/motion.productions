@@ -142,11 +142,26 @@ def blend_motion_params(
     weight: float = 0.5,
     approach: BlendApproach = "linear",
 ) -> str:
-    """Blend two motion speeds."""
-    order = ["static", "slow", "medium", "fast"]
-    ia = order.index(speed_a) if speed_a in order else 1
-    ib = order.index(speed_b) if speed_b in order else 1
-    return _ordinal_blend(order, ia, ib, weight, approach)
+    """
+    Blend two motion types used by the procedural renderer.
+    Accepts both MOTION_ORIGINS speeds (static/slow/medium/fast) and
+    renderer motion styles (wave/flow/pulse); maps speeds into styles first.
+    """
+    style_order = ["slow", "wave", "flow", "fast", "pulse"]
+    speed_to_style = {
+        "static": "slow",
+        "slow": "slow",
+        "medium": "flow",
+        "fast": "fast",
+        "wave": "wave",
+        "flow": "flow",
+        "pulse": "pulse",
+    }
+    a = speed_to_style.get(speed_a, speed_a if speed_a in style_order else "flow")
+    b = speed_to_style.get(speed_b, speed_b if speed_b in style_order else "flow")
+    ia = style_order.index(a) if a in style_order else 2
+    ib = style_order.index(b) if b in style_order else 2
+    return _ordinal_blend(style_order, ia, ib, weight, approach)
 
 
 def blend_smoothness(

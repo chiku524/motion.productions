@@ -291,6 +291,46 @@ KEYWORD_TO_TENSION: dict[str, str] = {
     "climax": "immediate",
 }
 
+# Motion directionality (MOTION_ORIGINS.directionality)
+KEYWORD_TO_MOTION_DIRECTIONALITY: dict[str, str] = {
+    "left": "horizontal",
+    "right": "horizontal",
+    "sideways": "horizontal",
+    "horizontal": "horizontal",
+    "drift": "horizontal",
+    "up": "vertical",
+    "down": "vertical",
+    "upward": "vertical",
+    "downward": "vertical",
+    "vertical": "vertical",
+    "rise": "vertical",
+    "fall": "vertical",
+    "diagonal": "diagonal",
+    "angled": "diagonal",
+    "radial": "radial",
+    "outward": "radial",
+    "inward": "radial",
+    "toward": "radial",
+    "away": "radial",
+}
+
+KEYWORD_TO_MOTION_SMOOTHNESS: dict[str, str] = {
+    "jerky": "jerky",
+    "rough": "rough",
+    "smooth": "smooth",
+    "fluid": "fluid",
+    "silky": "fluid",
+}
+
+KEYWORD_TO_MOTION_RHYTHM: dict[str, str] = {
+    "steady": "steady",
+    "pulsing": "pulsing",
+    "pulse": "pulsing",
+    "wave": "wave",
+    "random": "random",
+    "erratic": "random",
+}
+
 # Audio: tempo, mood, presence (Domain: Audio)
 KEYWORD_TO_AUDIO_TEMPO: dict[str, str] = {
     "slow": "slow",
@@ -306,6 +346,12 @@ KEYWORD_TO_AUDIO_MOOD: dict[str, str] = {
     "uplifting": "uplifting",
     "dark": "dark",
     "ambient": "calm",
+    "moody": "moody",
+    "dreamy": "dreamy",
+    "energetic": "energetic",
+    "dramatic": "dramatic",
+    "peaceful": "peaceful",
+    "chaotic": "chaotic",
 }
 KEYWORD_TO_AUDIO_PRESENCE: dict[str, str] = {
     "silence": "silence",
@@ -313,7 +359,60 @@ KEYWORD_TO_AUDIO_PRESENCE: dict[str, str] = {
     "ambient": "ambient",
     "music": "music",
     "sfx": "sfx",
+    "sound": "sfx",
+    "effects": "sfx",
     "full": "full",
+    "vocals": "music",
+    "vocal": "music",
+    "singing": "music",
+    "choir": "music",
+}
+
+# Music genre (in-house arrangement presets)
+KEYWORD_TO_AUDIO_GENRE: dict[str, str] = {
+    "house": "deep_house",
+    "deep": "deep_house",
+    "deephouse": "deep_house",
+    "techno": "techno",
+    "ambient": "ambient",
+    "cinematic": "cinematic",
+    "beat": "deep_house",
+    "groove": "deep_house",
+    "edm": "techno",
+}
+
+# Event SFX kinds (synced to visual events)
+KEYWORD_TO_SFX_KIND: dict[str, str] = {
+    "bounce": "bounce",
+    "bouncing": "bounce",
+    "bounces": "bounce",
+    "impact": "impact",
+    "hit": "impact",
+    "thump": "thump",
+    "click": "click",
+    "whoosh": "whoosh",
+    "rustle": "rustle",
+    "drip": "drip",
+}
+
+# Entity kinds for scene graph (Phase 2+)
+KEYWORD_TO_ENTITY_KIND: dict[str, str] = {
+    "ball": "circle",
+    "sphere": "circle",
+    "circle": "circle",
+    "orb": "circle",
+    "dot": "circle",
+    "block": "rect",
+    "box": "rect",
+    "square": "rect",
+    "rect": "rect",
+    "rectangle": "rect",
+    "arrow": "arrow",
+    "person": "character",
+    "people": "character",
+    "character": "character",
+    "figure": "character",
+    "human": "character",
 }
 
 DEFAULT_COMPOSITION_BALANCE = "balanced"
@@ -322,6 +421,10 @@ DEFAULT_TENSION = "standard"
 DEFAULT_AUDIO_TEMPO = "medium"
 DEFAULT_AUDIO_MOOD = "neutral"
 DEFAULT_AUDIO_PRESENCE = "ambient"
+DEFAULT_AUDIO_GENRE = "none"
+DEFAULT_MOTION_DIRECTIONALITY = "none"
+DEFAULT_MOTION_SMOOTHNESS = "smooth"
+DEFAULT_MOTION_RHYTHM = "steady"
 
 # Words that suggest intensity (0–1)
 KEYWORD_TO_INTENSITY: dict[str, float] = {

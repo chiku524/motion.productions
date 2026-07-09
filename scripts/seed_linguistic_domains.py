@@ -113,6 +113,27 @@ SEED_ITEMS: list[dict[str, str]] = [
     {"span": "urban", "canonical": "urban", "domain": "theme", "variant_type": "synonym"},
     {"span": "city", "canonical": "urban", "domain": "theme", "variant_type": "synonym"},
     {"span": "metropolitan", "canonical": "urban", "domain": "theme", "variant_type": "synonym"},
+    # motion_directionality
+    {"span": "drifts left", "canonical": "horizontal", "domain": "motion_directionality", "variant_type": "synonym"},
+    {"span": "moves right", "canonical": "horizontal", "domain": "motion_directionality", "variant_type": "synonym"},
+    {"span": "goes up", "canonical": "vertical", "domain": "motion_directionality", "variant_type": "synonym"},
+    {"span": "falls down", "canonical": "vertical", "domain": "motion_directionality", "variant_type": "synonym"},
+    {"span": "diagonal drift", "canonical": "diagonal", "domain": "motion_directionality", "variant_type": "synonym"},
+    {"span": "radiates out", "canonical": "radial", "domain": "motion_directionality", "variant_type": "synonym"},
+    # audio_genre
+    {"span": "deep house", "canonical": "deep_house", "domain": "audio_genre", "variant_type": "synonym"},
+    {"span": "house music", "canonical": "deep_house", "domain": "audio_genre", "variant_type": "synonym"},
+    {"span": "techno beat", "canonical": "techno", "domain": "audio_genre", "variant_type": "synonym"},
+    {"span": "ambient pad", "canonical": "ambient", "domain": "audio_genre", "variant_type": "synonym"},
+    # sfx
+    {"span": "bouncing", "canonical": "bounce", "domain": "sfx", "variant_type": "synonym"},
+    {"span": "ball bounce", "canonical": "bounce", "domain": "sfx", "variant_type": "synonym"},
+    {"span": "impact hit", "canonical": "impact", "domain": "sfx", "variant_type": "synonym"},
+    {"span": "whoosh by", "canonical": "whoosh", "domain": "sfx", "variant_type": "synonym"},
+    # entity
+    {"span": "red ball", "canonical": "circle", "domain": "entity", "variant_type": "synonym"},
+    {"span": "bouncing ball", "canonical": "circle", "domain": "entity", "variant_type": "synonym"},
+    {"span": "a person", "canonical": "character", "domain": "entity", "variant_type": "synonym"},
 ]
 
 

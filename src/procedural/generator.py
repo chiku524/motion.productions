@@ -83,18 +83,44 @@ class ProceduralVideoGenerator(VideoGenerator):
 
         from ..interpretation import interpret_user_prompt
         from ..creation import build_spec_from_instruction
-        from ..creation.scene_script import build_scene_script_from_instruction, spec_from_shot
+        from ..creation.scene_script import (
+            build_scene_script_from_instruction,
+            spec_from_shot,
+            cut_times_from_script,
+        )
         from ..knowledge import get_knowledge_for_creation
-        instruction = interpret_user_prompt(prompt, default_duration=duration_seconds)
+
+        linguistic_registry = None
+        try:
+            from ..interpretation.linguistic_client import fetch_linguistic_registry
+            api_base = (config or {}).get("api_base") or (config or {}).get("API_BASE")
+            if api_base:
+                linguistic_registry = fetch_linguistic_registry(str(api_base).rstrip("/"))
+        except Exception:
+            linguistic_registry = None
+
+        instruction = interpret_user_prompt(
+            prompt,
+            default_duration=duration_seconds,
+            linguistic_registry=linguistic_registry,
+        )
         knowledge = get_knowledge_for_creation(config)
         base_spec = build_spec_from_instruction(instruction, knowledge=knowledge)
-        self._last_spec = base_spec  # Pipeline uses this for audio (pure_sounds mixing)
         scene_script = build_scene_script_from_instruction(
             instruction,
             duration_seconds=duration_seconds,
             segment_index=segment_index,
             total_segments=total_segments,
         )
+        base_spec.cut_times = cut_times_from_script(scene_script)
+        # Re-time SFX events to actual duration
+        if base_spec.sfx_events:
+            for ev in base_spec.sfx_events:
+                if isinstance(ev, dict) and ev.get("t_sec") is None:
+                    ev["t_sec"] = 0.5
+        self._last_spec = base_spec  # Pipeline uses this for audio (pure_sounds mixing)
+        self._last_instruction = instruction
+        self._last_cut_times = base_spec.cut_times
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         if output_path.suffix == "":

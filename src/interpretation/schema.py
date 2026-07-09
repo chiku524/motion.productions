@@ -45,10 +45,25 @@ class InterpretedInstruction:
     # Narrative (Domain: Narrative)
     tension_curve: str = "standard"         # flat | slow_build | standard | immediate
 
+    # Motion axes (MOTION_ORIGINS — wired through creation/render)
+    motion_directionality: str = "none"     # none | horizontal | vertical | diagonal | radial
+    motion_directionality_hints: list[str] = field(default_factory=list)
+    motion_smoothness: str = "smooth"       # jerky | rough | smooth | fluid
+    motion_rhythm: str = "steady"           # steady | pulsing | wave | random
+
     # Audio (Domain: Audio)
     audio_tempo: str = "medium"             # slow | medium | fast
     audio_mood: str = "neutral"             # neutral | calm | tense | uplifting | dark
     audio_presence: str = "ambient"         # silence | ambient | music | sfx | full
+    audio_genre: str = "none"               # none | ambient | deep_house | techno | cinematic
+    audio_hints: list[str] = field(default_factory=list)
+    # Event SFX placeholders: [{kind, t_sec, strength}] — filled by creation/scene graph
+    sfx_events: list[dict[str, Any]] = field(default_factory=list)
+    # Enable offline vocal bed (Phase 4)
+    audio_vocals: bool = False
+
+    # Scene entities (Phase 2+): [{kind, color_hint, direction, motion, ...}]
+    entities: list[dict[str, Any]] = field(default_factory=list)
 
     # Text/graphics overlays (Phase 4)
     text_overlay: str | None = None   # text to display (titles, subtitles)

@@ -73,6 +73,14 @@ class SceneSpec:
     audio_tempo: str = "medium"
     audio_mood: str = "neutral"
     audio_presence: str = "ambient"
+    audio_genre: str = "none"
+    audio_vocals: bool = False
+    motion_directionality: str = "none"
+    motion_smoothness: str = "smooth"
+    motion_rhythm: str = "steady"
+    sfx_events: list[dict] | None = None
+    # Scene graph layers (Phase 2+): list of LayerSpec-like dicts
+    scene_layers: list[dict] | None = None
     text_overlay: str | None = None   # Phase 4: text to display
     text_position: str = "center"
     educational_template: str | None = None
@@ -82,6 +90,8 @@ class SceneSpec:
     creation_mode: str = "blended"    # "blended" | "pure_per_frame"
     # Pure sounds from registry (per-instant mesh): multiple per frame can be combined in audio layer
     pure_sounds: list[dict] | None = None  # e.g. [{"key", "tone", "timbre", "amplitude"}, ...]
+    # Shot cut times (seconds) for audio sync
+    cut_times: list[float] | None = None
 
 
 def parse_prompt_to_spec(prompt: str, *, seed: int | None = None) -> SceneSpec:

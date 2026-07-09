@@ -48,20 +48,35 @@ def _gradient_value(
     yy: "np.ndarray",
     gradient_type: str,
     motion_val: float,
+    *,
+    directionality: str = "none",
+    smoothness: str = "smooth",
 ) -> "np.ndarray":
-    """Compute 0-1 gradient value per pixel based on gradient type."""
-    if gradient_type == "vertical":
-        v = (yy + motion_val * 0.3) % 1.0
-    elif gradient_type == "horizontal":
-        v = (xx + motion_val * 0.3) % 1.0
+    """Compute 0-1 gradient value per pixel based on gradient type + directionality."""
+    from .motion import directionality_offsets
+
+    dx, dy = directionality_offsets(directionality, motion_val, smoothness=smoothness)
+    # When directionality is set, bias axes; else keep classic motion_val shift
+    mx = motion_val * 0.3 + dx
+    my = motion_val * 0.3 + dy
+    if directionality == "radial" or gradient_type == "radial":
+        cx, cy = 0.5, 0.5
+        dist = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2) * 1.414
+        v = (dist + mx) % 1.0
+    elif directionality == "horizontal" or gradient_type == "horizontal":
+        v = (xx + mx) % 1.0
+    elif directionality == "vertical" or gradient_type == "vertical":
+        v = (yy + my) % 1.0
+    elif directionality == "diagonal" or gradient_type == "angled":
+        v = (xx * 0.7 + yy * 0.7 + mx) % 1.0
     elif gradient_type == "angled":
         v = (xx * 0.7 + yy * 0.7 + motion_val * 0.3) % 1.0
-    elif gradient_type == "radial":
-        cx, cy = 0.5, 0.5
-        dist = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2) * 1.414  # normalize to ~0-1
-        v = (dist + motion_val * 0.3) % 1.0
-    else:
+    elif gradient_type == "horizontal":
+        v = (xx + motion_val * 0.3) % 1.0
+    elif gradient_type == "vertical":
         v = (yy + motion_val * 0.3) % 1.0
+    else:
+        v = (yy + my) % 1.0
     return np.clip(v, 0, 1)
 
 
@@ -108,6 +123,68 @@ def _render_pure_per_frame(
     return r, g, b
 
 
+def _composite_scene_layers(
+    frame: "np.ndarray",
+    layers: list[dict],
+    t: float,
+    width: int,
+    height: int,
+) -> "np.ndarray":
+    """Composite keyframed stylized layers onto an RGB float frame."""
+    from ..creation.scene_graph import sample_layer_at
+
+    out = frame.astype(np.float32)
+    yy, xx = np.mgrid[0:height, 0:width].astype(np.float32)
+    xx = xx / max(1, width - 1)
+    yy = yy / max(1, height - 1)
+
+    sorted_layers = sorted(layers, key=lambda L: int(L.get("z", 1) if isinstance(L, dict) else 1))
+    for layer in sorted_layers:
+        if not isinstance(layer, dict):
+            continue
+        pose = sample_layer_at(layer, t)
+        kind = pose.get("kind") or layer.get("kind") or "circle"
+        cx, cy = float(pose["x"]), float(pose["y"])
+        scale = max(0.15, float(pose["scale"]))
+        opacity = max(0.0, min(1.0, float(pose["opacity"]))) * 0.85
+        color = layer.get("color") or [220, 60, 60]
+        cr, cg, cb = float(color[0]), float(color[1]), float(color[2])
+        radius = 0.12 * scale
+
+        if kind == "rect":
+            half = radius * 1.1
+            mask = ((np.abs(xx - cx) < half) & (np.abs(yy - cy) < half)).astype(np.float32)
+            # Soft edge
+            edge = np.clip(1.0 - np.maximum(np.abs(xx - cx) / half, np.abs(yy - cy) / half), 0, 1)
+            alpha = (mask * edge * opacity)[..., None]
+        elif kind == "arrow":
+            # Simple chevron pointing along +x (or -x if moving left historically)
+            dx = xx - cx
+            dy = yy - cy
+            body = (np.abs(dy) < radius * 0.25) & (dx > -radius) & (dx < radius * 0.4)
+            head = (dx > radius * 0.2) & (dx < radius) & (np.abs(dy) < (radius - dx) * 0.9)
+            mask = (body | head).astype(np.float32)
+            alpha = (mask * opacity)[..., None]
+        elif kind == "character":
+            # Head + body (two circles/rects)
+            head_r = radius * 0.45
+            body_r = radius * 0.7
+            head_m = (np.sqrt((xx - cx) ** 2 + (yy - (cy - radius * 0.55)) ** 2) < head_r).astype(np.float32)
+            body_m = ((np.abs(xx - cx) < body_r * 0.55) & (np.abs(yy - (cy + radius * 0.15)) < body_r)).astype(np.float32)
+            mask = np.clip(head_m + body_m, 0, 1)
+            alpha = (mask * opacity)[..., None]
+        else:
+            # circle
+            dist = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
+            mask = np.clip(1.0 - dist / max(1e-6, radius), 0, 1) ** 1.5
+            alpha = (mask * opacity)[..., None]
+
+        color_arr = np.array([cr, cg, cb], dtype=np.float32).reshape(1, 1, 3)
+        out = out * (1.0 - alpha) + color_arr * alpha
+
+    return np.clip(out, 0, 255)
+
+
 def render_frame(
     spec: SceneSpec,
     t: float,
@@ -130,6 +207,8 @@ def render_frame(
         palette = PALETTES.get(spec.palette_name, PALETTES["default"])
     motion_fn = get_motion_func(spec.motion_type)
     motion_val = motion_fn(t)
+    directionality = getattr(spec, "motion_directionality", "none") or "none"
+    smoothness = getattr(spec, "motion_smoothness", "smooth") or "smooth"
     intensity = max(0.1, min(1.0, spec.intensity))
     # Phase 5: tension curve modulates intensity when duration known
     if duration_seconds and duration_seconds > 0:
@@ -164,7 +243,11 @@ def render_frame(
         r, g, b = _render_pure_per_frame(xx, yy, pure_colors, t, seed, intensity)
     else:
         # Compute gradient value per pixel (blended mode)
-        v = _gradient_value(xx, yy, gradient_type, motion_val)
+        v = _gradient_value(
+            xx, yy, gradient_type, motion_val,
+            directionality=directionality,
+            smoothness=smoothness,
+        )
         idx = v * (len(palette) - 1)
         i0 = np.clip(np.floor(idx).astype(np.int32), 0, len(palette) - 2)
         i1 = i0 + 1
@@ -189,20 +272,30 @@ def render_frame(
         g = np.clip(g + (n - 0.5) * amp, 0, 255)
         b = np.clip(b + (n - 0.5) * amp, 0, 255)
 
-    # Shape overlay (soft circle or rect)
+    # Shape overlay (soft circle or rect) — legacy single overlay
     shape_overlay = getattr(spec, "shape_overlay", "none") or "none"
     overlay_palette = pure_colors if (creation_mode == "pure_per_frame" and pure_colors) else palette
-    if shape_overlay in ("circle", "rect") and overlay_palette:
+    scene_layers = getattr(spec, "scene_layers", None) or []
+    if scene_layers:
+        frame = np.stack([r, g, b], axis=-1).astype(np.float32)
+        frame = _composite_scene_layers(frame, scene_layers, t, width, height)
+        r, g, b = frame[:, :, 0], frame[:, :, 1], frame[:, :, 2]
+    elif shape_overlay in ("circle", "rect") and overlay_palette:
         mid = len(overlay_palette) // 2
         cr, cg, cb = overlay_palette[mid][0], overlay_palette[mid][1], overlay_palette[mid][2]
         cx, cy = 0.5, 0.5
+        # Drift overlay with directionality
+        from .motion import directionality_offsets
+        odx, ody = directionality_offsets(directionality, motion_val, smoothness=smoothness)
+        cx = (cx + odx) % 1.0
+        cy = (cy + ody) % 1.0
         if shape_overlay == "circle":
             dist = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2) * 2
             alpha = np.clip(1 - dist, 0, 1) ** 2 * 0.15
         else:
             edge = 0.25
-            mx = np.maximum(np.abs(xx - 0.5) - (0.5 - edge), 0)
-            my = np.maximum(np.abs(yy - 0.5) - (0.5 - edge), 0)
+            mx = np.maximum(np.abs(xx - cx) - (0.5 - edge), 0)
+            my = np.maximum(np.abs(yy - cy) - (0.5 - edge), 0)
             dist = np.sqrt(mx * mx + my * my) * 4
             alpha = np.clip(1 - dist, 0, 1) ** 2 * 0.2
         r = np.clip(r * (1 - alpha) + cr * alpha, 0, 255)

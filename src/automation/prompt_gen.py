@@ -494,6 +494,71 @@ def generate_targeted_blended_prompt(
     return prompt
 
 
+# Everyday mini-scene prompts: what an average person might ask for in ~5s clips.
+# Designed to exercise entities, direction, bounce SFX, music genre, and vocals.
+_MINI_SCENE_TEMPLATES: list[str] = [
+    "a red ball bouncing left to a deep house beat with soft vocals",
+    "a blue ball bouncing right with techno music",
+    "a glowing orb drifting upward with ambient music and soft vocals",
+    "a person walking left through neon light with a house beat",
+    "a person walking right in golden hour with calm ambient music",
+    "a green block sliding left then bouncing with click sound effects",
+    "an arrow flying toward the camera with a whoosh and dramatic music",
+    "a yellow circle pulsing in the center with deep house music",
+    "a character walking left under soft rain with melancholy music",
+    "a red sphere bouncing down a diagonal path with playful music",
+    "two shapes drifting apart: a blue ball left and a warm block right, ambient bed",
+    "a spotlight circle moving right with cinematic music and soft vocals",
+    "a bouncing ball in a dark moody scene with tense techno",
+    "a person walking toward the camera with uplifting house music and vocals",
+    "a neon arrow sweeping left to right with energetic beat and whoosh",
+    "a soft pink orb rising slowly with dreamy ambient vocals",
+    "a box tumbling down with impact sound effects and dark music",
+    "a calm ocean-blue scene with a ball drifting left and peaceful music",
+    "a city neon pulse with a character walking right and full music mix",
+    "explain gravity with a bouncing ball and soft spoken vocals",
+    "a tutorial-style scene: a red ball bouncing while calm music plays",
+    "a sunset gradient with a person walking left and warm ambient vocals",
+    "a bouncing orange ball with thump sound effects and deep house groove",
+    "a white circle drifting diagonally with soft choir-like vocals",
+    "a handheld feel: person walking left, slight shake, ambient music",
+    # More average-person asks (product / social / vibe clips)
+    "make a 5 second intro: logo-like circle pulsing with a clean house beat",
+    "short loop of a ball bouncing for a kids app, cheerful music",
+    "moody night walk: silhouette moving left, rain feel, ambient pad",
+    "product vibe: soft light sweep across a glowing orb, cinematic music",
+    "fitness energy: bold shapes pulsing to a techno beat",
+    "meditation clip: slow rising orb, soft vocals, calm ambient",
+    "game trailer tease: arrow racing right with whoosh and dark music",
+    "weather mood: blue-gray wash, drifting circle, gentle rain-like clicks",
+    "party invite vibe: neon pulse, bouncing shapes, deep house",
+    "story beat: character enters from the left, soft footsteps and music swell",
+    "science explainer: ball falls and bounces, soft narration-like vocals",
+    "romantic sunset: warm gradient, slow walk right, soft vocals",
+    "tech demo: clean white circle sliding left to right with click SFX",
+    "horror tease: dark frame, slow drift toward camera, tense low music",
+    "sports hype: fast bounce left-right with punchy beat and impacts",
+]
+
+
+def generate_mini_scene_prompt(
+    *,
+    avoid: set[str] | None = None,
+) -> str | None:
+    """
+    Natural-language mini-scene prompts for ~5s clips — closer to real user requests
+    than registry-axis jargon. Exercises scene graph + music + event SFX.
+    """
+    avoid = avoid or set()
+    candidates = [p for p in _MINI_SCENE_TEMPLATES if p not in avoid]
+    if not candidates:
+        return None
+    prompt = secure_choice(candidates)
+    if _is_near_duplicate(prompt, avoid):
+        return None
+    return prompt
+
+
 def generate_procedural_prompt(
     *,
     subjects: list[str] | None = None,

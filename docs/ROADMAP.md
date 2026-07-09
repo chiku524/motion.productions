@@ -94,12 +94,12 @@ Video generation software that can utilize any aspect within the movie industry 
 
 | Task | Description | Status |
 |------|-------------|--------|
-| 6.1 | Music: mood, tempo, genre selection | Done |
-| 6.2 | SFX: transitions, emphasis, ambience | Done |
-| 6.3 | Sync: beats aligned with cuts and motion | Done |
-| 6.4 | Optional narration (TTS or pre-recorded) | Done |
+| 6.1 | Music: mood, tempo, genre selection | Done (in-house arrangement: deep_house/techno/ambient/cinematic) |
+| 6.2 | SFX: transitions, emphasis, ambience | Done (event-synced bounce/impact + cut accents) |
+| 6.3 | Sync: beats aligned with cuts and motion | Done (cut_times + scene-graph bounce timings) |
+| 6.4 | Optional narration (offline vocal beds / local TTS) | Done (formant vocal bed; espeak if present — no cloud) |
 
-**Success criteria:** Videos have appropriate audio; sync with cuts.
+**Success criteria:** Videos have appropriate audio; sync with cuts; bounce SFX on impacts; deep-house beds without external APIs.
 
 ---
 
@@ -179,11 +179,11 @@ Every domain from INTENDED_LOOP is represented in prompts and interpretation (co
 
 ## Phase C: Object/entity primitives
 
-**Goal:** Discrete objects and props before characters (entity model, object library, place in scene, object animation). **Status:** Pending.
+**Goal:** Discrete objects and props before characters (entity model, object library, place in scene, object animation). **Status:** In progress — scene graph layers (circle/rect/arrow) with keyframed trajectories + bounce→SFX; D1 `learned_entities` still pending.
 
 ## Phase D: Character system
 
-**Goal:** Simple characters that can appear and move (primitive, animation, placement, expression). **Status:** Pending.
+**Goal:** Simple characters that can appear and move (primitive, animation, placement, expression). **Status:** In progress — stylized head+body primitive + walk-cycle keyframes; expression/personality still pending.
 
 ## Phase E: Script parsing
 

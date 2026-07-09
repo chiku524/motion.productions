@@ -24,6 +24,12 @@ from ..procedural.data.keywords import (
     KEYWORD_TO_AUDIO_TEMPO,
     KEYWORD_TO_AUDIO_MOOD,
     KEYWORD_TO_AUDIO_PRESENCE,
+    KEYWORD_TO_AUDIO_GENRE,
+    KEYWORD_TO_MOTION_DIRECTIONALITY,
+    KEYWORD_TO_MOTION_SMOOTHNESS,
+    KEYWORD_TO_MOTION_RHYTHM,
+    KEYWORD_TO_SFX_KIND,
+    KEYWORD_TO_ENTITY_KIND,
 )
 
 # Domain -> (keyword_dict, instruction_field)
@@ -42,6 +48,12 @@ _DOMAIN_MAPPINGS: list[tuple[str, dict[str, str], str]] = [
     ("audio_tempo", KEYWORD_TO_AUDIO_TEMPO, "audio_tempo"),
     ("audio_mood", KEYWORD_TO_AUDIO_MOOD, "audio_mood"),
     ("audio_presence", KEYWORD_TO_AUDIO_PRESENCE, "audio_presence"),
+    ("audio_genre", KEYWORD_TO_AUDIO_GENRE, "audio_genre"),
+    ("motion_directionality", KEYWORD_TO_MOTION_DIRECTIONALITY, "motion_directionality"),
+    ("motion_smoothness", KEYWORD_TO_MOTION_SMOOTHNESS, "motion_smoothness"),
+    ("motion_rhythm", KEYWORD_TO_MOTION_RHYTHM, "motion_rhythm"),
+    ("sfx", KEYWORD_TO_SFX_KIND, "audio_presence"),
+    ("entity", KEYWORD_TO_ENTITY_KIND, "shape_overlay"),
 ]
 
 

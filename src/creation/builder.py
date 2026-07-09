@@ -159,6 +159,11 @@ def build_spec_from_instruction(
     audio_tempo = getattr(instruction, "audio_tempo", "medium") or "medium"
     audio_mood = getattr(instruction, "audio_mood", "neutral") or "neutral"
     audio_presence = getattr(instruction, "audio_presence", "ambient") or "ambient"
+    audio_genre = getattr(instruction, "audio_genre", "none") or "none"
+    audio_vocals = bool(getattr(instruction, "audio_vocals", False))
+    motion_directionality = getattr(instruction, "motion_directionality", "none") or "none"
+    motion_smoothness = getattr(instruction, "motion_smoothness", "smooth") or "smooth"
+    motion_rhythm = getattr(instruction, "motion_rhythm", "steady") or "steady"
     style_val = getattr(instruction, "style", None)
     tone_val = getattr(instruction, "tone", None)
     # Style/tone can refine lighting when style implies a look
@@ -200,6 +205,14 @@ def build_spec_from_instruction(
         avoid_motion=avoid_motion,
         seed_hint=instruction.raw_prompt,
     )
+    motion_directionality = _build_directionality_from_blending(instruction, motion_directionality)
+    motion_smoothness = _build_smoothness_from_blending(instruction, motion_smoothness)
+    motion_rhythm = _build_rhythm_from_blending(instruction, motion_rhythm)
+    audio_tempo, audio_mood, audio_presence = _build_audio_from_blending(
+        instruction, audio_tempo, audio_mood, audio_presence
+    )
+    if audio_genre != "none" and audio_presence == "ambient":
+        audio_presence = "music"
     lighting = _build_lighting_from_blending(instruction, lighting)
     composition_balance = _build_composition_balance_from_blending(instruction, composition_balance)
     composition_symmetry = _build_composition_symmetry_from_blending(instruction, composition_symmetry)
@@ -238,6 +251,63 @@ def build_spec_from_instruction(
                 pure_sounds.append(dict(s) if isinstance(s, dict) else s)
         pure_sounds = pure_sounds if pure_sounds else None
 
+    # Scene graph (Phase 2+): entities → keyframed layers + bounce SFX timings
+    from .scene_graph import (
+        build_scene_graph_from_instruction,
+        sfx_events_from_scene_graph,
+        walk_cycle_keyframes,
+    )
+    from .narrative_script import build_educational_script, script_to_entities_and_sfx
+
+    duration_hint = float(getattr(instruction, "duration_seconds", None) or 4.0)
+    entities = list(getattr(instruction, "entities", None) or [])
+
+    # Phase 5 / Roadmap B: educational template → multi-beat entities + SFX
+    if getattr(instruction, "educational_template", None) and not entities:
+        topic = (getattr(instruction, "text_overlay", None) or "the topic").strip()
+        narr = build_educational_script(topic, total_duration=max(8.0, duration_hint))
+        ents, sfx_from_script = script_to_entities_and_sfx(narr)
+        entities = ents
+        instruction.entities = entities
+        if not getattr(instruction, "sfx_events", None):
+            instruction.sfx_events = sfx_from_script
+        if not text_overlay and narr.beats:
+            text_overlay = narr.beats[0].text
+
+    # Phase 5: character walk cycles when entity kind is character
+    for ent in entities:
+        if isinstance(ent, dict) and ent.get("kind") == "character" and not ent.get("trajectory"):
+            ent["trajectory"] = "left" if motion_directionality == "horizontal" else "right"
+    graph = build_scene_graph_from_instruction(
+        instruction,
+        duration_seconds=duration_hint,
+        palette_colors=palette_colors,
+    )
+    # Attach walk-cycle keyframes for characters
+    for layer in graph.layers:
+        if layer.kind == "character" and len(layer.keyframes) <= 2:
+            direction = "left"
+            if layer.keyframes and layer.keyframes[-1].x > layer.keyframes[0].x:
+                direction = "right"
+            layer.keyframes = walk_cycle_keyframes(duration=duration_hint, direction=direction)
+    scene_layers = graph.to_dict_list() if graph.layers else None
+    if scene_layers and shape == "none":
+        shape = "circle"  # ensure overlay path exists as fallback
+
+    sfx_events = list(getattr(instruction, "sfx_events", None) or [])
+    # Fill timings from scene graph bounce contacts
+    graph_events = sfx_events_from_scene_graph(graph, duration_seconds=duration_hint)
+    if graph_events:
+        sfx_events = graph_events
+    else:
+        # Placeholder events without t_sec → schedule evenly for bounce kinds
+        from ..audio.event_sfx import infer_bounce_events
+        kinds = [e.get("kind") for e in sfx_events if isinstance(e, dict)]
+        if "bounce" in kinds or any(
+            isinstance(e, dict) and e.get("bounce") for e in entities
+        ):
+            sfx_events = infer_bounce_events(duration_hint)
+
     spec = SceneSpec(
         palette_name=palette,
         motion_type=motion,
@@ -260,6 +330,13 @@ def build_spec_from_instruction(
         audio_tempo=audio_tempo,
         audio_mood=audio_mood,
         audio_presence=audio_presence,
+        audio_genre=audio_genre,
+        audio_vocals=audio_vocals,
+        motion_directionality=motion_directionality,
+        motion_smoothness=motion_smoothness,
+        motion_rhythm=motion_rhythm,
+        sfx_events=sfx_events or None,
+        scene_layers=scene_layers,
         text_overlay=text_overlay,
         text_position=text_position,
         educational_template=educational_template,
@@ -456,6 +533,47 @@ def _build_palette_from_blending(
                     )
 
     return result if result else list(PALETTES.get("default", list(PALETTES.values())[0]))
+
+
+def _build_directionality_from_blending(instruction: InterpretedInstruction, fallback: str) -> str:
+    from ..knowledge.blending import blend_directionality
+    hints = [h for h in (getattr(instruction, "motion_directionality_hints", None) or [fallback]) if h]
+    if not hints:
+        return fallback or "none"
+    result = hints[0]
+    for h in hints[1:]:
+        result = blend_directionality(result, h, weight=0.5)
+    return result
+
+
+def _build_smoothness_from_blending(instruction: InterpretedInstruction, fallback: str) -> str:
+    from ..knowledge.blending import blend_smoothness
+    val = getattr(instruction, "motion_smoothness", None) or fallback
+    return blend_smoothness(val, fallback, weight=0.35) if val != fallback else val
+
+
+def _build_rhythm_from_blending(instruction: InterpretedInstruction, fallback: str) -> str:
+    from ..knowledge.blending import blend_rhythm
+    val = getattr(instruction, "motion_rhythm", None) or fallback
+    return blend_rhythm(val, fallback, weight=0.35) if val != fallback else val
+
+
+def _build_audio_from_blending(
+    instruction: InterpretedInstruction,
+    tempo: str,
+    mood: str,
+    presence: str,
+) -> tuple[str, str, str]:
+    from ..knowledge.blending import blend_audio_tempo, blend_audio_mood, blend_audio_presence
+    hints = getattr(instruction, "audio_hints", None) or []
+    for h in hints:
+        if h in ("slow", "medium", "fast"):
+            tempo = blend_audio_tempo(tempo, h, weight=0.4)
+        elif h in ("silence", "ambient", "music", "sfx", "full"):
+            presence = blend_audio_presence(presence, h, weight=0.4)
+        else:
+            mood = blend_audio_mood(mood, h, weight=0.35)
+    return tempo, mood, presence
 
 
 def _build_motion_from_blending(

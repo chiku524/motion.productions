@@ -10,6 +10,10 @@ from ..procedural.data import (
     DEFAULT_PACING,
 )
 from ..narrative.genre_rules import get_genre_rules
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    pass
 
 # Genre → suggested shot sequence (for multi-shot videos)
 GENRE_SHOT_SEQUENCES: dict[str, list[str]] = {
@@ -103,6 +107,20 @@ def _resolve_pacing(instruction: InterpretedInstruction) -> float:
     return getattr(rules, "default_pacing", DEFAULT_PACING)
 
 
+def cut_times_from_script(scene_script: SceneScript) -> list[float]:
+    """Shot boundary times (seconds) for audio sync accents."""
+    times: list[float] = []
+    acc = 0.0
+    for shot in getattr(scene_script, "shots", None) or []:
+        acc += float(getattr(shot, "duration_seconds", 0) or 0)
+        if acc > 0.05:
+            times.append(acc)
+    # Drop final end-of-video boundary (not a cut between shots)
+    if len(times) > 1:
+        return times[:-1]
+    return []
+
+
 def spec_from_shot(
     base_spec: SceneSpec,
     shot: ShotSpec,
@@ -113,6 +131,7 @@ def spec_from_shot(
         motion_type=base_spec.motion_type,
         intensity=base_spec.intensity,
         raw_prompt=base_spec.raw_prompt,
+        palette_colors=getattr(base_spec, "palette_colors", None),
         gradient_type=getattr(base_spec, "gradient_type", "vertical") or "vertical",
         camera_motion=getattr(base_spec, "camera_motion", "static") or "static",
         shape_overlay=getattr(base_spec, "shape_overlay", "none") or "none",
@@ -122,8 +141,26 @@ def spec_from_shot(
         lighting_preset=getattr(base_spec, "lighting_preset", "neutral") or "neutral",
         genre=getattr(base_spec, "genre", "general") or "general",
         style=getattr(base_spec, "style", "cinematic") or "cinematic",
+        composition_balance=getattr(base_spec, "composition_balance", "balanced") or "balanced",
+        composition_symmetry=getattr(base_spec, "composition_symmetry", "slight") or "slight",
+        pacing_factor=getattr(base_spec, "pacing_factor", 1.0) or 1.0,
+        tension_curve=getattr(base_spec, "tension_curve", "standard") or "standard",
+        audio_tempo=getattr(base_spec, "audio_tempo", "medium") or "medium",
+        audio_mood=getattr(base_spec, "audio_mood", "neutral") or "neutral",
+        audio_presence=getattr(base_spec, "audio_presence", "ambient") or "ambient",
+        audio_genre=getattr(base_spec, "audio_genre", "none") or "none",
+        audio_vocals=bool(getattr(base_spec, "audio_vocals", False)),
+        motion_directionality=getattr(base_spec, "motion_directionality", "none") or "none",
+        motion_smoothness=getattr(base_spec, "motion_smoothness", "smooth") or "smooth",
+        motion_rhythm=getattr(base_spec, "motion_rhythm", "steady") or "steady",
+        sfx_events=getattr(base_spec, "sfx_events", None),
+        scene_layers=getattr(base_spec, "scene_layers", None),
         text_overlay=getattr(base_spec, "text_overlay", None),
         text_position=getattr(base_spec, "text_position", "center") or "center",
         educational_template=getattr(base_spec, "educational_template", None),
         depth_parallax=getattr(base_spec, "depth_parallax", False),
+        pure_colors=getattr(base_spec, "pure_colors", None),
+        creation_mode=getattr(base_spec, "creation_mode", "blended") or "blended",
+        pure_sounds=getattr(base_spec, "pure_sounds", None),
+        cut_times=getattr(base_spec, "cut_times", None),
     )

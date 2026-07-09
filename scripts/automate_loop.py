@@ -89,6 +89,7 @@ def pick_prompt(
     """
     from src.automation import generate_procedural_prompt
     from src.automation.prompt_gen import (
+        generate_mini_scene_prompt,
         generate_targeted_blended_prompt,
         generate_targeted_narrative_prompt,
     )
@@ -97,12 +98,6 @@ def pick_prompt(
     recent = set(state.get("recent_prompts", [])[-150:])
     interpretation_prompts = (knowledge or {}).get("interpretation_prompts", [])
 
-    if secure_random() < exploit_ratio and good:
-        candidates = [p for p in good if p not in recent]
-        chosen = secure_choice(candidates) if candidates else secure_choice(good)
-        if chosen:
-            return (chosen, True, {"source": "exploit_good"})
-    # When exploring: targeted narrative to fill gaps; higher rate when any aspect or color is thin
     narr = (coverage or {}).get("narrative") or {}
     p_cov = float((narr.get("plots") or {}).get("coverage_pct") or 100)
     s_cov = float((narr.get("style") or {}).get("coverage_pct") or 100)
@@ -113,7 +108,41 @@ def pick_prompt(
     thin_plots_style = ps_min < 85
     thin_narrative = narr_min < 90 or g_cov < 90
     thin_color = color_pct < 8
-    targeted_rate = 0.20
+    # Mission: 5s mini-scenes that sound like real user asks — dominate when registries are dense
+    dense_enough = narr_min >= 90 and color_pct >= 50
+    mini_rate = 0.62 if dense_enough else 0.28
+
+    # Prefer everyday mini-scenes before exploit/registry jargon
+    if secure_random() < mini_rate:
+        mini = generate_mini_scene_prompt(avoid=recent)
+        if mini:
+            logger.info("Mini-scene prompt: %s", mini[:70] + ("..." if len(mini) > 70 else ""))
+            return (mini, False, {"source": "mini_scene"})
+
+    # Soften exploit when dense so we don't keep replaying old "Create a fantasy…" prompts
+    effective_exploit = exploit_ratio * (0.45 if dense_enough else 1.0)
+    if secure_random() < effective_exploit and good:
+        # Prefer short, natural good prompts over instructive registry phrasing
+        natural = [
+            p
+            for p in good
+            if p not in recent
+            and len(p) < 120
+            and not p.lower().startswith("create a")
+            and not p.lower().startswith("make a")
+            and not p.lower().startswith("show ")
+            and not p.lower().startswith("render ")
+            and not p.lower().startswith("compose ")
+            and not p.lower().startswith("build ")
+            and not p.lower().startswith("give me ")
+            and not p.lower().startswith("shoot ")
+        ]
+        pool = natural or [p for p in good if p not in recent] or good
+        chosen = secure_choice(pool)
+        if chosen:
+            return (chosen, True, {"source": "exploit_good"})
+
+    targeted_rate = 0.12 if dense_enough else 0.20
     if thin_plots_style:
         targeted_rate = 0.34
     if thin_narrative:
@@ -126,7 +155,7 @@ def pick_prompt(
             logger.info("Targeted narrative prompt (fill gaps): %s", targeted[:60] + ("..." if len(targeted) > 60 else ""))
             return (targeted, False, {"source": "targeted_narrative"})
     # Blended axes (motion/audio/composition) — prefer when narrative is already dense
-    blended_rate = 0.32 if narr_min >= 90 else 0.14
+    blended_rate = 0.18 if dense_enough else (0.28 if narr_min >= 90 else 0.14)
     if secure_random() < blended_rate:
         blended = generate_targeted_blended_prompt(knowledge, avoid=recent)
         if blended:
@@ -141,9 +170,10 @@ def pick_prompt(
             return (fallback, False, {"source": "procedural_color_bias"})
     interp_streak = int(state.get("interpretation_streak", 0))
     max_interp_streak = int(os.environ.get("LOOP_INTERPRETATION_STREAK_MAX", "5"))
+    interp_rate = 0.12 if dense_enough else 0.35
     if (
         interpretation_prompts
-        and secure_random() < 0.45
+        and secure_random() < interp_rate
         and interp_streak < max(1, max_interp_streak)
     ):
         candidates = [p for p in interpretation_prompts if isinstance(p, dict) and p.get("prompt") and p["prompt"] not in recent]
@@ -151,6 +181,12 @@ def pick_prompt(
             chosen = _pick_interpretation_diverse(candidates, state)
             bucket = _interpretation_bucket(chosen)
             return (chosen["prompt"], False, {"source": "interpretation", "interpretation_bucket": bucket})
+    # Second chance at mini-scenes before generic procedural
+    if secure_random() < (0.55 if dense_enough else 0.35):
+        mini = generate_mini_scene_prompt(avoid=recent)
+        if mini:
+            logger.info("Mini-scene prompt: %s", mini[:70] + ("..." if len(mini) > 70 else ""))
+            return (mini, False, {"source": "mini_scene"})
     fallback = (
         generate_procedural_prompt(avoid=recent, knowledge=knowledge, coverage=coverage, instructive_ratio=0.65)
         or (secure_choice(good) if good else generate_procedural_prompt(knowledge=knowledge, coverage=coverage, instructive_ratio=0.65))
@@ -352,7 +388,7 @@ def run() -> None:
         "--api-base",
         default=os.environ.get("API_BASE", "https://motion.productions"),
     )
-    parser.add_argument("--duration", type=float, default=6, help="Base duration (s). Use 1 for learning-optimized (more videos, one window each).")
+    parser.add_argument("--duration", type=float, default=5, help="Base duration (s). Use 1 for learning-optimized (more videos, one window each). Default 5 for mini-scenes.")
     parser.add_argument("--delay", type=float, default=None, help="Seconds to wait between runs (e.g. 30 to view results); env LOOP_DELAY_SECONDS")
     parser.add_argument("--config", type=Path, default=None)
     parser.add_argument("--health-port", type=int, default=None, help="Port for health HTTP server (0=disabled); env HEALTH_PORT")
@@ -526,7 +562,18 @@ def run() -> None:
             )
             run_succeeded = True
 
-            instruction = interpret_user_prompt(prompt, default_duration=duration)
+            linguistic_registry = None
+            if args.api_base:
+                try:
+                    from src.interpretation.linguistic_client import fetch_linguistic_registry
+                    linguistic_registry = fetch_linguistic_registry(args.api_base.rstrip("/"))
+                except Exception as e:
+                    logger.debug("linguistic registry fetch skipped: %s", e)
+            instruction = interpret_user_prompt(
+                prompt,
+                default_duration=duration,
+                linguistic_registry=linguistic_registry,
+            )
             # Record interpretation first (so it's never skipped by later errors); visible in worker logs
             if args.api_base:
                 try:

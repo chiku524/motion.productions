@@ -23,6 +23,12 @@ from ..procedural.data.keywords import (
     KEYWORD_TO_AUDIO_TEMPO,
     KEYWORD_TO_AUDIO_MOOD,
     KEYWORD_TO_AUDIO_PRESENCE,
+    KEYWORD_TO_AUDIO_GENRE,
+    KEYWORD_TO_MOTION_DIRECTIONALITY,
+    KEYWORD_TO_MOTION_SMOOTHNESS,
+    KEYWORD_TO_MOTION_RHYTHM,
+    KEYWORD_TO_SFX_KIND,
+    KEYWORD_TO_ENTITY_KIND,
     STYLE_PHRASE_TO_STYLE,
     KEYWORD_TO_STYLE,
     MOOD_TO_TONE,
@@ -42,6 +48,10 @@ from ..procedural.data.keywords import (
     DEFAULT_AUDIO_TEMPO,
     DEFAULT_AUDIO_MOOD,
     DEFAULT_AUDIO_PRESENCE,
+    DEFAULT_AUDIO_GENRE,
+    DEFAULT_MOTION_DIRECTIONALITY,
+    DEFAULT_MOTION_SMOOTHNESS,
+    DEFAULT_MOTION_RHYTHM,
 )
 from ..procedural.data.palettes import PALETTES
 from .language_standard import (
@@ -383,6 +393,119 @@ def _resolve_audio_presence(words: list[str]) -> str:
     return DEFAULT_AUDIO_PRESENCE
 
 
+def _resolve_audio_genre(words: list[str], linguistic_registry: dict[str, dict[str, str]] | None = None) -> str:
+    """Resolve music genre for in-house arrangement presets."""
+    lookup = _merge_linguistic("audio_genre", KEYWORD_TO_AUDIO_GENRE, linguistic_registry)
+    for w in words:
+        if w in lookup:
+            return lookup[w]
+    # Phrase-ish: deep + house already covered by KEYWORD_TO_AUDIO_GENRE["house"]
+    return DEFAULT_AUDIO_GENRE
+
+
+def _resolve_audio_hints(words: list[str]) -> list[str]:
+    """Collect audio-related hint tokens for blending / music engine."""
+    hints: list[str] = []
+    seen: set[str] = set()
+    for w in words:
+        for table in (KEYWORD_TO_AUDIO_MOOD, KEYWORD_TO_AUDIO_TEMPO, KEYWORD_TO_AUDIO_PRESENCE, KEYWORD_TO_AUDIO_GENRE):
+            if w in table:
+                v = table[w]
+                if v not in seen:
+                    hints.append(v)
+                    seen.add(v)
+    return hints
+
+
+def _resolve_motion_directionality(
+    words: list[str],
+    linguistic_registry: dict[str, dict[str, str]] | None = None,
+) -> tuple[str, list[str]]:
+    """Resolve primary directionality + all hints."""
+    lookup = _merge_linguistic("motion_directionality", KEYWORD_TO_MOTION_DIRECTIONALITY, linguistic_registry)
+    hints: list[str] = []
+    seen: set[str] = set()
+    for w in words:
+        if w in lookup:
+            d = lookup[w]
+            if d not in seen:
+                hints.append(d)
+                seen.add(d)
+    primary = hints[0] if hints else DEFAULT_MOTION_DIRECTIONALITY
+    return primary, hints if hints else [DEFAULT_MOTION_DIRECTIONALITY]
+
+
+def _resolve_motion_smoothness(words: list[str]) -> str:
+    for w in words:
+        if w in KEYWORD_TO_MOTION_SMOOTHNESS:
+            return KEYWORD_TO_MOTION_SMOOTHNESS[w]
+    return DEFAULT_MOTION_SMOOTHNESS
+
+
+def _resolve_motion_rhythm(words: list[str]) -> str:
+    for w in words:
+        if w in KEYWORD_TO_MOTION_RHYTHM:
+            return KEYWORD_TO_MOTION_RHYTHM[w]
+    return DEFAULT_MOTION_RHYTHM
+
+
+def _resolve_sfx_kinds(words: list[str]) -> list[str]:
+    kinds: list[str] = []
+    seen: set[str] = set()
+    for w in words:
+        if w in KEYWORD_TO_SFX_KIND:
+            k = KEYWORD_TO_SFX_KIND[w]
+            if k not in seen:
+                kinds.append(k)
+                seen.add(k)
+    return kinds
+
+
+def _resolve_entities(words: list[str], prompt: str) -> list[dict]:
+    """Extract stylized entity hints (ball, block, person, …) for scene graph."""
+    entities: list[dict] = []
+    seen: set[str] = set()
+    direction = "none"
+    for w in words:
+        if w in KEYWORD_TO_MOTION_DIRECTIONALITY:
+            direction = KEYWORD_TO_MOTION_DIRECTIONALITY[w]
+            break
+    # Prefer left/right/up/down as trajectory labels when present
+    traj = "none"
+    for label in ("left", "right", "up", "down", "toward", "away"):
+        if label in words:
+            traj = label
+            break
+    bounce = any(w in KEYWORD_TO_SFX_KIND and KEYWORD_TO_SFX_KIND[w] == "bounce" for w in words)
+    color_hint = None
+    for w in words:
+        if w in KEYWORD_TO_PALETTE:
+            color_hint = KEYWORD_TO_PALETTE[w]
+            break
+    for w in words:
+        if w in KEYWORD_TO_ENTITY_KIND:
+            kind = KEYWORD_TO_ENTITY_KIND[w]
+            key = f"{kind}:{w}"
+            if key in seen:
+                continue
+            seen.add(key)
+            entities.append({
+                "id": f"e{len(entities)}",
+                "kind": kind,
+                "label": w,
+                "color_hint": color_hint,
+                "directionality": direction,
+                "trajectory": traj,
+                "bounce": bounce,
+                "sfx_on": ["bounce"] if bounce else [],
+            })
+    return entities
+
+
+def _resolve_audio_vocals(words: list[str]) -> bool:
+    return any(w in ("vocals", "vocal", "singing", "choir", "voice", "spoken") for w in words)
+
+
 def _resolve_depth_parallax(words: list[str]) -> bool:
     """Resolve depth/parallax from keywords. Phase 7. Expanded for video/game parallax prompts."""
     depth_keywords = {
@@ -507,6 +630,28 @@ def interpret_user_prompt(
     audio_tempo = _resolve_audio_tempo(words)
     audio_mood = _resolve_audio_mood(words, linguistic_registry)
     audio_presence = _resolve_audio_presence(words)
+    audio_genre = _resolve_audio_genre(words, linguistic_registry)
+    audio_hints = _resolve_audio_hints(words)
+    audio_vocals = _resolve_audio_vocals(words)
+    motion_directionality, motion_directionality_hints = _resolve_motion_directionality(
+        words, linguistic_registry
+    )
+    motion_smoothness = _resolve_motion_smoothness(words)
+    motion_rhythm = _resolve_motion_rhythm(words)
+    sfx_kinds = _resolve_sfx_kinds(words)
+    entities = _resolve_entities(words, prompt)
+    # Placeholder sfx_events (t_sec filled by creation when duration known)
+    sfx_events: list[dict] = [{"kind": k, "t_sec": None, "strength": 0.8} for k in sfx_kinds]
+    # Music genre implies music presence unless silence requested
+    if audio_genre != "none" and audio_presence == "ambient":
+        audio_presence = "music"
+    if audio_vocals and audio_presence in ("ambient", "sfx"):
+        audio_presence = "music"
+    if sfx_kinds and audio_presence == "ambient":
+        audio_presence = "full" if audio_genre != "none" else "sfx"
+    # Entity with bounce → ensure circle overlay when no shape set
+    if entities and shape == "none":
+        shape = entities[0]["kind"] if entities[0]["kind"] in ("circle", "rect") else "circle"
     text_overlay, text_position, educational_template = _resolve_text_overlay(prompt)
     depth_parallax = _resolve_depth_parallax(words)
 
@@ -518,7 +663,9 @@ def interpret_user_prompt(
         KEYWORD_TO_GENRE, KEYWORD_TO_PACING,
         KEYWORD_TO_COMPOSITION_BALANCE, KEYWORD_TO_COMPOSITION_SYMMETRY,
         KEYWORD_TO_TENSION, KEYWORD_TO_AUDIO_TEMPO, KEYWORD_TO_AUDIO_MOOD,
-        KEYWORD_TO_AUDIO_PRESENCE,
+        KEYWORD_TO_AUDIO_PRESENCE, KEYWORD_TO_AUDIO_GENRE,
+        KEYWORD_TO_MOTION_DIRECTIONALITY, KEYWORD_TO_MOTION_SMOOTHNESS,
+        KEYWORD_TO_MOTION_RHYTHM, KEYWORD_TO_SFX_KIND, KEYWORD_TO_ENTITY_KIND,
     )
     contributing: list[str] = []
     for w in words:
@@ -561,6 +708,15 @@ def interpret_user_prompt(
         audio_tempo=audio_tempo,
         audio_mood=audio_mood,
         audio_presence=audio_presence,
+        audio_genre=audio_genre,
+        audio_hints=audio_hints,
+        audio_vocals=audio_vocals,
+        sfx_events=sfx_events,
+        motion_directionality=motion_directionality,
+        motion_directionality_hints=motion_directionality_hints,
+        motion_smoothness=motion_smoothness,
+        motion_rhythm=motion_rhythm,
+        entities=entities,
         duration_seconds=duration,
         style=style,
         tone=tone,

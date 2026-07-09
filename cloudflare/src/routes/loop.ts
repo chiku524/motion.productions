@@ -81,7 +81,7 @@ if (path === "/api/loop/config" && request.method === "GET") {
   if (!kv) return json({ error: "Loop config unavailable: KV not bound", details: "MOTION_KV undefined" }, 500);
   try {
     const raw = await kv.get("loop_config");
-    let config: { enabled?: boolean; delay_seconds?: number; exploit_ratio?: number; duration_seconds?: number } = { enabled: true, delay_seconds: 30, exploit_ratio: 0.7, duration_seconds: 1 };
+    let config: { enabled?: boolean; delay_seconds?: number; exploit_ratio?: number; duration_seconds?: number } = { enabled: true, delay_seconds: 30, exploit_ratio: 0.7, duration_seconds: 5 };
     if (raw && raw.length > 0) {
       try {
         config = JSON.parse(raw) as typeof config;
@@ -89,7 +89,7 @@ if (path === "/api/loop/config" && request.method === "GET") {
         /* use defaults */
       }
     }
-    const duration = typeof config.duration_seconds === "number" ? config.duration_seconds : 1;
+    const duration = typeof config.duration_seconds === "number" ? config.duration_seconds : 5;
     const ds = typeof config.delay_seconds === "number" ? config.delay_seconds : 30;
     return json({
       enabled: config.enabled !== false,
@@ -141,7 +141,7 @@ if (path === "/api/loop/status" && request.method === "GET") {
   if (!kv) return json({ error: "Loop status unavailable: KV not bound", details: "MOTION_KV undefined" }, 500);
   try {
     const configRaw = await kv.get("loop_config");
-    let config: { enabled?: boolean; delay_seconds?: number; exploit_ratio?: number; duration_seconds?: number } = { enabled: true, delay_seconds: 30, exploit_ratio: 0.7, duration_seconds: 1 };
+    let config: { enabled?: boolean; delay_seconds?: number; exploit_ratio?: number; duration_seconds?: number } = { enabled: true, delay_seconds: 30, exploit_ratio: 0.7, duration_seconds: 5 };
     if (configRaw && configRaw.length > 0) {
       try {
         config = JSON.parse(configRaw) as typeof config;
@@ -149,7 +149,7 @@ if (path === "/api/loop/status" && request.method === "GET") {
         /* use defaults */
       }
     }
-    const duration = typeof config.duration_seconds === "number" ? config.duration_seconds : 1;
+    const duration = typeof config.duration_seconds === "number" ? config.duration_seconds : 5;
     const stateRaw = await kv.get("loop_state");
     let state: Record<string, unknown> = {};
     if (stateRaw && stateRaw.length > 0) {
