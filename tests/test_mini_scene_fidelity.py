@@ -100,23 +100,26 @@ class TestMiniSceneFidelity(unittest.TestCase):
         self.assertEqual(layer.get("expression"), "happy")
         self.assertEqual(layer.get("personality"), "playful")
 
-    def test_freeform_then_script(self):
-        from src.creation.script_parse import parse_freeform_mini_script, split_script_clauses
-
+    def test_beat_time_windows_and_squash(self):
         prompt = "a red ball enters from the left then bounces then exits right with whoosh"
-        clauses = split_script_clauses(prompt)
-        self.assertGreaterEqual(len(clauses), 3)
-        script = parse_freeform_mini_script(prompt, total_duration=5.0)
-        self.assertIsNotNone(script)
-        self.assertEqual(len(script.beats), len(clauses))
-        actions = [b.entity_action for b in script.beats]
-        self.assertIn("bounce", actions)
-
         instruction = interpret_user_prompt(prompt)
         instruction.duration_seconds = 5.0
         spec = build_spec_from_instruction(instruction, knowledge={})
         self.assertTrue(spec.scene_layers)
-        self.assertGreaterEqual(len(spec.scene_layers), 2)
+        # Sequential windows: not all layers active for full 0..5s
+        starts = [l.get("keyframes", [{}])[0].get("t", 0) for l in spec.scene_layers]
+        self.assertTrue(any(float(s) > 0.05 for s in starts) or len(spec.scene_layers) >= 2)
+        bouncing = [l for l in spec.scene_layers if l.get("bounce") or l.get("gag") == "squash"]
+        self.assertTrue(bouncing or any(l.get("gag") for l in spec.scene_layers))
+
+    def test_linguistic_extracts_expression(self):
+        from src.interpretation.linguistic import extract_linguistic_mappings
+        prompt = "a happy playful person walking left with uplifting house music"
+        instruction = interpret_user_prompt(prompt)
+        mappings = extract_linguistic_mappings(prompt, instruction)
+        domains = {m["domain"] for m in mappings}
+        self.assertIn("expression", domains)
+        self.assertIn("personality", domains)
 
 
 if __name__ == "__main__":

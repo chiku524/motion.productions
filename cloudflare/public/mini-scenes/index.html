@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mini-scenes — Motion</title>
+  <meta name="description" content="Review recent 5-second mini-scenes from Motion — everyday prompts rendered as short procedural clips.">
+  <link rel="canonical" href="https://motion.productions/mini-scenes/">
+  <link rel="icon" type="image/svg+xml" href="/logo.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+      <a href="/" class="logo">
+        <img src="/logo.svg" alt="Motion" class="logo-icon" width="28" height="28">
+        <span>Motion</span>
+      </a>
+      <span class="tagline">Mini-scenes</span>
+      <span class="header-spacer" aria-hidden="true"></span>
+      <a href="/" class="header-link">Create video</a>
+      <a href="/registries/" class="header-link">Registries</a>
+      <a href="/video-ai/" class="header-link">Video AI lab</a>
+    </header>
+
+    <main class="main">
+      <section class="library motion-fade-in-up" id="mini-scenes-section">
+        <div class="library-header">
+          <div>
+            <h1 class="library-title">Mini-scenes</h1>
+            <p class="library-intro">Recent ~5s clips from everyday prompts — for human review of entities, motion, music, and gags.</p>
+          </div>
+          <div class="library-actions">
+            <button type="button" id="mini-scenes-refresh" class="btn btn-secondary btn-sm">Refresh</button>
+          </div>
+        </div>
+        <div id="mini-scenes-list" class="library-list">
+          <div class="library-loading" id="mini-scenes-loading">Loading mini-scenes…</div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <span>motion.productions</span>
+    </footer>
+  </div>
+  <script src="/mini-scenes/mini-scenes.js"></script>
+</body>
+</html>

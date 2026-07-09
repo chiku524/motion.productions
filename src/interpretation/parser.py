@@ -485,14 +485,30 @@ def _resolve_entities(words: list[str], prompt: str) -> list[dict]:
             color_hint = KEYWORD_TO_PALETTE[w]
             break
     expression = "neutral"
+    expr_lookup = _merge_linguistic("expression", KEYWORD_TO_EXPRESSION, None)
     for w in words:
-        if w in KEYWORD_TO_EXPRESSION:
-            expression = KEYWORD_TO_EXPRESSION[w]
+        if w in expr_lookup:
+            expression = expr_lookup[w]
             break
     personality = "neutral"
+    pers_lookup = _merge_linguistic("personality", KEYWORD_TO_PERSONALITY, None)
     for w in words:
-        if w in KEYWORD_TO_PERSONALITY:
-            personality = KEYWORD_TO_PERSONALITY[w]
+        if w in pers_lookup:
+            personality = pers_lookup[w]
+            break
+    gag = "none"
+    for w in words:
+        if w in ("wink", "winks", "winking"):
+            gag = "wink"
+            break
+        if w in ("spin", "spins", "twirl", "flourish"):
+            gag = "spin" if w != "flourish" else "flourish"
+            break
+        if w in ("double",) and "take" in words:
+            gag = "double_take"
+            break
+        if w in ("squash", "squish"):
+            gag = "squash"
             break
     for w in words:
         if w in KEYWORD_TO_ENTITY_KIND:
@@ -512,6 +528,7 @@ def _resolve_entities(words: list[str], prompt: str) -> list[dict]:
                 "sfx_on": ["bounce"] if bounce else [],
                 "expression": expression if kind == "character" else "neutral",
                 "personality": personality if kind == "character" else "neutral",
+                "gag": gag if gag != "none" else ("squash" if bounce else "none"),
             })
     return entities
 

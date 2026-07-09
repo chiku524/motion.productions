@@ -545,6 +545,12 @@ _MINI_SCENE_TEMPLATES: list[str] = [
     "a red ball enters from the left then bounces then exits right with whoosh",
     "a person walks in then waves toward the camera then walks away with soft vocals",
     "a blue orb drifts left then rises then pulses with ambient music",
+    # Phase F entertainment gags
+    "a red ball bouncing with squash and a playful whoosh",
+    "a character winks then walks left with happy house music",
+    "an arrow spins and flourishes toward the camera with cinematic music",
+    "a person does a double take then walks away with soft vocals",
+    "comedy beat: ball enters then bounces then exits with click SFX",
 ]
 
 

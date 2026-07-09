@@ -115,13 +115,29 @@ def script_to_entities_and_sfx(
     *,
     entity_kind: str = "circle",
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Flatten beats into entity hints + timed SFX for InterpretedInstruction-like payloads."""
+    """Flatten beats into timed entity hints + SFX (sequential windows, not overlapping)."""
     entities: list[dict[str, Any]] = []
     sfx_events: list[dict[str, Any]] = []
     t = 0.0
     for i, beat in enumerate(script.beats):
         traj = beat.entity_action or "left"
         bounce = traj == "bounce" or "bounce" in beat.sfx
+        gag = None
+        if bounce:
+            gag = "squash"
+        elif traj == "toward":
+            gag = "flourish"
+        elif "whoosh" in beat.sfx:
+            gag = "spin"
+        # Beat pacing: setup slower, climax faster, resolve ease-out
+        pacing = 1.0
+        name = (beat.name or "").lower()
+        if name in ("setup", "hook", "beat1"):
+            pacing = 0.85
+        elif name in ("beat", "example", "drop") or name.startswith("beat"):
+            pacing = 1.15 if bounce else 1.05
+        elif name in ("resolve", "recap"):
+            pacing = 0.9
         entities.append({
             "id": f"beat{i}",
             "kind": "character" if traj == "walk" else entity_kind,
@@ -130,6 +146,10 @@ def script_to_entities_and_sfx(
             "bounce": bounce,
             "sfx_on": list(beat.sfx),
             "directionality": "horizontal",
+            "t_start": round(t, 3),
+            "t_end": round(t + beat.duration_sec, 3),
+            "pacing": pacing,
+            "gag": gag,
         })
         for kind in beat.sfx:
             sfx_events.append({

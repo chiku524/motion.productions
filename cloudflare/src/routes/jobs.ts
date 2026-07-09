@@ -27,10 +27,26 @@ if (path === "/api/jobs" && request.method === "GET") {
     return json({ jobs: rows.results || [] });
   }
   if (status === "completed") {
-    const rows = await db.prepare(
-      "SELECT id, prompt, duration_seconds, created_at, updated_at, workflow_type FROM jobs WHERE status = 'completed' AND r2_key IS NOT NULL ORDER BY updated_at DESC LIMIT ?"
-    )
-      .bind(limit)
+    const maxDur = url.searchParams.get("max_duration");
+    const minDur = url.searchParams.get("min_duration");
+    const maxD = maxDur != null ? parseFloat(maxDur) : null;
+    const minD = minDur != null ? parseFloat(minDur) : null;
+    let sql =
+      "SELECT id, prompt, duration_seconds, created_at, updated_at, workflow_type FROM jobs WHERE status = 'completed' AND r2_key IS NOT NULL";
+    const binds: (string | number)[] = [];
+    if (minD != null && !Number.isNaN(minD)) {
+      sql += " AND duration_seconds IS NOT NULL AND duration_seconds >= ?";
+      binds.push(minD);
+    }
+    if (maxD != null && !Number.isNaN(maxD)) {
+      sql += " AND duration_seconds IS NOT NULL AND duration_seconds <= ?";
+      binds.push(maxD);
+    }
+    sql += " ORDER BY updated_at DESC LIMIT ?";
+    binds.push(limit);
+    const stmt = db.prepare(sql);
+    const rows = await stmt
+      .bind(...binds)
       .all<{ id: string; prompt: string; duration_seconds: number | null; created_at: string; updated_at: string; workflow_type: string | null }>();
     const jobs = (rows.results || []).map((r) => ({
       id: r.id,

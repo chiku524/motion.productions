@@ -191,7 +191,7 @@ Every domain from INTENDED_LOOP is represented in prompts and interpretation (co
 
 ## Phase F: Entertainment layer
 
-**Goal:** Make educational content engaging (humor/tone, character personality, visual gags, pacing variation). **Status:** Pending (partial).
+**Goal:** Make educational content engaging (humor/tone, character personality, visual gags, pacing variation). **Status:** Partial — squash-on-bounce, spin/flourish/wink/double-take gags; sequential beat time windows with per-beat pacing; mini-scenes gallery at `/mini-scenes/`.
 
 ## Educational implementation order
 

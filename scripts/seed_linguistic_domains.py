@@ -146,6 +146,14 @@ SEED_ITEMS: list[dict[str, str]] = [
     {"span": "shy figure", "canonical": "shy", "domain": "personality", "variant_type": "synonym"},
     {"span": "energetic walk", "canonical": "energetic", "domain": "personality", "variant_type": "synonym"},
     {"span": "confident stride", "canonical": "confident", "domain": "personality", "variant_type": "synonym"},
+    # gag / entertainment
+    {"span": "double take", "canonical": "double_take", "domain": "motion", "variant_type": "phrase"},
+    {"span": "winks", "canonical": "wink", "domain": "expression", "variant_type": "synonym"},
+    {"span": "spin flourish", "canonical": "spin", "domain": "motion", "variant_type": "phrase"},
+    {"span": "squash bounce", "canonical": "bounce", "domain": "sfx", "variant_type": "phrase"},
+    {"span": "then bounces", "canonical": "bounce", "domain": "sfx", "variant_type": "phrase"},
+    {"span": "walks in", "canonical": "toward", "domain": "motion_directionality", "variant_type": "phrase"},
+    {"span": "exits right", "canonical": "right", "domain": "motion_directionality", "variant_type": "phrase"},
 ]
 
 

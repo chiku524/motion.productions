@@ -30,6 +30,7 @@ class SceneLayer:
     bounce: bool = False
     expression: str = "neutral"  # happy | sad | angry | calm | excited | nervous | neutral
     personality: str = "neutral"  # playful | serious | energetic | shy | confident | neutral
+    gag: str = "none"  # none | squash | spin | wink | flourish | double_take
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -111,10 +112,17 @@ def _trajectory_path(
     *,
     duration: float,
     bounce: bool,
+    gag: str = "none",
+    pacing: float = 1.0,
 ) -> list[LayerKeyframe]:
-    """Build keyframes for a simple directional path."""
-    duration = max(1.0, float(duration or 4.0))
+    """Build keyframes for a simple directional path (optional gag + pacing)."""
+    duration = max(0.35, float(duration or 4.0))
+    pacing = max(0.5, min(1.5, float(pacing or 1.0)))
+    # Faster pacing compresses motion into the first portion of the window
+    motion_dur = duration / pacing if pacing > 1.0 else duration * pacing
+    motion_dur = min(duration, max(0.25, motion_dur))
     traj = (trajectory or "none").lower()
+    gag = (gag or "none").lower()
     start = {"x": 0.5, "y": 0.5}
     end = {"x": 0.5, "y": 0.5}
     if traj == "left":
@@ -126,46 +134,105 @@ def _trajectory_path(
     elif traj == "down":
         start, end = {"x": 0.5, "y": 0.2}, {"x": 0.5, "y": 0.85}
     elif traj == "toward":
-        return [
-            LayerKeyframe(t=0.0, x=0.5, y=0.55, scale=0.5),
-            LayerKeyframe(t=duration, x=0.5, y=0.5, scale=1.6),
+        kfs = [
+            LayerKeyframe(t=0.0, x=0.5, y=0.55, scale=0.5, rot=0.0),
+            LayerKeyframe(t=motion_dur, x=0.5, y=0.5, scale=1.6, rot=0.35 if gag in ("flourish", "spin") else 0.0),
         ]
+        if gag == "flourish":
+            kfs.insert(1, LayerKeyframe(t=motion_dur * 0.5, x=0.5, y=0.48, scale=1.1, rot=3.14))
+        return kfs
     elif traj == "away":
         return [
             LayerKeyframe(t=0.0, x=0.5, y=0.5, scale=1.4),
-            LayerKeyframe(t=duration, x=0.5, y=0.55, scale=0.4),
+            LayerKeyframe(t=motion_dur, x=0.5, y=0.55, scale=0.4),
         ]
     elif traj == "none" and bounce:
-        # Vertical bounce in place
         kfs: list[LayerKeyframe] = []
-        n_bounces = max(2, int(duration / 0.7))
+        n_bounces = max(2, int(motion_dur / 0.7))
         for i in range(n_bounces + 1):
-            t = duration * (i / n_bounces)
+            t = motion_dur * (i / n_bounces)
             y = 0.75 if i % 2 == 0 else 0.35
-            kfs.append(LayerKeyframe(t=t, x=0.5, y=y, scale=1.0))
+            scale = 0.75 if (i % 2 == 0 and gag in ("squash", "none") and bounce) else (1.12 if i % 2 else 1.0)
+            kfs.append(LayerKeyframe(t=t, x=0.5, y=y, scale=scale))
         return kfs
 
     if bounce:
-        # Horizontal/vertical path with bounce arcs
         kfs = []
-        n = max(3, int(duration / 0.6))
+        n = max(3, int(motion_dur / 0.6))
         for i in range(n + 1):
             u = i / n
-            t = duration * u
+            t = motion_dur * u
             x = start["x"] + (end["x"] - start["x"]) * u
-            # Parabolic bounce between floor contacts
             phase = (u * n) % 1.0
             y_base = start["y"] + (end["y"] - start["y"]) * u
-            y = y_base - 0.25 * (4 * phase * (1 - phase))  # arc up
-            if i % 2 == 0:
-                y = max(y_base, 0.72)  # floor contact
-            kfs.append(LayerKeyframe(t=t, x=x, y=min(0.9, max(0.15, y)), scale=1.0))
+            y = y_base - 0.25 * (4 * phase * (1 - phase))
+            floor = i % 2 == 0
+            if floor:
+                y = max(y_base, 0.72)
+            # Phase F: squash on floor contact, stretch at apex
+            if gag in ("squash", "none") or bounce:
+                scale = 0.72 if floor else 1.15
+            else:
+                scale = 1.0
+            rot = 0.0
+            if gag == "spin":
+                rot = u * 6.28
+            kfs.append(LayerKeyframe(t=t, x=x, y=min(0.9, max(0.15, y)), scale=scale, rot=rot))
         return kfs
 
-    return [
-        LayerKeyframe(t=0.0, x=start["x"], y=start["y"], scale=1.0),
-        LayerKeyframe(t=duration, x=end["x"], y=end["y"], scale=1.0),
+    kfs = [
+        LayerKeyframe(t=0.0, x=start["x"], y=start["y"], scale=1.0, rot=0.0),
+        LayerKeyframe(t=motion_dur, x=end["x"], y=end["y"], scale=1.0, rot=6.28 if gag == "spin" else 0.0),
     ]
+    if gag == "double_take" and motion_dur > 0.6:
+        mid = motion_dur * 0.45
+        mx = start["x"] + (end["x"] - start["x"]) * 0.45
+        my = start["y"] + (end["y"] - start["y"]) * 0.45
+        kfs = [
+            LayerKeyframe(t=0.0, x=start["x"], y=start["y"], scale=1.0),
+            LayerKeyframe(t=mid, x=mx, y=my, scale=1.0),
+            LayerKeyframe(t=mid + 0.28, x=mx, y=my, scale=1.05),  # hold / look-back
+            LayerKeyframe(t=motion_dur, x=end["x"], y=end["y"], scale=1.0),
+        ]
+    elif gag == "flourish":
+        kfs.insert(1, LayerKeyframe(
+            t=motion_dur * 0.5,
+            x=(start["x"] + end["x"]) / 2,
+            y=min(0.35, (start["y"] + end["y"]) / 2 - 0.1),
+            scale=1.2,
+            rot=3.14,
+        ))
+    return kfs
+
+
+def _offset_keyframes(kfs: list[LayerKeyframe], t_start: float, t_end: float) -> list[LayerKeyframe]:
+    """Shift local 0..dur keyframes into [t_start, t_end] and bookend with opacity fades."""
+    t_start = max(0.0, float(t_start))
+    t_end = max(t_start + 0.05, float(t_end))
+    if not kfs:
+        return [
+            LayerKeyframe(t=t_start, opacity=0.0),
+            LayerKeyframe(t=t_end, opacity=0.0),
+        ]
+    local_max = max(float(k.t) for k in kfs) or 1.0
+    window = t_end - t_start
+    out: list[LayerKeyframe] = []
+    # Invisible before window
+    first = kfs[0]
+    out.append(LayerKeyframe(t=max(0.0, t_start - 0.02), x=first.x, y=first.y, scale=first.scale, rot=first.rot, opacity=0.0))
+    for k in kfs:
+        u = float(k.t) / local_max if local_max > 0 else 0.0
+        out.append(LayerKeyframe(
+            t=t_start + u * window,
+            x=k.x,
+            y=k.y,
+            scale=k.scale,
+            rot=k.rot,
+            opacity=1.0 if k.opacity > 0 else 0.0,
+        ))
+    last = kfs[-1]
+    out.append(LayerKeyframe(t=t_end, x=last.x, y=last.y, scale=last.scale, rot=last.rot, opacity=0.0))
+    return out
 
 
 def _color_from_hint(hint: str | None, palette_colors: list[tuple[int, int, int]] | None) -> tuple[int, int, int]:
@@ -207,6 +274,10 @@ def build_scene_graph_from_instruction(
             kind = "circle"
         traj = str(ent.get("trajectory") or "none")
         bounce = bool(ent.get("bounce"))
+        gag = str(ent.get("gag") or ("squash" if bounce else "none")).lower()
+        pacing = float(ent.get("pacing") or 1.0)
+        t_start = ent.get("t_start")
+        t_end = ent.get("t_end")
         # Infer trajectory from directionality if missing
         if traj == "none":
             d = str(ent.get("directionality") or getattr(instruction, "motion_directionality", "none"))
@@ -219,7 +290,13 @@ def build_scene_graph_from_instruction(
             elif d == "radial":
                 traj = "toward"
         color = _color_from_hint(ent.get("color_hint"), palette_colors)
-        kfs = _trajectory_path(traj, duration=duration, bounce=bounce)
+        # Sequential beat window vs full-clip animation
+        if t_start is not None and t_end is not None:
+            local_dur = max(0.35, float(t_end) - float(t_start))
+            local_kfs = _trajectory_path(traj, duration=local_dur, bounce=bounce, gag=gag, pacing=pacing)
+            kfs = _offset_keyframes(local_kfs, float(t_start), float(t_end))
+        else:
+            kfs = _trajectory_path(traj, duration=duration, bounce=bounce, gag=gag, pacing=pacing)
         sfx_on = list(ent.get("sfx_on") or [])
         if bounce and "bounce" not in sfx_on:
             sfx_on.append("bounce")
@@ -234,6 +311,7 @@ def build_scene_graph_from_instruction(
                 bounce=bounce,
                 expression=str(ent.get("expression") or "neutral"),
                 personality=str(ent.get("personality") or "neutral"),
+                gag=gag,
             )
         )
     return SceneGraph(layers=layers)

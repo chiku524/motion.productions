@@ -124,8 +124,62 @@ def extract_linguistic_mappings(
                         "span": w,
                         "canonical": style_str,
                         "domain": "style",
-                        "variant_type": "synonym",
+                        "variant_type": _infer_variant_type(w, style_str),
                     })
+
+    # Entity-level expression / personality (lives on entities[], not instruction.tone/style)
+    for ent in list(instr_dict.get("entities") or []):
+        if not isinstance(ent, dict):
+            continue
+        expr = str(ent.get("expression") or "").strip().lower()
+        pers = str(ent.get("personality") or "").strip().lower()
+        if expr and expr != "neutral":
+            for w in words:
+                if w in KEYWORD_TO_EXPRESSION and KEYWORD_TO_EXPRESSION[w] == expr:
+                    if (w, "expression") not in seen:
+                        seen.add((w, "expression"))
+                        out.append({
+                            "span": w,
+                            "canonical": expr,
+                            "domain": "expression",
+                            "variant_type": _infer_variant_type(w, expr),
+                        })
+        if pers and pers != "neutral":
+            for w in words:
+                if w in KEYWORD_TO_PERSONALITY and KEYWORD_TO_PERSONALITY[w] == pers:
+                    if (w, "personality") not in seen:
+                        seen.add((w, "personality"))
+                        out.append({
+                            "span": w,
+                            "canonical": pers,
+                            "domain": "personality",
+                            "variant_type": _infer_variant_type(w, pers),
+                        })
+
+    # Then-script clause actions → motion / sfx growth
+    try:
+        from ..creation.script_parse import split_script_clauses, _clause_action
+        clauses = split_script_clauses(prompt or "")
+        for clause in clauses:
+            action = _clause_action(clause)
+            span = clause.strip().lower()[:48]
+            if not span:
+                continue
+            domain = "sfx" if action == "bounce" else "motion_directionality"
+            canonical = action if action != "walk" else "horizontal"
+            if action == "bounce":
+                canonical = "bounce"
+            key = (span, domain)
+            if key not in seen:
+                seen.add(key)
+                out.append({
+                    "span": span,
+                    "canonical": canonical,
+                    "domain": domain,
+                    "variant_type": "phrase",
+                })
+    except Exception:
+        pass
 
     return out
 
