@@ -414,6 +414,86 @@ def generate_targeted_narrative_prompt(
     return prompt
 
 
+def generate_targeted_blended_prompt(
+    knowledge: dict[str, Any] | None = None,
+    *,
+    avoid: set[str] | None = None,
+) -> str | None:
+    """
+    Target under-covered Blended axes (motion smoothness/acceleration/direction,
+    full AUDIO_ORIGINS mood×tempo×presence, composition/temporal/technical) so
+    window growth records real combinations beyond the seeded catalog.
+    """
+    from ..knowledge.origins import (
+        AUDIO_ORIGINS,
+        CAMERA_ORIGINS,
+        COMPOSITION_ORIGINS,
+        MOTION_ORIGINS,
+        TECHNICAL_ORIGINS,
+        TEMPORAL_ORIGINS,
+    )
+
+    avoid = avoid or set()
+    knowledge = knowledge or {}
+
+    # Prefer moods not already dominant in learned_audio
+    learned_moods = {
+        str((e.get("mood") if isinstance(e, dict) else "") or "").strip().lower()
+        for e in (knowledge.get("learned_audio") or [])
+        if isinstance(e, dict)
+    }
+    all_moods = [str(m).lower() for m in (AUDIO_ORIGINS.get("mood") or [])]
+    rare_moods = [m for m in all_moods if m and m not in learned_moods] or all_moods
+    mood = secure_choice(rare_moods) if rare_moods else "neutral"
+    tempo = secure_choice(list(AUDIO_ORIGINS.get("tempo") or ["medium"]))
+    presence = secure_choice(list(AUDIO_ORIGINS.get("presence") or ["ambient"]))
+
+    speed = secure_choice(list(MOTION_ORIGINS.get("speed") or ["medium"]))
+    rhythm = secure_choice(list(MOTION_ORIGINS.get("rhythm") or ["steady"]))
+    smoothness = secure_choice(list(MOTION_ORIGINS.get("smoothness") or ["smooth"]))
+    direction = secure_choice(list(MOTION_ORIGINS.get("directionality") or ["horizontal"]))
+    accel = secure_choice(list(MOTION_ORIGINS.get("acceleration") or ["ease_in_out"]))
+    camera = secure_choice(list(CAMERA_ORIGINS.get("motion_type") or ["pan"]))
+
+    balance = secure_choice(list(COMPOSITION_ORIGINS.get("balance") or ["balanced"]))
+    symmetry = secure_choice(list(COMPOSITION_ORIGINS.get("symmetry") or ["slight"]))
+    cut_freq = secure_choice(list(TEMPORAL_ORIGINS.get("cut_frequency") or ["normal"]))
+    story_beat = secure_choice(list(TEMPORAL_ORIGINS.get("story_beats") or ["development"]))
+    aspect = secure_choice(list(TECHNICAL_ORIGINS.get("aspect_ratio") or TECHNICAL_ORIGINS.get("aspect") or ["16:9"]))
+
+    templates = [
+        "Create a {speed} {rhythm} scene with {smoothness} motion and {direction} drift, {mood} {tempo} audio",
+        "Show {camera} camera with {accel} acceleration, {mood} mood and {presence} presence",
+        "Make a {smoothness} {direction} move at {speed} speed with {tempo} {mood} sound",
+        "Render {camera} with {rhythm} rhythm, {accel} easing, and {presence} {mood} audio",
+        "Give me {speed} {smoothness} motion, {direction} directionality, {tempo} tempo, {mood} mood",
+        "Compose a {balance} {symmetry} frame with {cut_freq} cuts during {story_beat}, {mood} {tempo} audio",
+        "Shoot {aspect} with {camera} camera, {smoothness} {direction} motion, {presence} presence",
+        "Build {story_beat} beat, {balance} composition, {accel} motion, {mood} sound",
+    ]
+    prompt = secure_choice(templates).format(
+        speed=speed,
+        rhythm=rhythm,
+        smoothness=smoothness,
+        direction=direction,
+        accel=accel.replace("_", " "),
+        camera=camera.replace("_", " "),
+        mood=mood,
+        tempo=tempo,
+        presence=presence,
+        balance=str(balance).replace("_", " "),
+        symmetry=str(symmetry).replace("_", " "),
+        cut_freq=str(cut_freq).replace("_", " "),
+        story_beat=str(story_beat).replace("_", " "),
+        aspect=aspect,
+    )
+    if not prompt or prompt in avoid:
+        return None
+    if _is_near_duplicate(prompt, avoid):
+        return None
+    return prompt
+
+
 def generate_procedural_prompt(
     *,
     subjects: list[str] | None = None,

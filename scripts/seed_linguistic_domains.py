@@ -13,6 +13,7 @@ import argparse
 from src.interpretation.linguistic_client import post_linguistic_growth
 
 # High-value synonym mappings from Manus AI enhancement report (§4 Priority 4)
+# Expanded for interpreter usefulness: camera, motion axes, full audio moods, palette slang.
 SEED_ITEMS: list[dict[str, str]] = [
     # composition_balance
     {"span": "balanced", "canonical": "balanced", "domain": "composition_balance", "variant_type": "synonym"},
@@ -21,9 +22,13 @@ SEED_ITEMS: list[dict[str, str]] = [
     {"span": "off-center", "canonical": "left_heavy", "domain": "composition_balance", "variant_type": "synonym"},
     {"span": "rule of thirds", "canonical": "balanced", "domain": "composition_balance", "variant_type": "synonym"},
     {"span": "asymmetric", "canonical": "left_heavy", "domain": "composition_balance", "variant_type": "synonym"},
+    {"span": "left heavy", "canonical": "left_heavy", "domain": "composition_balance", "variant_type": "synonym"},
+    {"span": "right heavy", "canonical": "right_heavy", "domain": "composition_balance", "variant_type": "synonym"},
     # composition_symmetry
     {"span": "symmetric", "canonical": "symmetric", "domain": "composition_symmetry", "variant_type": "synonym"},
     {"span": "mirror", "canonical": "symmetric", "domain": "composition_symmetry", "variant_type": "synonym"},
+    {"span": "bilateral", "canonical": "bilateral", "domain": "composition_symmetry", "variant_type": "synonym"},
+    {"span": "slight symmetry", "canonical": "slight", "domain": "composition_symmetry", "variant_type": "synonym"},
     # shot
     {"span": "close", "canonical": "close", "domain": "shot", "variant_type": "synonym"},
     {"span": "closeup", "canonical": "close", "domain": "shot", "variant_type": "synonym"},
@@ -34,6 +39,8 @@ SEED_ITEMS: list[dict[str, str]] = [
     {"span": "medium", "canonical": "medium", "domain": "shot", "variant_type": "synonym"},
     {"span": "mid-shot", "canonical": "medium", "domain": "shot", "variant_type": "synonym"},
     {"span": "waist", "canonical": "medium", "domain": "shot", "variant_type": "synonym"},
+    {"span": "extreme close", "canonical": "extreme_close", "domain": "shot", "variant_type": "synonym"},
+    {"span": "pov", "canonical": "pov", "domain": "shot", "variant_type": "synonym"},
     # transition
     {"span": "fade", "canonical": "fade", "domain": "transition", "variant_type": "synonym"},
     {"span": "fade in", "canonical": "fade", "domain": "transition", "variant_type": "synonym"},
@@ -43,18 +50,63 @@ SEED_ITEMS: list[dict[str, str]] = [
     {"span": "jump cut", "canonical": "cut", "domain": "transition", "variant_type": "synonym"},
     {"span": "dissolve", "canonical": "dissolve", "domain": "transition", "variant_type": "synonym"},
     {"span": "cross dissolve", "canonical": "dissolve", "domain": "transition", "variant_type": "synonym"},
-    # audio_mood (mood)
+    {"span": "wipe", "canonical": "wipe", "domain": "transition", "variant_type": "synonym"},
+    # audio_mood (full AUDIO_ORIGINS mood set + slang)
     {"span": "calm", "canonical": "calm", "domain": "audio_mood", "variant_type": "synonym"},
-    {"span": "peaceful", "canonical": "calm", "domain": "audio_mood", "variant_type": "synonym"},
+    {"span": "peaceful", "canonical": "peaceful", "domain": "audio_mood", "variant_type": "synonym"},
     {"span": "serene", "canonical": "calm", "domain": "audio_mood", "variant_type": "synonym"},
-    {"span": "gentle", "canonical": "calm", "domain": "audio_mood", "variant_type": "synonym"},
+    {"span": "gentle", "canonical": "soft", "domain": "audio_mood", "variant_type": "synonym"},
     {"span": "dark", "canonical": "dark", "domain": "audio_mood", "variant_type": "synonym"},
-    {"span": "moody", "canonical": "dark", "domain": "audio_mood", "variant_type": "synonym"},
+    {"span": "moody", "canonical": "moody", "domain": "audio_mood", "variant_type": "synonym"},
     {"span": "brooding", "canonical": "dark", "domain": "audio_mood", "variant_type": "synonym"},
     {"span": "energetic", "canonical": "energetic", "domain": "audio_mood", "variant_type": "synonym"},
-    {"span": "intense", "canonical": "energetic", "domain": "audio_mood", "variant_type": "synonym"},
-    {"span": "powerful", "canonical": "energetic", "domain": "audio_mood", "variant_type": "synonym"},
-    # theme (for future narrative/theme resolution)
+    {"span": "intense", "canonical": "intense", "domain": "audio_mood", "variant_type": "synonym"},
+    {"span": "powerful", "canonical": "intense", "domain": "audio_mood", "variant_type": "synonym"},
+    {"span": "tense", "canonical": "tense", "domain": "audio_mood", "variant_type": "synonym"},
+    {"span": "uplifting", "canonical": "uplifting", "domain": "audio_mood", "variant_type": "synonym"},
+    {"span": "hopeful", "canonical": "hopeful", "domain": "audio_mood", "variant_type": "synonym"},
+    {"span": "ominous", "canonical": "ominous", "domain": "audio_mood", "variant_type": "synonym"},
+    {"span": "melancholy", "canonical": "melancholy", "domain": "audio_mood", "variant_type": "synonym"},
+    {"span": "dreamy", "canonical": "dreamy", "domain": "audio_mood", "variant_type": "synonym"},
+    {"span": "playful", "canonical": "playful", "domain": "audio_mood", "variant_type": "synonym"},
+    {"span": "suspenseful", "canonical": "suspenseful", "domain": "audio_mood", "variant_type": "synonym"},
+    {"span": "chaotic", "canonical": "chaotic", "domain": "audio_mood", "variant_type": "synonym"},
+    {"span": "harsh", "canonical": "harsh", "domain": "audio_mood", "variant_type": "synonym"},
+    {"span": "soft", "canonical": "soft", "domain": "audio_mood", "variant_type": "synonym"},
+    {"span": "bright", "canonical": "bright", "domain": "audio_mood", "variant_type": "synonym"},
+    {"span": "dramatic", "canonical": "dramatic", "domain": "audio_mood", "variant_type": "synonym"},
+    # audio_tempo / presence
+    {"span": "slow tempo", "canonical": "slow", "domain": "audio_tempo", "variant_type": "synonym"},
+    {"span": "fast tempo", "canonical": "fast", "domain": "audio_tempo", "variant_type": "synonym"},
+    {"span": "medium tempo", "canonical": "medium", "domain": "audio_tempo", "variant_type": "synonym"},
+    {"span": "silence", "canonical": "silence", "domain": "audio_presence", "variant_type": "synonym"},
+    {"span": "ambient bed", "canonical": "ambient", "domain": "audio_presence", "variant_type": "synonym"},
+    {"span": "full mix", "canonical": "full", "domain": "audio_presence", "variant_type": "synonym"},
+    {"span": "sfx heavy", "canonical": "sfx", "domain": "audio_presence", "variant_type": "synonym"},
+    # camera
+    {"span": "pan", "canonical": "pan", "domain": "camera", "variant_type": "synonym"},
+    {"span": "tilt", "canonical": "tilt", "domain": "camera", "variant_type": "synonym"},
+    {"span": "dolly", "canonical": "dolly", "domain": "camera", "variant_type": "synonym"},
+    {"span": "crane", "canonical": "crane", "domain": "camera", "variant_type": "synonym"},
+    {"span": "handheld", "canonical": "handheld", "domain": "camera", "variant_type": "synonym"},
+    {"span": "whip pan", "canonical": "whip_pan", "domain": "camera", "variant_type": "synonym"},
+    {"span": "birds eye", "canonical": "birds_eye", "domain": "camera", "variant_type": "synonym"},
+    {"span": "tracking shot", "canonical": "tracking", "domain": "camera", "variant_type": "synonym"},
+    # motion
+    {"span": "jerky", "canonical": "jerky", "domain": "motion", "variant_type": "synonym"},
+    {"span": "fluid", "canonical": "fluid", "domain": "motion", "variant_type": "synonym"},
+    {"span": "pulsing", "canonical": "pulsing", "domain": "motion", "variant_type": "synonym"},
+    {"span": "ease in", "canonical": "ease_in", "domain": "motion", "variant_type": "synonym"},
+    {"span": "ease out", "canonical": "ease_out", "domain": "motion", "variant_type": "synonym"},
+    {"span": "radial motion", "canonical": "radial", "domain": "motion", "variant_type": "synonym"},
+    {"span": "diagonal drift", "canonical": "diagonal", "domain": "motion", "variant_type": "synonym"},
+    # palette / color slang (multi-sense)
+    {"span": "golden hour", "canonical": "warm", "domain": "palette", "variant_type": "synonym"},
+    {"span": "neon", "canonical": "magenta", "domain": "palette", "variant_type": "synonym"},
+    {"span": "pastel", "canonical": "pink", "domain": "palette", "variant_type": "synonym"},
+    {"span": "monochrome", "canonical": "gray", "domain": "palette", "variant_type": "synonym"},
+    {"span": "teal and orange", "canonical": "teal", "domain": "palette", "variant_type": "synonym"},
+    # theme
     {"span": "nature", "canonical": "nature", "domain": "theme", "variant_type": "synonym"},
     {"span": "natural", "canonical": "nature", "domain": "theme", "variant_type": "synonym"},
     {"span": "organic", "canonical": "nature", "domain": "theme", "variant_type": "synonym"},

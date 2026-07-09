@@ -88,7 +88,10 @@ def pick_prompt(
     Returns (prompt, is_exploit, meta) where meta includes source and optional interpretation_bucket.
     """
     from src.automation import generate_procedural_prompt
-    from src.automation.prompt_gen import generate_targeted_narrative_prompt
+    from src.automation.prompt_gen import (
+        generate_targeted_blended_prompt,
+        generate_targeted_narrative_prompt,
+    )
 
     good = state.get("good_prompts", [])
     recent = set(state.get("recent_prompts", [])[-150:])
@@ -122,6 +125,13 @@ def pick_prompt(
         if targeted:
             logger.info("Targeted narrative prompt (fill gaps): %s", targeted[:60] + ("..." if len(targeted) > 60 else ""))
             return (targeted, False, {"source": "targeted_narrative"})
+    # Blended axes (motion/audio/composition) — prefer when narrative is already dense
+    blended_rate = 0.32 if narr_min >= 90 else 0.14
+    if secure_random() < blended_rate:
+        blended = generate_targeted_blended_prompt(knowledge, avoid=recent)
+        if blended:
+            logger.info("Targeted blended prompt: %s", blended[:60] + ("..." if len(blended) > 60 else ""))
+            return (blended, False, {"source": "targeted_blended"})
     # When color coverage is tiny, prefer procedural prompts (palette/lighting bias) over exploit
     if thin_color and secure_random() < 0.55:
         fallback = generate_procedural_prompt(

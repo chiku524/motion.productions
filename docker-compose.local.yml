@@ -73,8 +73,9 @@ services:
       LOOP_EXPLOIT_RATIO_OVERRIDE: "0"
       LOOP_WORKFLOW_TYPE: explorer
       LOOP_WORKER_OFFSET_SECONDS: "0"
-      LOOP_DELAY_SECONDS: "25"
-      DISCOVERIES_CHUNK_PAUSE_SECONDS: "1.0"
+      # Keep paused by default; only start after 500s stay rare for a stretch
+      LOOP_DELAY_SECONDS: "90"
+      DISCOVERIES_CHUNK_PAUSE_SECONDS: "2.0"
     ports:
       - "8083:8080"
 
@@ -102,8 +103,9 @@ services:
       LOOP_EXTRACTION_FOCUS: window
       LOOP_WORKFLOW_TYPE: main
       LOOP_WORKER_OFFSET_SECONDS: "30"
-      LOOP_DELAY_SECONDS: "20"
-      DISCOVERIES_CHUNK_PAUSE_SECONDS: "1.0"
+      # Free-tier safe: longer gaps so D1 stays calm with sound (+ optional interpret)
+      LOOP_DELAY_SECONDS: "55"
+      DISCOVERIES_CHUNK_PAUSE_SECONDS: "1.5"
     ports:
       - "8085:8080"
 
@@ -115,7 +117,7 @@ services:
       MOTION_API_SECRET: ${MOTION_API_SECRET:-}
       HEALTH_PORT: "8080"
       WORKER_START_SCRIPT: interpret_loop
-      INTERPRET_DELAY_SECONDS: "10"
+      INTERPRET_DELAY_SECONDS: "35"
     ports:
       - "8086:8080"
 
@@ -127,9 +129,9 @@ services:
       MOTION_API_SECRET: ${MOTION_API_SECRET:-}
       HEALTH_PORT: "8080"
       WORKER_START_SCRIPT: sound_loop
-      SOUND_LOOP_DELAY_SECONDS: "25"
+      SOUND_LOOP_DELAY_SECONDS: "50"
       SOUND_LOOP_DURATION_SECONDS: "2.5"
-      DISCOVERIES_CHUNK_PAUSE_SECONDS: "1.0"
+      DISCOVERIES_CHUNK_PAUSE_SECONDS: "1.5"
     ports:
       - "8087:8080"
 
