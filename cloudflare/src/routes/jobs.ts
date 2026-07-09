@@ -29,20 +29,28 @@ if (path === "/api/jobs" && request.method === "GET") {
   if (status === "completed") {
     const maxDur = url.searchParams.get("max_duration");
     const minDur = url.searchParams.get("min_duration");
+    const ratingFilter = url.searchParams.get("rating"); // "2" = liked only
     const maxD = maxDur != null ? parseFloat(maxDur) : null;
     const minD = minDur != null ? parseFloat(minDur) : null;
-    let sql =
-      "SELECT id, prompt, duration_seconds, created_at, updated_at, workflow_type FROM jobs WHERE status = 'completed' AND r2_key IS NOT NULL";
+    const likedOnly = ratingFilter === "2" || ratingFilter === "up";
+    let sql = likedOnly
+      ? `SELECT j.id, j.prompt, j.duration_seconds, j.created_at, j.updated_at, j.workflow_type
+         FROM jobs j
+         INNER JOIN feedback f ON f.job_id = j.id AND f.rating = 2
+         WHERE j.status = 'completed' AND j.r2_key IS NOT NULL`
+      : "SELECT id, prompt, duration_seconds, created_at, updated_at, workflow_type FROM jobs WHERE status = 'completed' AND r2_key IS NOT NULL";
     const binds: (string | number)[] = [];
+    const durCol = likedOnly ? "j.duration_seconds" : "duration_seconds";
+    const orderCol = likedOnly ? "j.updated_at" : "updated_at";
     if (minD != null && !Number.isNaN(minD)) {
-      sql += " AND duration_seconds IS NOT NULL AND duration_seconds >= ?";
+      sql += ` AND ${durCol} IS NOT NULL AND ${durCol} >= ?`;
       binds.push(minD);
     }
     if (maxD != null && !Number.isNaN(maxD)) {
-      sql += " AND duration_seconds IS NOT NULL AND duration_seconds <= ?";
+      sql += ` AND ${durCol} IS NOT NULL AND ${durCol} <= ?`;
       binds.push(maxD);
     }
-    sql += " ORDER BY updated_at DESC LIMIT ?";
+    sql += ` ORDER BY ${orderCol} DESC LIMIT ?`;
     binds.push(limit);
     const stmt = db.prepare(sql);
     const rows = await stmt
@@ -56,6 +64,7 @@ if (path === "/api/jobs" && request.method === "GET") {
       updated_at: r.updated_at,
       workflow_type: r.workflow_type ?? undefined,
       download_url: `/api/jobs/${r.id}/download`,
+      liked: likedOnly ? true : undefined,
     }));
     return json({ jobs });
   }
@@ -291,24 +300,34 @@ if (feedbackMatch && request.method === "POST") {
   await logEvent(env, "feedback", id, { rating });
 
   // Thumbs-up: promote prompt into loop good_prompts so exploit favors human-liked mini-scenes
-  if (rating === 2 && env.MOTION_KV) {
+  // Thumbs-down: remove from good_prompts and track as bad so the loop avoids replaying it
+  if (env.MOTION_KV) {
     try {
       const job = await db.prepare("SELECT prompt FROM jobs WHERE id = ?").bind(id).first<{ prompt: string }>();
       const prompt = (job?.prompt || "").trim().slice(0, 500);
       if (prompt) {
         const raw = await env.MOTION_KV.get("loop_state");
         const state = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
-        const good = Array.isArray(state.good_prompts)
+        let good = Array.isArray(state.good_prompts)
           ? (state.good_prompts as unknown[]).map((p) => String(p ?? "").slice(0, 500))
           : [];
-        if (!good.includes(prompt)) {
+        let bad = Array.isArray(state.bad_prompts)
+          ? (state.bad_prompts as unknown[]).map((p) => String(p ?? "").slice(0, 500))
+          : [];
+        if (rating === 2) {
+          good = good.filter((p) => p !== prompt);
           good.push(prompt);
-          state.good_prompts = good.slice(-200);
-          await env.MOTION_KV.put("loop_state", JSON.stringify(state));
+          bad = bad.filter((p) => p !== prompt);
+        } else if (rating === 1) {
+          good = good.filter((p) => p !== prompt);
+          if (!bad.includes(prompt)) bad.push(prompt);
         }
+        state.good_prompts = good.slice(-200);
+        state.bad_prompts = bad.slice(-100);
+        await env.MOTION_KV.put("loop_state", JSON.stringify(state));
       }
     } catch (e) {
-      console.error("feedback→good_prompts failed:", e);
+      console.error("feedback→good/bad_prompts failed:", e);
     }
   }
 

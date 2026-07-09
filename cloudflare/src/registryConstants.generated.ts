@@ -5,6 +5,8 @@ export const STATIC_COLOR_ESTIMATED_CELLS = 27951;
 
 export const STATIC_SOUND_NUM_PRIMITIVES = 10;
 
+export const ENTITY_ESTIMATED_CELLS = 56;
+
 export const SOUND_ORIGIN_PRIMARIES = ["silence", "rumble", "hum", "tone", "hiss", "rustle", "thump", "click", "whoosh", "drip"] as const;
 
 export const NARRATIVE_ORIGIN_SIZES: Record<string, number> = {
@@ -147,5 +149,20 @@ export const DYNAMIC_CANONICAL = {
     "presence: music",
     "presence: sfx",
     "presence: full"
+  ],
+  "entity_kind": [
+    "circle",
+    "rect",
+    "arrow",
+    "character"
+  ],
+  "entity_trajectory": [
+    "left",
+    "right",
+    "up",
+    "down",
+    "toward",
+    "away",
+    "none"
   ]
 } as const;

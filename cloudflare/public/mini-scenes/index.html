@@ -31,9 +31,14 @@
         <div class="library-header">
           <div>
             <h1 class="library-title">Mini-scenes</h1>
-            <p class="library-intro">Recent ~5s clips from everyday prompts — thumbs up teaches the loop to prefer similar scenes.</p>
+            <p class="library-intro">Recent ~5s clips from everyday prompts — thumbs up teaches the loop; thumbs down demotes.</p>
           </div>
           <div class="library-actions">
+            <label class="library-filter-label" for="mini-scenes-filter">Show</label>
+            <select id="mini-scenes-filter" class="library-filter" aria-label="Filter mini-scenes">
+              <option value="recent">Recent</option>
+              <option value="liked">Liked</option>
+            </select>
             <button type="button" id="mini-scenes-refresh" class="btn btn-secondary btn-sm">Refresh</button>
           </div>
         </div>

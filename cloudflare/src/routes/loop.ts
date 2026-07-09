@@ -48,14 +48,18 @@ if (path === "/api/loop/state" && request.method === "POST") {
   const incomingGood = Array.isArray(raw.good_prompts)
     ? raw.good_prompts.map((p) => String(p ?? "").slice(0, 500)).filter(Boolean)
     : [];
-  // Merge with existing KV good_prompts so gallery thumbs-up promotions survive worker state saves
+  // Merge with existing KV good/bad prompts so gallery feedback survives worker state saves
   let existingGood: string[] = [];
+  let existingBad: string[] = [];
   try {
     const prevRaw = await kv.get("loop_state");
     if (prevRaw) {
-      const prev = JSON.parse(prevRaw) as { good_prompts?: unknown };
+      const prev = JSON.parse(prevRaw) as { good_prompts?: unknown; bad_prompts?: unknown };
       if (Array.isArray(prev.good_prompts)) {
         existingGood = prev.good_prompts.map((p) => String(p ?? "").slice(0, 500)).filter(Boolean);
+      }
+      if (Array.isArray(prev.bad_prompts)) {
+        existingBad = prev.bad_prompts.map((p) => String(p ?? "").slice(0, 500)).filter(Boolean);
       }
     }
   } catch {
@@ -65,7 +69,17 @@ if (path === "/api/loop/state" && request.method === "POST") {
   for (const p of incomingGood) {
     if (!mergedGood.includes(p)) mergedGood.push(p);
   }
-  state.good_prompts = mergedGood.slice(-200);
+  const incomingBad = Array.isArray(raw.bad_prompts)
+    ? raw.bad_prompts.map((p) => String(p ?? "").slice(0, 500)).filter(Boolean)
+    : [];
+  const mergedBad = [...existingBad];
+  for (const p of incomingBad) {
+    if (!mergedBad.includes(p)) mergedBad.push(p);
+  }
+  // Human demotion wins: never re-promote a bad prompt via loop state save
+  const badSet = new Set(mergedBad);
+  state.good_prompts = mergedGood.filter((p) => !badSet.has(p)).slice(-200);
+  state.bad_prompts = mergedBad.slice(-100);
   state.recent_prompts = Array.isArray(raw.recent_prompts)
     ? raw.recent_prompts.slice(-200).map((p) => String(p ?? "").slice(0, 500))
     : [];

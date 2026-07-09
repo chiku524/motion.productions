@@ -726,6 +726,26 @@ body {
   font-size: 0.9375rem;
   grid-column: 1 / -1;
 }
+.library-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+.library-filter-label {
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+}
+.library-filter {
+  font-family: inherit;
+  font-size: 0.8125rem;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-heading);
+}
 .library-card {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
@@ -733,6 +753,9 @@ body {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+}
+.library-card--liked {
+  border-color: color-mix(in srgb, var(--color-primary) 45%, var(--color-border));
 }
 .library-video {
   width: 100%;

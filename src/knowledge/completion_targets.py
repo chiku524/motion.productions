@@ -56,6 +56,11 @@ DYNAMIC_AUDIO_TEMPO = len(AUDIO_ORIGINS["tempo"])
 DYNAMIC_AUDIO_MOOD = len(AUDIO_ORIGINS["mood"])
 DYNAMIC_AUDIO_PRESENCE = len(AUDIO_ORIGINS["presence"])
 
+# Entity profiles (Phase C): kind × trajectory × bounce — mission-critical scene axes
+ENTITY_KINDS = ["circle", "rect", "arrow", "character"]
+ENTITY_TRAJECTORIES = ["left", "right", "up", "down", "toward", "away", "none"]
+ENTITY_ESTIMATED_CELLS = len(ENTITY_KINDS) * len(ENTITY_TRAJECTORIES) * 2  # × bounce on/off
+
 # Canonical lists for Worker/UI (keep in sync via gen_registry_constants_ts.py)
 DYNAMIC_CANONICAL = {
     "gradient_type": list(GRAPHICS_ORIGINS["gradient_type"]),
@@ -77,6 +82,8 @@ DYNAMIC_CANONICAL = {
         *[f"mood: {m}" for m in AUDIO_ORIGINS["mood"]],
         *[f"presence: {p}" for p in AUDIO_ORIGINS["presence"]],
     ],
+    "entity_kind": list(ENTITY_KINDS),
+    "entity_trajectory": list(ENTITY_TRAJECTORIES),
 }
 
 

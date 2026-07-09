@@ -20,6 +20,7 @@ def main() -> None:
     from src.knowledge.blend_depth import SOUND_ORIGIN_PRIMITIVES
     from src.knowledge.completion_targets import (
         DYNAMIC_CANONICAL,
+        ENTITY_ESTIMATED_CELLS,
         NARRATIVE_ORIGIN_SIZES,
         STATIC_COLOR_ESTIMATED_CELLS,
         STATIC_SOUND_NUM_PRIMITIVES,
@@ -37,6 +38,8 @@ export const STATIC_COLOR_ESTIMATED_CELLS = {STATIC_COLOR_ESTIMATED_CELLS};
 
 export const STATIC_SOUND_NUM_PRIMITIVES = {STATIC_SOUND_NUM_PRIMITIVES};
 
+export const ENTITY_ESTIMATED_CELLS = {ENTITY_ESTIMATED_CELLS};
+
 export const SOUND_ORIGIN_PRIMARIES = {sound} as const;
 
 export const NARRATIVE_ORIGIN_SIZES: Record<string, number> = {narrative};
@@ -48,6 +51,7 @@ export const DYNAMIC_CANONICAL = {canonical} as const;
     print(f"Wrote {out}")
     print(f"  narrative aspects: {NARRATIVE_ORIGIN_SIZES}")
     print(f"  sound primitives: {STATIC_SOUND_NUM_PRIMITIVES}")
+    print(f"  entity cells: {ENTITY_ESTIMATED_CELLS}")
     print(f"  audio moods: {len(DYNAMIC_CANONICAL['sound_mood'])}")
 
 

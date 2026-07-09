@@ -14,6 +14,7 @@ import { json, err, normalizeOpacityToPercent } from "../http";
 import { COLOR_PRIMARIES_FOR_API, COLOR_PRIMITIVE_NAMES } from "../colorPrimaries.generated";
 import {
   STATIC_COLOR_ESTIMATED_CELLS,
+  ENTITY_ESTIMATED_CELLS,
   NARRATIVE_ORIGIN_SIZES,
   DYNAMIC_CANONICAL,
 } from "../registryConstants.generated";
@@ -537,6 +538,18 @@ if (path === "/api/registries/coverage" && request.method === "GET") {
   const styleCov = narrative["style"]?.coverage_pct ?? 0;
   const narrativePlotsStyleMinCoveragePct = Math.min(plotsCov, styleCov);
 
+  let learnedEntitiesCount = 0;
+  try {
+    const er = await countTable("SELECT COUNT(*) as c FROM learned_entities");
+    learnedEntitiesCount = er ?? 0;
+  } catch {
+    learnedEntitiesCount = 0;
+  }
+  const entitiesCoveragePct =
+    ENTITY_ESTIMATED_CELLS > 0
+      ? Math.min(100, Math.round((100 * learnedEntitiesCount) / ENTITY_ESTIMATED_CELLS * 100) / 100)
+      : 0;
+
   const coverage = {
     static_colors_count: staticColorsCount,
     static_colors_estimated_cells: STATIC_COLOR_ESTIMATED_CELLS,
@@ -563,6 +576,9 @@ if (path === "/api/registries/coverage" && request.method === "GET") {
         ) / 100
       : 0,
     learned_colors_count: learnedColorsCount,
+    learned_entities_count: learnedEntitiesCount,
+    learned_entities_estimated_cells: ENTITY_ESTIMATED_CELLS,
+    learned_entities_coverage_pct: entitiesCoveragePct,
     narrative,
     /** plots aspect stores tension_curve origins (flat/slow_build/standard/immediate). */
     tension_curve_note: "narrative.plots == NARRATIVE_ORIGINS.tension_curve",
@@ -576,6 +592,7 @@ if (path === "/api/registries/coverage" && request.method === "GET") {
     targets: {
       static_color_estimated_cells: STATIC_COLOR_ESTIMATED_CELLS,
       static_sound_num_primitives: SOUND_PRIMARIES_FOR_COVERAGE.length,
+      entity_estimated_cells: ENTITY_ESTIMATED_CELLS,
       narrative_origin_sizes: { ...NARRATIVE_ORIGIN_SIZES },
       dynamic_canonical_sizes: {
         gradient: DYNAMIC_CANONICAL.gradient_type.length,
@@ -584,6 +601,7 @@ if (path === "/api/registries/coverage" && request.method === "GET") {
         audio_tempo: DYNAMIC_CANONICAL.sound_tempo.length,
         audio_mood: DYNAMIC_CANONICAL.sound_mood.length,
         audio_presence: DYNAMIC_CANONICAL.sound_presence.length,
+        entity_kind: (DYNAMIC_CANONICAL as { entity_kind?: readonly string[] }).entity_kind?.length ?? 4,
       },
       target_pct: 95,
     },

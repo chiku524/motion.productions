@@ -35,6 +35,7 @@ def baseline_state() -> dict:
     return {
         "run_count": 0,
         "good_prompts": [],
+        "bad_prompts": [],
         "recent_prompts": [],
         "duration_base": 6.0,
         "exploit_count": 0,
@@ -91,10 +92,12 @@ def pick_prompt(
     from src.automation.prompt_gen import (
         generate_mini_scene_prompt,
         generate_targeted_blended_prompt,
+        generate_targeted_entity_prompt,
         generate_targeted_narrative_prompt,
     )
 
     good = state.get("good_prompts", [])
+    bad = set(state.get("bad_prompts", []) or [])
     recent = set(state.get("recent_prompts", [])[-150:])
     interpretation_prompts = (knowledge or {}).get("interpretation_prompts", [])
 
@@ -105,28 +108,33 @@ def pick_prompt(
     ps_min = float((coverage or {}).get("narrative_plots_style_min_coverage_pct") or min(p_cov, s_cov))
     narr_min = float((coverage or {}).get("narrative_min_coverage_pct") or 100)
     color_pct = float((coverage or {}).get("static_colors_coverage_pct") or 100)
+    entity_pct = float((coverage or {}).get("learned_entities_coverage_pct") or 0)
     thin_plots_style = ps_min < 85
     thin_narrative = narr_min < 90 or g_cov < 90
     thin_color = color_pct < 8
+    thin_entities = entity_pct < 40
     # Mission: 5s mini-scenes that sound like real user asks — dominate when registries are dense
     dense_enough = narr_min >= 90 and color_pct >= 50
-    mini_rate = 0.62 if dense_enough else 0.28
+    mini_rate = 0.55 if dense_enough else 0.28
+    if thin_entities:
+        mini_rate = max(mini_rate, 0.48)
 
     # Prefer everyday mini-scenes before exploit/registry jargon
     if secure_random() < mini_rate:
-        mini = generate_mini_scene_prompt(avoid=recent)
+        mini = generate_mini_scene_prompt(avoid=recent | bad)
         if mini:
             logger.info("Mini-scene prompt: %s", mini[:70] + ("..." if len(mini) > 70 else ""))
             return (mini, False, {"source": "mini_scene"})
 
-    # Soften exploit when dense so we don't keep replaying old "Create a fantasy…" prompts
-    effective_exploit = exploit_ratio * (0.45 if dense_enough else 1.0)
+    # Soften exploit when dense; still prefer human-liked good prompts strongly
+    effective_exploit = exploit_ratio * (0.55 if dense_enough else 1.0)
     if secure_random() < effective_exploit and good:
         # Prefer short, natural good prompts over instructive registry phrasing
         natural = [
             p
             for p in good
             if p not in recent
+            and p not in bad
             and len(p) < 120
             and not p.lower().startswith("create a")
             and not p.lower().startswith("make a")
@@ -137,10 +145,17 @@ def pick_prompt(
             and not p.lower().startswith("give me ")
             and not p.lower().startswith("shoot ")
         ]
-        pool = natural or [p for p in good if p not in recent] or good
+        pool = natural or [p for p in good if p not in recent and p not in bad] or [p for p in good if p not in bad] or good
         chosen = secure_choice(pool)
-        if chosen:
+        if chosen and chosen not in bad:
             return (chosen, True, {"source": "exploit_good"})
+
+    # Fill thin entity space with targeted entity mini-scenes
+    if thin_entities and secure_random() < 0.35:
+        targeted_ent = generate_targeted_entity_prompt(knowledge, coverage=coverage, avoid=recent | bad)
+        if targeted_ent:
+            logger.info("Targeted entity prompt: %s", targeted_ent[:60] + ("..." if len(targeted_ent) > 60 else ""))
+            return (targeted_ent, False, {"source": "targeted_entity"})
 
     targeted_rate = 0.12 if dense_enough else 0.20
     if thin_plots_style:
@@ -150,21 +165,21 @@ def pick_prompt(
     if thin_color:
         targeted_rate = max(targeted_rate, 0.28)
     if coverage and secure_random() < targeted_rate:
-        targeted = generate_targeted_narrative_prompt(coverage, avoid=recent)
+        targeted = generate_targeted_narrative_prompt(coverage, avoid=recent | bad)
         if targeted:
             logger.info("Targeted narrative prompt (fill gaps): %s", targeted[:60] + ("..." if len(targeted) > 60 else ""))
             return (targeted, False, {"source": "targeted_narrative"})
     # Blended axes (motion/audio/composition) — prefer when narrative is already dense
     blended_rate = 0.18 if dense_enough else (0.28 if narr_min >= 90 else 0.14)
     if secure_random() < blended_rate:
-        blended = generate_targeted_blended_prompt(knowledge, avoid=recent)
+        blended = generate_targeted_blended_prompt(knowledge, avoid=recent | bad)
         if blended:
             logger.info("Targeted blended prompt: %s", blended[:60] + ("..." if len(blended) > 60 else ""))
             return (blended, False, {"source": "targeted_blended"})
     # When color coverage is tiny, prefer procedural prompts (palette/lighting bias) over exploit
     if thin_color and secure_random() < 0.55:
         fallback = generate_procedural_prompt(
-            avoid=recent, knowledge=knowledge, coverage=coverage, instructive_ratio=0.75
+            avoid=recent | bad, knowledge=knowledge, coverage=coverage, instructive_ratio=0.75
         )
         if fallback:
             return (fallback, False, {"source": "procedural_color_bias"})
@@ -176,20 +191,23 @@ def pick_prompt(
         and secure_random() < interp_rate
         and interp_streak < max(1, max_interp_streak)
     ):
-        candidates = [p for p in interpretation_prompts if isinstance(p, dict) and p.get("prompt") and p["prompt"] not in recent]
+        candidates = [
+            p for p in interpretation_prompts
+            if isinstance(p, dict) and p.get("prompt") and p["prompt"] not in recent and p["prompt"] not in bad
+        ]
         if candidates:
             chosen = _pick_interpretation_diverse(candidates, state)
             bucket = _interpretation_bucket(chosen)
             return (chosen["prompt"], False, {"source": "interpretation", "interpretation_bucket": bucket})
     # Second chance at mini-scenes before generic procedural
     if secure_random() < (0.55 if dense_enough else 0.35):
-        mini = generate_mini_scene_prompt(avoid=recent)
+        mini = generate_mini_scene_prompt(avoid=recent | bad)
         if mini:
             logger.info("Mini-scene prompt: %s", mini[:70] + ("..." if len(mini) > 70 else ""))
             return (mini, False, {"source": "mini_scene"})
     fallback = (
-        generate_procedural_prompt(avoid=recent, knowledge=knowledge, coverage=coverage, instructive_ratio=0.65)
-        or (secure_choice(good) if good else generate_procedural_prompt(knowledge=knowledge, coverage=coverage, instructive_ratio=0.65))
+        generate_procedural_prompt(avoid=recent | bad, knowledge=knowledge, coverage=coverage, instructive_ratio=0.65)
+        or (secure_choice([p for p in good if p not in bad]) if good else generate_procedural_prompt(knowledge=knowledge, coverage=coverage, instructive_ratio=0.65))
     )
     return (fallback or "", False, {"source": "procedural"})
 
@@ -209,20 +227,31 @@ def _load_state(api_base: str) -> dict:
         data = api_request_with_retry(api_base, "GET", "/api/loop/state", timeout=15)
         s = data.get("state", {})
         good = list(s.get("good_prompts", []))[-200:]
+        bad = list(s.get("bad_prompts", []))[-100:]
         # Merge human thumbs-up prompts from feedback so gallery review teaches exploit
         try:
             fb = api_request_with_retry(api_base, "GET", "/api/feedback?limit=40", timeout=15)
             for row in fb.get("feedback") or []:
-                if int(row.get("rating") or 0) == 2:
-                    p = (row.get("prompt") or "").strip()
-                    if p and p not in good:
+                rating = int(row.get("rating") or 0)
+                p = (row.get("prompt") or "").strip()
+                if not p:
+                    continue
+                if rating == 2:
+                    if p not in good:
                         good.append(p)
+                    bad = [x for x in bad if x != p]
+                elif rating == 1:
+                    good = [x for x in good if x != p]
+                    if p not in bad:
+                        bad.append(p)
             good = good[-200:]
+            bad = bad[-100:]
         except Exception:
             pass
         return {
             "run_count": int(s.get("run_count", 0)),
             "good_prompts": good,
+            "bad_prompts": bad,
             "recent_prompts": list(s.get("recent_prompts", []))[-200:],
             "duration_base": float(s.get("duration_base", 6.0)),
             "exploit_count": int(s.get("exploit_count", 0)),

@@ -494,6 +494,60 @@ def generate_targeted_blended_prompt(
     return prompt
 
 
+def generate_targeted_entity_prompt(
+    knowledge: dict[str, Any] | None = None,
+    *,
+    coverage: dict[str, Any] | None = None,
+    avoid: set[str] | None = None,
+) -> str | None:
+    """
+    Fill thin learned_entities space: prefer kinds/trajectories not yet common
+    in for-creation learned_entities, phrased as everyday mini-scenes.
+    """
+    avoid = avoid or set()
+    knowledge = knowledge or {}
+    _ = coverage  # reserved for future thin-axis weighting
+    learned = [
+        e for e in (knowledge.get("learned_entities") or [])
+        if isinstance(e, dict)
+    ]
+    seen_kinds = {str(e.get("kind") or "").lower() for e in learned}
+    seen_traj = {str(e.get("trajectory") or "").lower() for e in learned}
+    kinds = ["circle", "rect", "arrow", "character"]
+    trajs = ["left", "right", "up", "down", "toward", "away"]
+    rare_kinds = [k for k in kinds if k not in seen_kinds] or kinds
+    rare_trajs = [t for t in trajs if t not in seen_traj] or trajs
+    kind = secure_choice(rare_kinds)
+    traj = secure_choice(rare_trajs)
+    bounce = kind in ("circle", "rect") and secure_random() < 0.55
+    labels = {
+        "circle": secure_choice(["ball", "orb", "sphere"]),
+        "rect": secure_choice(["block", "box"]),
+        "arrow": "arrow",
+        "character": secure_choice(["person", "character", "figure"]),
+    }
+    label = labels.get(kind, "shape")
+    color = secure_choice(["red", "blue", "green", "neon", "warm", "cool"])
+    music = secure_choice([
+        "deep house beat",
+        "techno music",
+        "calm ambient music",
+        "cinematic music",
+        "soft vocals",
+    ])
+    if kind == "character":
+        expr = secure_choice(["happy", "calm", "playful", "shy", ""])
+        prompt = f"a {expr + ' ' if expr else ''}{label} walking {traj} with {music}".strip()
+        prompt = " ".join(prompt.split())
+    elif bounce:
+        prompt = f"a {color} {label} bouncing {traj} with {music}"
+    else:
+        prompt = f"a {color} {label} drifting {traj} with {music}"
+    if prompt in avoid or _is_near_duplicate(prompt, avoid):
+        return None
+    return prompt
+
+
 # Everyday mini-scene prompts: what an average person might ask for in ~5s clips.
 # Designed to exercise entities, direction, bounce SFX, music genre, and vocals.
 _MINI_SCENE_TEMPLATES: list[str] = [

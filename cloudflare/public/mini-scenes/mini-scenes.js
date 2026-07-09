@@ -1,6 +1,7 @@
 /**
  * Mini-scenes gallery: recent short completed jobs for human review.
  * Thumbs up promotes the prompt into loop good_prompts (exploit pool).
+ * Thumbs down demotes into bad_prompts. Filter "Liked" shows rating=2 only.
  */
 const API_BASE = "";
 const LIMIT = 24;
@@ -9,6 +10,9 @@ const MAX_DURATION = 6;
 const listEl = document.getElementById("mini-scenes-list");
 const loadingEl = document.getElementById("mini-scenes-loading");
 const refreshBtn = document.getElementById("mini-scenes-refresh");
+const filterEl = document.getElementById("mini-scenes-filter");
+
+let likedOnly = false;
 
 function escapeHtml(text) {
   const div = document.createElement("div");
@@ -42,6 +46,8 @@ function submitFeedback(jobId, rating, btn) {
   if (!jobId) return;
   const card = btn?.closest?.(".library-card");
   card?.querySelectorAll?.(".btn-feedback")?.forEach((b) => b.classList.add("feedback-given"));
+  if (rating === 2) card?.classList?.add("library-card--liked");
+  if (rating === 1) card?.classList?.remove("library-card--liked");
   fetch(`${API_BASE}/api/jobs/${jobId}/feedback`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -52,8 +58,9 @@ function submitFeedback(jobId, rating, btn) {
 async function loadMiniScenes() {
   if (!listEl) return;
   try {
+    const ratingQ = likedOnly ? "&rating=2" : "";
     const res = await fetch(
-      `${API_BASE}/api/jobs?status=completed&limit=${LIMIT}&min_duration=4&max_duration=${MAX_DURATION}`
+      `${API_BASE}/api/jobs?status=completed&limit=${LIMIT}&min_duration=4&max_duration=${MAX_DURATION}${ratingQ}`
     );
     const data = await res.json();
     loadingEl?.remove();
@@ -62,8 +69,9 @@ async function loadMiniScenes() {
       return;
     }
     if (data.jobs.length === 0) {
-      listEl.innerHTML =
-        '<p class="library-empty">No short clips yet. The balanced loop posts 5s mini-scenes as they complete.</p>';
+      listEl.innerHTML = likedOnly
+        ? '<p class="library-empty">No liked mini-scenes yet. Thumbs-up clips in Recent to build this list.</p>'
+        : '<p class="library-empty">No short clips yet. The balanced loop posts 5s mini-scenes as they complete.</p>';
       return;
     }
     const base = window.location.origin;
@@ -74,8 +82,9 @@ async function loadMiniScenes() {
         const displayPrompt = shortenPrompt(fullPrompt);
         const label = workflowLabel(job.workflow_type);
         const id = escapeHtml(job.id);
+        const likedClass = job.liked || likedOnly ? " library-card--liked" : "";
         return `
-        <article class="library-card" data-job-id="${id}">
+        <article class="library-card${likedClass}" data-job-id="${id}">
           <video class="library-video" src="${url}" controls playsinline preload="metadata"></video>
           <div class="library-card-body">
             <span class="library-badge library-badge--main">${escapeHtml(label)}</span>
@@ -83,7 +92,7 @@ async function loadMiniScenes() {
             <p class="library-meta">${formatDate(job.updated_at || job.created_at)}${job.duration_seconds ? ` · ${job.duration_seconds}s` : ""}</p>
             <div class="library-feedback">
               <button type="button" class="btn-feedback" data-rating="2" data-job="${id}" title="Good mini-scene — teach the loop" aria-label="Thumbs up">👍</button>
-              <button type="button" class="btn-feedback" data-rating="1" data-job="${id}" title="Not useful" aria-label="Thumbs down">👎</button>
+              <button type="button" class="btn-feedback" data-rating="1" data-job="${id}" title="Not useful — demote" aria-label="Thumbs down">👎</button>
               <a href="${url}" class="library-download" download="motion-${id}.mp4">Download</a>
             </div>
           </div>
@@ -105,6 +114,12 @@ async function loadMiniScenes() {
 }
 
 refreshBtn?.addEventListener("click", () => {
+  listEl.innerHTML = '<div class="library-loading">Loading…</div>';
+  loadMiniScenes();
+});
+
+filterEl?.addEventListener("change", () => {
+  likedOnly = filterEl.value === "liked";
   listEl.innerHTML = '<div class="library-loading">Loading…</div>';
   loadMiniScenes();
 });

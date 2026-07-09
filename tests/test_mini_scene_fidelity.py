@@ -121,6 +121,32 @@ class TestMiniSceneFidelity(unittest.TestCase):
         self.assertIn("expression", domains)
         self.assertIn("personality", domains)
 
+    def test_targeted_entity_prompt_fills_gaps(self):
+        from src.automation.prompt_gen import generate_targeted_entity_prompt
+        from unittest import mock
+
+        knowledge = {
+            "learned_entities": [
+                {"kind": "circle", "trajectory": "left", "bounce": 1},
+                {"kind": "circle", "trajectory": "right", "bounce": 0},
+            ]
+        }
+        prompt = generate_targeted_entity_prompt(knowledge, coverage={"learned_entities_coverage_pct": 5})
+        self.assertIsNotNone(prompt)
+        self.assertIsInstance(prompt, str)
+        self.assertTrue(len(prompt) > 10)
+        lower = prompt.lower()
+        self.assertTrue(
+            any(w in lower for w in ("ball", "orb", "block", "box", "arrow", "person", "character", "figure")),
+            f"unexpected entity phrasing: {prompt}",
+        )
+        # When the only candidate is avoided, return None (deterministic path)
+        with mock.patch("src.automation.prompt_gen.secure_choice", side_effect=lambda seq: seq[0]):
+            with mock.patch("src.automation.prompt_gen.secure_random", return_value=0.1):
+                fixed = generate_targeted_entity_prompt(knowledge)
+                self.assertIsNotNone(fixed)
+                self.assertIsNone(generate_targeted_entity_prompt(knowledge, avoid={fixed}))
+
 
 if __name__ == "__main__":
     unittest.main()
