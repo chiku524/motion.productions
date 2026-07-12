@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Motion — Confidential pitch</title>
+  <meta name="description" content="Confidential executive summary for Motion Productions — precise prompt-to-video, registries, and the path to photoreal generation.">
+  <meta name="robots" content="noindex, nofollow, noarchive">
+  <meta name="googlebot" content="noindex, nofollow">
+  <meta name="theme-color" content="#0A0A0C">
+  <link rel="icon" type="image/svg+xml" href="/logo.svg">
+  <!-- Intentionally omitted from sitemap and site navigation -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/pitch/pitch.css">
+</head>
+<body>
+  <div class="pitch">
+    <aside class="pitch-rail" aria-label="Deck sections">
+      <a class="pitch-brand" href="#cover">
+        <img src="/logo.svg" alt="" width="22" height="22">
+        <span>Motion</span>
+      </a>
+      <nav class="pitch-nav">
+        <a href="#cover">Cover</a>
+        <a href="#problem">Problem</a>
+        <a href="#solution">Solution</a>
+        <a href="#moat">Moat</a>
+        <a href="#traction">Traction</a>
+        <a href="#photoreal">Photoreal</a>
+        <a href="#ask">The ask</a>
+        <a href="#use">Use of funds</a>
+        <a href="#close">Close</a>
+      </nav>
+      <p class="pitch-rail-note">Confidential · Not linked from site nav</p>
+    </aside>
+
+    <main class="pitch-main">
+      <!-- 01 Cover -->
+      <section class="slide slide-cover" id="cover">
+        <div class="slide-atmosphere" aria-hidden="true"></div>
+        <p class="slide-kicker">Confidential · Executive summary · July 2026</p>
+        <h1 class="brand-lockup">Motion</h1>
+        <p class="cover-thesis">From prompt to production — then to photoreal.</p>
+        <p class="cover-lede">
+          Motion is a live prompt-to-video system with a growing knowledge layer:
+          exhaustive named registries that teach a precise interpreter what “ocean,”
+          “jumping fish,” and “golden hour” should mean. We already ship controllable
+          mini-scenes. The next phase adds photoreal generation on top of that same
+          interpreter — not a black-box toy, a production stack.
+        </p>
+        <div class="cover-meta">
+          <div>
+            <span class="meta-label">Live</span>
+            <a href="https://motion.productions" rel="noopener">motion.productions</a>
+          </div>
+          <div>
+            <span class="meta-label">Ask</span>
+            <span>$50k–$120k seed for photoreal phase</span>
+          </div>
+          <div>
+            <span class="meta-label">Stage</span>
+            <span>Working product → photoreal engine</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- 02 Problem -->
+      <section class="slide" id="problem">
+        <p class="slide-num">02</p>
+        <h2>The problem</h2>
+        <p class="slide-lede">
+          Text-to-video is exploding — but most tools are either pretty and uncontrollable,
+          or controllable and not photoreal. Creators and teams still can’t say what they
+          mean and get a reliable production.
+        </p>
+        <ul class="pitch-list">
+          <li>
+            <strong>Vague prompting.</strong> “Cinematic ocean scene” means something
+            different every run. No shared vocabulary between user language and the engine.
+          </li>
+          <li>
+            <strong>Black-box generation.</strong> Diffusion APIs look great until you need
+            the same character, setting, motion, and beat structure on take two.
+          </li>
+          <li>
+            <strong>No learning loop.</strong> Products generate clips; they don’t systematically
+            grow a registry of named visual, audio, and narrative primitives that improve
+            the next prompt.
+          </li>
+        </ul>
+      </section>
+
+      <!-- 03 Solution -->
+      <section class="slide" id="solution">
+        <p class="slide-num">03</p>
+        <h2>The solution</h2>
+        <p class="slide-lede">
+          Motion turns a prompt into a structured scene — then renders it.
+          Today that render is procedural and stylized. Tomorrow it can also be photoreal.
+          The interpreter stays the same.
+        </p>
+        <ol class="pitch-steps">
+          <li>
+            <span class="step-label">Interpret</span>
+            Prompt → entities, setting, motion, music, gags, beat windows
+          </li>
+          <li>
+            <span class="step-label">Ground</span>
+            Match against Pure / Blended / Semantic / Interpretation registries
+          </li>
+          <li>
+            <span class="step-label">Render</span>
+            Procedural engine now; photoreal diffusion as a second engine next
+          </li>
+          <li>
+            <span class="step-label">Learn</span>
+            Human thumbs + automatic discovery grow the registries every run
+          </li>
+        </ol>
+        <p class="slide-note">
+          Live product: Cloudflare Worker + D1/R2/KV, automated learning loops,
+          mini-scenes gallery, and a Video AI lab — already in production at
+          <a href="https://motion.productions">motion.productions</a>.
+        </p>
+      </section>
+
+      <!-- 04 Moat -->
+      <section class="slide" id="moat">
+        <p class="slide-num">04</p>
+        <h2>Why this is hard to copy</h2>
+        <p class="slide-lede">
+          The moat is not “we wrap an API.” It’s a compounding knowledge graph of
+          named video primitives — color, sound, motion, settings, props, expression —
+          wired into creation and review.
+        </p>
+        <div class="moat-grid">
+          <div>
+            <h3>Registries as product</h3>
+            <p>Exhaustive named coverage across Pure, Blended, Semantic, and Interpretation — the substrate for a precise prompt interpreter.</p>
+          </div>
+          <div>
+            <h3>Closed learning loop</h3>
+            <p>Automated discovery plus human thumbs-up/down teach the loop what to exploit, demote, and mutate next.</p>
+          </div>
+          <div>
+            <h3>Scene graph, not soup</h3>
+            <p>Settings spawn trees, fish, waves, buildings; characters have expression and personality; beats have time windows.</p>
+          </div>
+          <div>
+            <h3>Engine-agnostic plan</h3>
+            <p>The same structured plan can drive procedural frames today and a photoreal diffusion backend tomorrow.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 05 Traction -->
+      <section class="slide" id="traction">
+        <p class="slide-num">05</p>
+        <h2>What’s already live</h2>
+        <p class="slide-lede">
+          This is not a slideware demo. The stack ships video, learns from it, and
+          improves the next prompt.
+        </p>
+        <ul class="traction-list">
+          <li>Production site and APIs on Cloudflare (Worker, D1, R2, KV)</li>
+          <li>5-second mini-scenes with setting-themed backgrounds and prop scenery</li>
+          <li>Entity / gag / expression discovery into <code>learned_entities</code></li>
+          <li>Public review gallery with feedback that teaches exploit vs demotion</li>
+          <li>Balanced automation loop continuously exploring and exploiting</li>
+          <li>Video AI lab path for recipe / external render orchestration</li>
+        </ul>
+        <p class="slide-note">
+          Proof surfaces:
+          <a href="https://motion.productions/mini-scenes/">/mini-scenes/</a> ·
+          <a href="https://motion.productions/registries/">/registries/</a> ·
+          <a href="https://motion.productions/video-ai/">/video-ai/</a>
+        </p>
+      </section>
+
+      <!-- 06 Photoreal -->
+      <section class="slide" id="photoreal">
+        <p class="slide-num">06</p>
+        <h2>The photoreal phase</h2>
+        <p class="slide-lede">
+          Procedural Motion stays the controllable, cheap, always-on layer.
+          Photoreal is a second engine — fed by the same interpreter and registries.
+        </p>
+        <div class="path-blocks">
+          <div>
+            <h3>Phase 1 · Hybrid API</h3>
+            <p>Structured scene plans compile into diffusion prompts. Ship photoreal clips via a hosted video model while we validate quality and unit economics.</p>
+          </div>
+          <div>
+            <h3>Phase 2 · Owned inference</h3>
+            <p>Local / owned GPU for inference and light fine-tunes (LoRA). Lower marginal cost; brand-consistent look.</p>
+          </div>
+          <div>
+            <h3>Phase 3 · Fine-tune</h3>
+            <p>Adapters on open video models taught by our registries and liked mini-scenes — Motion’s aesthetic, not a generic model dump.</p>
+          </div>
+        </div>
+        <p class="slide-note">
+          We are not training a foundation model from scratch. We are buying the right
+          compute and API runway to put photoreal behind an interpreter we already own.
+        </p>
+      </section>
+
+      <!-- 07 Ask -->
+      <section class="slide" id="ask">
+        <p class="slide-num">07</p>
+        <h2>The ask</h2>
+        <p class="slide-lede">
+          Seeking <strong>$50,000–$120,000</strong> to fund the photoreal phase:
+          hardware, generation runway, and focused build time.
+        </p>
+        <div class="ask-tiers">
+          <div class="ask-tier">
+            <p class="tier-name">Lean · $50k</p>
+            <ul>
+              <li>GPU upgrade (e.g. 4090/5090-class)</li>
+              <li>Photoreal API credits for validation</li>
+              <li>3–4 months focused engineering</li>
+            </ul>
+          </div>
+          <div class="ask-tier ask-tier-focus">
+            <p class="tier-name">Target · $80–100k</p>
+            <ul>
+              <li>Stronger workstation / dual-path inference</li>
+              <li>6 months runway + API budget</li>
+              <li>Hybrid <code>engine=diffusion</code> in production</li>
+              <li>First LoRA experiments on Motion taste</li>
+            </ul>
+          </div>
+          <div class="ask-tier">
+            <p class="tier-name">Stretch · $120k</p>
+            <ul>
+              <li>Headroom for cloud fine-tune bursts</li>
+              <li>Faster iteration on photoreal quality</li>
+              <li>Earlier partner / pilot capacity</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- 08 Use of funds -->
+      <section class="slide" id="use">
+        <p class="slide-num">08</p>
+        <h2>Use of funds</h2>
+        <p class="slide-lede">Capital maps directly to the photoreal bottleneck — not to rebuilding what already works.</p>
+        <table class="funds-table">
+          <thead>
+            <tr>
+              <th>Bucket</th>
+              <th>Share</th>
+              <th>What it buys</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Compute hardware</td>
+              <td>~15–25%</td>
+              <td>Owned GPU upgrade for inference &amp; light fine-tunes</td>
+            </tr>
+            <tr>
+              <td>Photoreal generation</td>
+              <td>~20–30%</td>
+              <td>API / cloud GPU credits while the hybrid engine ships</td>
+            </tr>
+            <tr>
+              <td>Build runway</td>
+              <td>~40–50%</td>
+              <td>Engineering time to wire diffusion into the interpreter + product</td>
+            </tr>
+            <tr>
+              <td>Ops &amp; buffer</td>
+              <td>~10%</td>
+              <td>Hosting headroom, contingency, experiment budget</td>
+            </tr>
+          </tbody>
+        </table>
+        <p class="slide-note">
+          Existing stack (Cloudflare, procedural render, registries, loops) stays;
+          funding accelerates the photoreal engine and owned compute — not a rewrite.
+        </p>
+      </section>
+
+      <!-- 09 Close -->
+      <section class="slide slide-close" id="close">
+        <p class="slide-num">09</p>
+        <h2>Why now</h2>
+        <p class="close-line">
+          Video models are commoditizing. <em>Precise control</em> is not.
+          Motion already owns the control layer. Capital unlocks photoreal on top of it.
+        </p>
+        <ul class="pitch-list close-list">
+          <li>Working product and learning registries in production today</li>
+          <li>Clear technical path: hybrid API → owned inference → fine-tune</li>
+          <li>Capital-efficient ask tied to hardware + runway, not speculative research</li>
+        </ul>
+        <div class="close-cta">
+          <p class="close-cta-title">Let’s talk</p>
+          <p class="close-cta-body">
+            This page is private (no site navigation, noindex). Share the URL only with
+            people in the conversation.
+          </p>
+          <p class="close-url"><a href="https://motion.productions/pitch/">motion.productions/pitch/</a></p>
+          <p class="close-print">Tip: Print or “Save as PDF” from the browser for a leave-behind.</p>
+        </div>
+      </section>
+
+      <footer class="pitch-footer">
+        <span>Motion Productions</span>
+        <span>Confidential</span>
+        <span>July 2026</span>
+      </footer>
+    </main>
+  </div>
+  <script>
+    // Highlight active section in rail
+    const links = [...document.querySelectorAll(".pitch-nav a")];
+    const sections = links.map((a) => document.querySelector(a.getAttribute("href"))).filter(Boolean);
+    const io = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((e) => {
+          if (!e.isIntersecting) return;
+          const id = "#" + e.target.id;
+          links.forEach((a) => a.classList.toggle("is-active", a.getAttribute("href") === id));
+        });
+      },
+      { rootMargin: "-40% 0px -50% 0px", threshold: 0 }
+    );
+    sections.forEach((s) => io.observe(s));
+  </script>
+</body>
+</html>
