@@ -121,9 +121,17 @@ def post_discoveries(
         return {}
     pause = float(os.environ.get("DISCOVERIES_CHUNK_PAUSE_SECONDS", DISCOVERIES_CHUNK_PAUSE_SECONDS))
     merged: dict[str, Any] = {"status": "recorded", "results": {}}
+    total = len(chunks)
     for i, chunk in enumerate(chunks):
         if i > 0 and pause > 0:
             time.sleep(pause)
+        keys = [k for k in chunk.keys() if k != "job_id"]
+        n_items = sum(
+            len(v) if isinstance(v, list) else sum(len(x) for x in v.values() if isinstance(x, list))
+            for k, v in chunk.items()
+            if k != "job_id"
+        )
+        print(f"  discoveries chunk {i + 1}/{total} ({n_items} items: {', '.join(keys)})", flush=True)
         # Worker may take a while under load; use 90s to reduce read timeouts.
         # D1-heavy: extra retries with longer backoff on D1_ERROR (api_client handles that)
         resp = api_request_with_retry(

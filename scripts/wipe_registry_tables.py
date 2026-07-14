@@ -50,6 +50,11 @@ REGISTRY_TABLES = [
 ]
 
 
+def _log(msg: str, *, err: bool = False) -> None:
+    stream = sys.stderr if err else sys.stdout
+    print(msg, file=stream, flush=True)
+
+
 def _run(cmd: list[str], capture: bool = True) -> subprocess.CompletedProcess:
     return subprocess.run(
         cmd,
@@ -60,22 +65,33 @@ def _run(cmd: list[str], capture: bool = True) -> subprocess.CompletedProcess:
     )
 
 
-def _execute(target: str, sql: str) -> tuple[bool, str]:
+def _execute(target: str, sql: str) -> tuple[bool, str, dict | None]:
     result = _run(
         ["npx", "wrangler", "d1", "execute", DB_NAME, target, "--command", sql, "--json"],
         capture=True,
     )
     out = (result.stdout or "") + (result.stderr or "")
-    return result.returncode == 0, out.strip()
+    meta = None
+    try:
+        data = json.loads(result.stdout or "")
+        if isinstance(data, list) and data:
+            meta = data[0].get("meta") if isinstance(data[0], dict) else None
+        elif isinstance(data, dict):
+            meta = data.get("meta")
+    except (json.JSONDecodeError, TypeError, AttributeError):
+        pass
+    return result.returncode == 0, out.strip(), meta if isinstance(meta, dict) else None
 
 
 def _count(target: str, table: str) -> int | None:
-    ok, out = _execute(target, f"SELECT count(*) AS n FROM {table}")
+    ok, out, _meta = _execute(target, f"SELECT count(*) AS n FROM {table}")
     if not ok:
         return None
     try:
-        data = json.loads(out)
-        # wrangler json shapes vary
+        data = json.loads(out.split("\n")[0] if out.startswith("{") else out)
+        # wrangler may prepend non-json; prefer stdout-only parse via re-execute path
+        if not isinstance(data, (list, dict)):
+            data = json.loads(out[out.find("[") :])
         if isinstance(data, list) and data:
             results = data[0].get("results") or data[0].get("result") or []
             if results and isinstance(results[0], dict):
@@ -90,34 +106,36 @@ def _count(target: str, table: str) -> int | None:
 
 
 def _delete_all(target: str, table: str, batch: int, delay: float) -> int:
-    """DELETE in batches. Returns approximate rows deleted."""
+    """DELETE in batches using meta.changes (avoids expensive COUNT on huge tables)."""
     deleted = 0
+    empty_streak = 0
     while True:
-        # SQLite/D1: delete a batch of rowids
+        _log(f"  {table}: deleting up to {batch}...")
         sql = f"DELETE FROM {table} WHERE rowid IN (SELECT rowid FROM {table} LIMIT {batch})"
-        ok, out = _execute(target, sql)
+        ok, out, meta = _execute(target, sql)
         if not ok:
             if "no such table" in out.lower():
-                print(f"  skip {table} (missing)")
+                _log(f"  skip {table} (missing)")
                 return deleted
-            print(f"  WARN {table}: {out[:200]}", file=sys.stderr)
-            # fallback: try wipe whole table once
-            ok2, out2 = _execute(target, f"DELETE FROM {table}")
+            _log(f"  WARN {table}: {out[:200]}", err=True)
+            ok2, out2, meta2 = _execute(target, f"DELETE FROM {table}")
             if ok2:
-                print(f"  wiped {table} (full DELETE)")
+                ch = int((meta2 or {}).get("changes") or 0)
+                _log(f"  wiped {table} (full DELETE, changes={ch})")
+                deleted += ch
             else:
-                print(f"  FAIL {table}: {out2[:300]}", file=sys.stderr)
+                _log(f"  FAIL {table}: {out2[:300]}", err=True)
             return deleted
-        # Heuristic: if COUNT is 0, stop
-        n = _count(target, table)
-        deleted += batch
-        print(f"  {table}: batch delete… remaining≈{n}")
-        if n is None:
-            # can't count — one more full delete then stop
-            _execute(target, f"DELETE FROM {table}")
-            break
-        if n <= 0:
-            break
+
+        changes = int((meta or {}).get("changes") or 0)
+        deleted += changes
+        _log(f"  {table}: deleted {changes} (total~={deleted})")
+        if changes <= 0:
+            empty_streak += 1
+            if empty_streak >= 1:
+                break
+        else:
+            empty_streak = 0
         time.sleep(delay)
     return deleted
 
@@ -131,24 +149,38 @@ def main() -> int:
     parser.add_argument("--yes", action="store_true", help="Confirm destructive wipe")
     parser.add_argument("--batch", type=int, default=2000, help="DELETE batch size")
     parser.add_argument("--delay", type=float, default=2.0, help="Seconds between batches")
+    parser.add_argument(
+        "--only",
+        nargs="+",
+        default=None,
+        help="Optional subset of table names to wipe",
+    )
     args = parser.parse_args()
 
     flag = "--remote" if args.remote else "--local"
-    print(f"Target: D1 {DB_NAME} ({flag})")
-    print("Tables:", ", ".join(REGISTRY_TABLES))
+    tables = REGISTRY_TABLES
+    if args.only:
+        unknown = [t for t in args.only if t not in REGISTRY_TABLES]
+        if unknown:
+            _log(f"Unknown tables: {unknown}", err=True)
+            return 1
+        tables = list(args.only)
+
+    _log(f"Target: D1 {DB_NAME} ({flag})")
+    _log("Tables: " + ", ".join(tables))
 
     if args.dry_run or not args.yes:
-        for table in REGISTRY_TABLES:
+        for table in tables:
             n = _count(flag, table)
-            print(f"  {table}: {n if n is not None else '?'}")
+            _log(f"  {table}: {n if n is not None else '?'}")
         if not args.yes:
-            print("\nDry-run / counts only. Re-run with --yes to wipe.")
+            _log("\nDry-run / counts only. Re-run with --yes to wipe.")
             return 0
 
-    print("\nWiping registry tables…")
-    for table in REGISTRY_TABLES:
+    _log("\nWiping registry tables...")
+    for table in tables:
         _delete_all(flag, table, batch=max(100, args.batch), delay=max(0.5, args.delay))
-    print("Done. Next: python scripts/seed_registries_d1.py --api-base https://motion.productions")
+    _log("Done. Next: python scripts/seed_registries_d1.py --api-base https://motion.productions")
     return 0
 
 

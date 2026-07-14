@@ -727,9 +727,10 @@ def ensure_dynamic_motion_in_registry(
     key = _motion_key(motion)
     motion_level = float(motion.get("level", 0))
     motion_trend = str(motion.get("trend", "steady"))
+    motion_std = float(motion.get("std") if motion.get("std") is not None else 0.0)
     payload = {
-        "motion_level": motion.get("level"),
-        "motion_std": motion.get("std"),
+        "motion_level": motion_level,
+        "motion_std": motion_std,
         "motion_trend": motion_trend,
         "motion_direction": motion.get("direction", "neutral"),
         "motion_rhythm": motion.get("rhythm", "steady"),

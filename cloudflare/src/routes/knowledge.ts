@@ -253,7 +253,7 @@ if (path === "/api/knowledge/discoveries" && request.method === "POST") {
       await db.prepare("INSERT OR IGNORE INTO name_reserve (name) VALUES (?)").bind(name).run();
       await db.prepare(
         "INSERT INTO learned_motion (id, profile_key, motion_level, motion_std, motion_trend, motion_direction, motion_rhythm, count, sources_json, name, depth_breakdown_json) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)"
-      ).bind(uuid(), m.key, m.motion_level, m.motion_std, m.motion_trend, m.motion_direction ?? "neutral", m.motion_rhythm ?? "steady", m.source_prompt ? JSON.stringify([m.source_prompt.slice(0, 80)]) : null, name, motionDepthJson).run();
+      ).bind(uuid(), m.key, m.motion_level ?? 0, m.motion_std ?? 0, m.motion_trend ?? "steady", m.motion_direction ?? "neutral", m.motion_rhythm ?? "steady", m.source_prompt ? JSON.stringify([m.source_prompt.slice(0, 80)]) : null, name, motionDepthJson).run();
     }
     results.motion++;
     itemsProcessed++;
