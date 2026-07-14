@@ -12,7 +12,8 @@ User instruction drives generation; registries supply the named values that prom
 - **Core foundation and loop:** [docs/INTENDED_LOOP.md](./docs/INTENDED_LOOP.md) — origins, extraction, creation, growth
 - **Architecture:** [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) — layout, procedural engine, interpreter & learning
 - **Workflows & registries:** [docs/WORKFLOWS_AND_REGISTRIES.md](./docs/WORKFLOWS_AND_REGISTRIES.md) — Pure / Blended / Semantic / Interpretation
-- **Automation & deployment:** [docs/AUTOMATION.md](./docs/AUTOMATION.md) — automate_loop, **Fly.io** workers (`fly.loop-*.toml`, `video-ai/fly.toml`)
+- **Registry reset (primitives → D1):** [docs/REGISTRY_RESET.md](./docs/REGISTRY_RESET.md) — wipe registry tables + `seed_registries_d1.py` (Docker loops paused)
+- **Automation & deployment:** [docs/AUTOMATION.md](./docs/AUTOMATION.md) — automate_loop, **Docker Compose** fleet / Fly contracts (`fly.loop-*.toml`, `video-ai/fly.toml`)
 - **Local compute / Fly from scratch:** [docs/LOCAL_COMPUTE.md](./docs/LOCAL_COMPUTE.md) — Docker Compose on your CPU, tunnel, recreate Fly apps
 - **Deployment:** [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md) — Cloudflare Worker (D1, R2, KV), security, and Fly.io background workers
 - **Registry improvements:** [docs/REGISTRY_AND_WORKFLOW_IMPROVEMENTS.md](./docs/REGISTRY_AND_WORKFLOW_IMPROVEMENTS.md)

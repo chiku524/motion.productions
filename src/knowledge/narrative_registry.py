@@ -89,38 +89,51 @@ def ensure_narrative_in_registry(
     source_prompt: str = "",
     config: dict[str, Any] | None = None,
     out_novel: dict[str, list[dict[str, Any]]] | None = None,
+    force_novel: bool = False,
 ) -> str | None:
     """
     If this narrative value is not in the registry for the given aspect, add it with a sensible name.
     Same process as static/dynamic: novel → add; unnamed → name-generator.
     Returns the assigned name if added, else None (already present).
     If out_novel is provided and the value was added, appends the API payload to out_novel[aspect].
+    When force_novel=True, always append the API payload (for D1 primitive reseed).
     """
     if not value or not str(value).strip():
         return None
     key = str(value).strip().lower()
     data = load_narrative_registry(aspect, config)
     existing = _entries_keys(data)
+    depth_breakdown: dict[str, Any] = {key: 1.0}
     if key in existing:
+        name = ""
         for e in data.get("entries", []):
             if (e.get("key") or "").strip().lower() == key:
                 e["count"] = e.get("count", 0) + 1
                 if source_prompt and len(e.get("sources", [])) < 5:
                     e.setdefault("sources", []).append(source_prompt[:80])
+                name = e.get("name") or ""
+                if not e.get("depth_breakdown"):
+                    e["depth_breakdown"] = depth_breakdown
                 break
         save_narrative_registry(aspect, data, config)
+        if force_novel and out_novel is not None:
+            out_novel.setdefault(aspect, []).append({
+                "key": key,
+                "value": value.strip(),
+                "source_prompt": source_prompt[:80] if source_prompt else "primitive_seed",
+                "name": name,
+                "depth_breakdown": depth_breakdown,
+            })
         return None
     names = {e.get("name", "") for e in data.get("entries", []) if e.get("name")}
     from .blend_names import narrative_display_name
     name = narrative_display_name(aspect, key, value.strip())
-    # depth_breakdown where applicable: single value = 100% that origin (REGISTRY_FOUNDATION)
-    depth_breakdown: dict[str, Any] = {key: 1.0}
     entry: dict[str, Any] = {
         "key": key,
         "value": value.strip(),
         "name": name,
         "count": 1,
-        "sources": [source_prompt[:80]] if source_prompt else [],
+        "sources": [source_prompt[:80]] if source_prompt else ["primitive_seed"],
         "depth_breakdown": depth_breakdown,
     }
     data.setdefault("entries", []).append(entry)
@@ -130,7 +143,7 @@ def ensure_narrative_in_registry(
         out_novel.setdefault(aspect, []).append({
             "key": key,
             "value": value.strip(),
-            "source_prompt": source_prompt[:80] if source_prompt else "",
+            "source_prompt": source_prompt[:80] if source_prompt else "primitive_seed",
             "name": name,
             "depth_breakdown": depth_breakdown,
         })
@@ -217,13 +230,19 @@ def extract_narrative_from_spec(
     return out
 
 
-def ensure_narrative_primitives_seeded(config: dict[str, Any] | None = None) -> None:
+def ensure_narrative_primitives_seeded(
+    config: dict[str, Any] | None = None,
+    *,
+    out_novel: dict[str, list[dict[str, Any]]] | None = None,
+    force_novel: bool = False,
+) -> int:
     """
     Ensure every primitive (origin) narrative value is in the narrative registry.
     Idempotent: only adds entries whose key is missing. Maps NARRATIVE_ORIGINS to aspects.
 
     Note: NARRATIVE_ORIGINS["tension_curve"] is stored under API/D1 aspect "plots"
     (flat / slow_build / standard / immediate). Coverage treats plots as that axis.
+    When out_novel is set (optionally with force_novel), collect API payloads for D1.
     """
     from .origins import get_all_origins
     origins = get_all_origins()
@@ -258,12 +277,14 @@ def ensure_narrative_primitives_seeded(config: dict[str, Any] | None = None) -> 
             for v in values:
                 if isinstance(v, str):
                     aspect_values.append(("scene_type", v))
+    added = 0
     for aspect, value in aspect_values:
-        data = load_narrative_registry(aspect, config)
-        existing = _entries_keys(data)
-        key = str(value).strip().lower()
-        if key not in existing:
-            ensure_narrative_in_registry(aspect, value, config=config)
+        if ensure_narrative_in_registry(
+            aspect, value, source_prompt="primitive_seed", config=config,
+            out_novel=out_novel, force_novel=force_novel,
+        ):
+            added += 1
+    return added
 
 
 def grow_narrative_from_spec(

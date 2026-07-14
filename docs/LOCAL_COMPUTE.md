@@ -1,6 +1,8 @@
 # Local compute + Fly bootstrap from scratch
 
-Use this when Fly apps were deleted or you want the same worker contracts on a local CPU. GPU is optional and not required for the procedural/FFmpeg path.
+Use this when Fly apps were deleted or you want the same worker contracts on a local CPU. **Current production path (funding):** run the fleet with Docker Compose against `https://motion.productions` (Worker/D1/R2 on Cloudflare). GPU is optional and not required for the procedural/FFmpeg path.
+
+Registry wipe + primitive reseed: **[REGISTRY_RESET.md](REGISTRY_RESET.md)**.
 
 ---
 

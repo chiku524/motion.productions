@@ -2,8 +2,9 @@
 """
 Bootstrap registries with all primitives and optional color sweep.
 
-Run after clone or before deploy so local (and optionally remote) registries
-have the full primitive set. Safe to run repeatedly (idempotent seeding).
+For a full local+D1 primitive reseed (after wipe), prefer:
+  python scripts/seed_registries_d1.py --reset-local --api-base https://motion.productions
+See docs/REGISTRY_RESET.md.
 
 Usage:
   python scripts/registry_bootstrap.py

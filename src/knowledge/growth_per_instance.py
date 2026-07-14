@@ -170,7 +170,8 @@ def _gradient_key(grad: dict[str, Any]) -> str:
 def _camera_key(cam: dict[str, Any]) -> str:
     mtype = (cam.get("motion_type") or "static").strip().lower()
     speed = (cam.get("speed") or "medium").strip().lower()
-    return f"{mtype}_{speed}"
+    steadiness = (cam.get("steadiness") or "stable").strip().lower()
+    return f"{mtype}_{speed}_{steadiness}"
 
 
 def _transition_key(trans: dict[str, Any]) -> str:
@@ -204,11 +205,13 @@ def ensure_static_color_in_registry(
     source_prompt: str = "",
     config: dict[str, Any] | None = None,
     out_novel: list[dict[str, Any]] | None = None,
+    force_novel: bool = False,
 ) -> str | None:
     """
     If this color is not in the static registry, add it with a sensible name.
     Returns the assigned name if added, else None (already present).
     If out_novel is provided and the color was added, appends the API payload to out_novel.
+    When force_novel=True, always append the API payload (for D1 primitive reseed).
     """
     key = _static_color_key(color)
     if not key:
@@ -216,29 +219,40 @@ def ensure_static_color_in_registry(
     data = load_static_registry("color", config)
     entries = data.get("entries", [])
     existing = {e.get("key", "") for e in entries if e.get("key")}
-    if key in existing:
-        entries_by_key = {e.get("key"): e for e in entries if e.get("key")}
-        e = entries_by_key.get(key)
-        if e is not None:
-            e["count"] = e.get("count", 0) + 1
-            if source_prompt and len(e.get("sources", [])) < 5:
-                e.setdefault("sources", []).append(source_prompt[:80])
-        save_static_registry("color", data, config)
-        return None
     r_val = max(0, min(255, float(color.get("r", 0))))
     g_val = max(0, min(255, float(color.get("g", 0))))
     b_val = max(0, min(255, float(color.get("b", 0))))
     opacity_val = max(0.0, min(1.0, float(color.get("opacity", 1.0))))
-    names = {e.get("name", "") for e in data.get("entries", []) if e.get("name")}
-    name = generate_sensible_name("color", key, existing_names=names, rgb_hint=(r_val, g_val, b_val))
-    # Depth breakdown required: origin color % and opacity level (per REGISTRY_FOUNDATION)
     from .blend_depth import compute_color_depth
     origin_colors = compute_color_depth(r_val, g_val, b_val)
-    # Flat structure: primitive weights (0–1) + opacity; API/backfill expect flattenable depth
     depth_breakdown: dict[str, Any] = {
         **{k: round(v * 100) for k, v in origin_colors.items()},
         "opacity": round(opacity_val * 100),
     }
+    if key in existing:
+        entries_by_key = {e.get("key"): e for e in entries if e.get("key")}
+        e = entries_by_key.get(key)
+        name = (e or {}).get("name") or ""
+        if e is not None:
+            e["count"] = e.get("count", 0) + 1
+            if source_prompt and len(e.get("sources", [])) < 5:
+                e.setdefault("sources", []).append(source_prompt[:80])
+            if not e.get("depth_breakdown"):
+                e["depth_breakdown"] = depth_breakdown
+            name = e.get("name") or name
+        save_static_registry("color", data, config)
+        if force_novel and out_novel is not None:
+            out_novel.append({
+                "key": key,
+                "r": round(r_val, 1), "g": round(g_val, 1), "b": round(b_val, 1),
+                "opacity": round(opacity_val, 2),
+                "depth_breakdown": e.get("depth_breakdown", depth_breakdown) if e else depth_breakdown,
+                "source_prompt": source_prompt[:80] if source_prompt else "primitive_seed",
+                "name": name,
+            })
+        return None
+    names = {e.get("name", "") for e in data.get("entries", []) if e.get("name")}
+    name = generate_sensible_name("color", key, existing_names=names, rgb_hint=(r_val, g_val, b_val))
     # Static = pure only: R, G, B, opacity; depth_breakdown = weights of origin + opaque level
     entry: dict[str, Any] = {
         "key": key,
@@ -248,7 +262,7 @@ def ensure_static_color_in_registry(
         "opacity": round(opacity_val, 2),
         "name": name,
         "count": 1,
-        "sources": [source_prompt[:80]] if source_prompt else [],
+        "sources": [source_prompt[:80]] if source_prompt else ["primitive_seed"],
         "depth_breakdown": depth_breakdown,
     }
     data.setdefault("entries", []).append(entry)
@@ -260,111 +274,159 @@ def ensure_static_color_in_registry(
             "r": entry["r"], "g": entry["g"], "b": entry["b"],
             "opacity": entry["opacity"],
             "depth_breakdown": depth_breakdown,
-            "source_prompt": source_prompt[:80] if source_prompt else "",
+            "source_prompt": source_prompt[:80] if source_prompt else "primitive_seed",
             "name": name,
         })
     return name
 
 
-def ensure_static_primitives_seeded(config: dict[str, Any] | None = None) -> None:
+def ensure_static_primitives_seeded(
+    config: dict[str, Any] | None = None,
+    *,
+    out_colors: list[dict[str, Any]] | None = None,
+    out_sounds: list[dict[str, Any]] | None = None,
+    force_novel: bool = False,
+) -> dict[str, int]:
     """
     Seed the static registries (color + sound mesh) with origin/primitive values.
     Primitives are the base set; discovered blends are added by the loop. Idempotent.
-    Call at start of grow_from_video / grow_static_sound_from_audio_segments.
+    When out_colors/out_sounds are set (optionally with force_novel), collect API payloads for D1.
     """
+    added = {"static_colors": 0, "static_sound": 0}
     for color in STATIC_COLOR_PRIMITIVES:
-        ensure_static_color_in_registry(color, config=config)
+        if ensure_static_color_in_registry(
+            color, source_prompt="primitive_seed", config=config, out_novel=out_colors, force_novel=force_novel
+        ):
+            added["static_colors"] += 1
+        elif force_novel:
+            added["static_colors"] += 0  # payload forced into out_colors
     for sound in STATIC_SOUND_PRIMITIVES:
-        ensure_static_sound_in_registry(sound, config=config)
+        if ensure_static_sound_in_registry(
+            sound, source_prompt="primitive_seed", config=config, out_novel=out_sounds, force_novel=force_novel
+        ):
+            added["static_sound"] += 1
+    return added
 
 
-def ensure_dynamic_primitives_seeded(config: dict[str, Any] | None = None) -> None:
+def ensure_dynamic_primitives_seeded(
+    config: dict[str, Any] | None = None,
+    *,
+    novel_for_sync: dict[str, list[dict[str, Any]]] | None = None,
+    force_novel: bool = False,
+) -> dict[str, int]:
     """
     Seed dynamic registry with all origin primitives so every known non-pure value exists.
-    Covers: gradient, camera, transition, audio_semantic, motion, lighting, composition,
+    Covers: gradient, camera (type×speed×steadiness), transition (+durations), audio_semantic
+    (tempo×mood×presence), motion axes, lighting axes, composition, graphics shapes,
     time, temporal, technical, depth. Idempotent.
+    When novel_for_sync is provided, collect API payloads (use force_novel=True for D1 reseed).
     """
     origins = get_all_origins()
+    seed = "primitive_seed"
+    buckets = novel_for_sync if novel_for_sync is not None else {}
+    counts: dict[str, int] = {}
+
+    def _bucket(aspect: str) -> list[dict[str, Any]] | None:
+        if novel_for_sync is None:
+            return None
+        if aspect not in buckets:
+            buckets[aspect] = []
+        return buckets[aspect]
+
+    def _add(aspect: str, added_name: str | None) -> None:
+        if added_name:
+            counts[aspect] = counts.get(aspect, 0) + 1
+
     # Gradient
     for gtype in (origins.get("graphics") or {}).get("gradient_type", ["vertical", "horizontal", "radial", "angled"]):
-        window = {"gradient": {"gradient_type": gtype, "strength": 0.0}}
-        ensure_dynamic_gradient_in_registry(window, config=config)
-    # Camera: full motion_type list from origins
+        for strength in (0.0, 0.35, 0.7, 1.0):
+            window = {"gradient": {"gradient_type": gtype, "strength": strength}}
+            _add("gradient", ensure_dynamic_gradient_in_registry(
+                window, source_prompt=seed, config=config, out_novel=_bucket("gradient"), force_novel=force_novel
+            ))
+    # Graphics: shape overlays + representative texture bands
+    for shape in (origins.get("graphics") or {}).get("shape_overlay", ["none", "circle", "rect", "arrow", "character"]):
+        # Encode shape in edge/busyness proxies until extractor stores shape explicitly.
+        ed = 0.1 if shape == "none" else (0.35 if shape == "circle" else (0.45 if shape == "rect" else 0.55))
+        window = {"graphics": {"edge_density": ed, "spatial_variance": ed * 0.8, "busyness": ed * 0.6, "shape_overlay": shape}}
+        _add("graphics", ensure_dynamic_graphics_in_registry(
+            window, source_prompt=seed, config=config, out_novel=_bucket("graphics"), force_novel=force_novel
+        ))
+    for ed, sv, busy in ((0.1, 0.1, 0.1), (0.3, 0.3, 0.25), (0.6, 0.5, 0.5), (0.9, 0.8, 0.85)):
+        window = {"graphics": {"edge_density": ed, "spatial_variance": sv, "busyness": busy}}
+        _add("graphics", ensure_dynamic_graphics_in_registry(
+            window, source_prompt=seed, config=config, out_novel=_bucket("graphics"), force_novel=force_novel
+        ))
+    # Camera: full motion_type × speed × steadiness
     camera_origins = origins.get("camera") or {}
-    for mtype in camera_origins.get("motion_type", ["static", "pan", "tilt", "dolly", "crane", "zoom", "zoom_out", "handheld", "roll", "truck", "pedestal", "arc", "tracking", "birds_eye", "whip_pan", "rotate"]):
-        window = {"camera": {"motion_type": mtype, "speed": "medium"}}
-        ensure_dynamic_camera_in_registry(window, config=config)
-    # Transition
-    for ttype in (origins.get("transition") or {}).get("type", ["cut", "fade", "dissolve", "wipe"]):
-        window = {"transition": {"type": ttype, "duration_seconds": 0.0}}
-        ensure_dynamic_transition_in_registry(window, config=config)
-    # Audio semantic: full tempo × mood × presence grid (mission: every combination seedable).
-    # Cap combinatorial explosion by seeding each axis independently plus a sparse cross-product.
+    for mtype in camera_origins.get("motion_type", []):
+        for speed in camera_origins.get("speed", ["slow", "medium", "fast"]):
+            for steadiness in camera_origins.get("steadiness", ["locked", "stable", "handheld", "shaky"]):
+                window = {"camera": {"motion_type": mtype, "speed": speed, "steadiness": steadiness}}
+                _add("camera", ensure_dynamic_camera_in_registry(
+                    window, source_prompt=seed, config=config, out_novel=_bucket("camera"), force_novel=force_novel
+                ))
+    # Transition × duration
+    transition_origins = origins.get("transition") or {}
+    for ttype in transition_origins.get("type", ["cut", "fade", "dissolve", "wipe"]):
+        for dur in transition_origins.get("duration_seconds", [0.0, 0.25, 0.5, 1.0]):
+            window = {"transition": {"type": ttype, "duration_seconds": dur}}
+            _add("transition", ensure_dynamic_transition_in_registry(
+                window, source_prompt=seed, config=config, out_novel=_bucket("transition"), force_novel=force_novel
+            ))
+    # Audio semantic: full tempo × mood × presence grid
     audio_origins = origins.get("audio") or {}
     tempos = list(audio_origins.get("tempo", ["slow", "medium", "fast"]))
-    moods = list(audio_origins.get("mood", ["neutral", "calm", "tense", "uplifting", "dark"]))
+    moods = list(audio_origins.get("mood", ["neutral"]))
     presences = list(audio_origins.get("presence", ["silence", "ambient", "music", "sfx", "full"]))
     for presence in presences:
         role = (
             "ambient" if presence in ("silence", "ambient")
             else ("music" if presence == "music" else "sfx" if presence == "sfx" else "music")
         )
-        window = {"audio_semantic": {"role": role, "mood": "neutral", "tempo": "medium", "presence": presence}}
-        ensure_dynamic_audio_semantic_in_registry(window, config=config)
-    for tempo in tempos:
-        window = {"audio_semantic": {"role": "ambient", "mood": "neutral", "tempo": tempo, "presence": "ambient"}}
-        ensure_dynamic_audio_semantic_in_registry(window, config=config)
-    for mood in moods:
-        role = "ambient"
-        window = {"audio_semantic": {"role": role, "mood": mood, "tempo": "medium", "presence": "ambient"}}
-        ensure_dynamic_audio_semantic_in_registry(window, config=config)
-    # Motion: full MOTION_ORIGINS axes (speed, rhythm, smoothness, directionality, acceleration)
+        for tempo in tempos:
+            for mood in moods:
+                window = {"audio_semantic": {"role": role, "mood": mood, "tempo": tempo, "presence": presence}}
+                _add("audio_semantic", ensure_dynamic_audio_semantic_in_registry(
+                    window, source_prompt=seed, config=config, out_novel=_bucket("audio_semantic"), force_novel=force_novel
+                ))
+    # Motion axes
     motion_origins = origins.get("motion") or {}
     level_by_speed = {"static": 0.0, "slow": 5.0, "medium": 12.0, "fast": 25.0}
     for speed in motion_origins.get("speed", ["static", "slow", "medium", "fast"]):
         level = level_by_speed.get(speed, 12.0)
         window = {"motion": {"level": level, "trend": "steady", "direction": "neutral", "rhythm": "steady"}}
-        ensure_dynamic_motion_in_registry(window, config=config)
+        _add("motion", ensure_dynamic_motion_in_registry(
+            window, source_prompt=seed, config=config, out_novel=_bucket("motion"), force_novel=force_novel
+        ))
     for rhythm in motion_origins.get("rhythm", ["steady", "pulsing", "wave", "random"]):
         window = {"motion": {"level": 12.0, "trend": rhythm, "direction": "neutral", "rhythm": rhythm}}
-        ensure_dynamic_motion_in_registry(window, config=config)
+        _add("motion", ensure_dynamic_motion_in_registry(
+            window, source_prompt=seed, config=config, out_novel=_bucket("motion"), force_novel=force_novel
+        ))
     for smoothness in motion_origins.get("smoothness", ["jerky", "rough", "smooth", "fluid"]):
-        # Encode smoothness in trend label so keys stay distinct until extractor gains a dedicated field.
-        window = {
-            "motion": {
-                "level": 12.0,
-                "trend": f"smoothness:{smoothness}",
-                "direction": "neutral",
-                "rhythm": "steady",
-            }
-        }
-        ensure_dynamic_motion_in_registry(window, config=config)
+        window = {"motion": {"level": 12.0, "trend": f"smoothness:{smoothness}", "direction": "neutral", "rhythm": "steady"}}
+        _add("motion", ensure_dynamic_motion_in_registry(
+            window, source_prompt=seed, config=config, out_novel=_bucket("motion"), force_novel=force_novel
+        ))
     for directionality in motion_origins.get("directionality", ["none", "horizontal", "vertical", "diagonal", "radial"]):
-        window = {
-            "motion": {
-                "level": 12.0,
-                "trend": "steady",
-                "direction": directionality,
-                "rhythm": "steady",
-            }
-        }
-        ensure_dynamic_motion_in_registry(window, config=config)
+        window = {"motion": {"level": 12.0, "trend": "steady", "direction": directionality, "rhythm": "steady"}}
+        _add("motion", ensure_dynamic_motion_in_registry(
+            window, source_prompt=seed, config=config, out_novel=_bucket("motion"), force_novel=force_novel
+        ))
     for accel in motion_origins.get("acceleration", ["constant", "ease_in", "ease_out", "ease_in_out"]):
-        window = {
-            "motion": {
-                "level": 12.0,
-                "trend": f"accel:{accel}",
-                "direction": "neutral",
-                "rhythm": "steady",
-            }
-        }
-        ensure_dynamic_motion_in_registry(window, config=config)
-    # Lighting: contrast_ratio + color_temperature primitives
+        window = {"motion": {"level": 12.0, "trend": f"accel:{accel}", "direction": "neutral", "rhythm": "steady"}}
+        _add("motion", ensure_dynamic_motion_in_registry(
+            window, source_prompt=seed, config=config, out_novel=_bucket("motion"), force_novel=force_novel
+        ))
+    # Lighting: contrast, temperature, key/fill/rim/ambient encoded via brightness/contrast/saturation
     lighting_origins = origins.get("lighting") or {}
     for ratio in lighting_origins.get("contrast_ratio", ["flat", "normal", "high", "chiaroscuro"]):
         contrast = 25 if ratio == "flat" else (50 if ratio == "normal" else (75 if ratio == "high" else 90))
         window = {"lighting": {"brightness": 125, "contrast": contrast, "saturation": 1.0}}
-        ensure_dynamic_lighting_in_registry(window, config=config)
+        _add("lighting", ensure_dynamic_lighting_in_registry(
+            window, source_prompt=seed, config=config, out_novel=_bucket("lighting"), force_novel=force_novel
+        ))
     temp_brightness = {"warm": 150, "neutral": 125, "cool": 100}
     for temp in lighting_origins.get("color_temperature", ["warm", "neutral", "cool"]):
         window = {
@@ -374,8 +436,30 @@ def ensure_dynamic_primitives_seeded(config: dict[str, Any] | None = None) -> No
                 "saturation": 1.1 if temp == "warm" else (0.9 if temp == "cool" else 1.0),
             }
         }
-        ensure_dynamic_lighting_in_registry(window, config=config)
-    # Composition: framing + balance + symmetry (named via center/luminance proxies)
+        _add("lighting", ensure_dynamic_lighting_in_registry(
+            window, source_prompt=seed, config=config, out_novel=_bucket("lighting"), force_novel=force_novel
+        ))
+    for key_i in lighting_origins.get("key_intensity", [0.5, 0.75, 1.0, 1.25]):
+        window = {"lighting": {"brightness": 80 + key_i * 80, "contrast": 50, "saturation": 1.0}}
+        _add("lighting", ensure_dynamic_lighting_in_registry(
+            window, source_prompt=seed, config=config, out_novel=_bucket("lighting"), force_novel=force_novel
+        ))
+    for fill in lighting_origins.get("fill_ratio", [0.2, 0.4, 0.6, 0.8]):
+        window = {"lighting": {"brightness": 100 + fill * 40, "contrast": 30 + fill * 40, "saturation": 1.0}}
+        _add("lighting", ensure_dynamic_lighting_in_registry(
+            window, source_prompt=seed, config=config, out_novel=_bucket("lighting"), force_novel=force_novel
+        ))
+    for rim in lighting_origins.get("rim_strength", [0.0, 0.2, 0.5, 0.8]):
+        window = {"lighting": {"brightness": 110 + rim * 30, "contrast": 55 + rim * 20, "saturation": 1.0 + rim * 0.1}}
+        _add("lighting", ensure_dynamic_lighting_in_registry(
+            window, source_prompt=seed, config=config, out_novel=_bucket("lighting"), force_novel=force_novel
+        ))
+    for ambient in lighting_origins.get("ambient_level", [0.2, 0.4, 0.6, 0.8]):
+        window = {"lighting": {"brightness": 60 + ambient * 120, "contrast": 40, "saturation": 0.9 + ambient * 0.2}}
+        _add("lighting", ensure_dynamic_lighting_in_registry(
+            window, source_prompt=seed, config=config, out_novel=_bucket("lighting"), force_novel=force_novel
+        ))
+    # Composition
     composition_origins = origins.get("composition") or {}
     framing_centers = {
         "wide": (0.5, 0.5, 0.35),
@@ -387,53 +471,71 @@ def ensure_dynamic_primitives_seeded(config: dict[str, Any] | None = None) -> No
     for framing in composition_origins.get("framing", list(framing_centers.keys())):
         cx, cy, lb = framing_centers.get(framing, (0.5, 0.5, 0.5))
         window = {"composition": {"center_x": cx, "center_y": cy, "luminance_balance": lb, "framing": framing}}
-        ensure_dynamic_composition_in_registry(window, config=config)
+        _add("composition", ensure_dynamic_composition_in_registry(
+            window, source_prompt=seed, config=config, out_novel=_bucket("composition"), force_novel=force_novel
+        ))
     balance_centers = [
-        (0.2, 0.5, 0.5),   # left_heavy
-        (0.5, 0.5, 0.5),   # balanced
-        (0.8, 0.5, 0.5),   # right_heavy
-        (0.5, 0.2, 0.5),   # top_heavy
-        (0.5, 0.8, 0.5),   # bottom_heavy
+        (0.2, 0.5, 0.5), (0.5, 0.5, 0.5), (0.8, 0.5, 0.5), (0.5, 0.2, 0.5), (0.5, 0.8, 0.5),
     ]
     for cx, cy, lb in balance_centers:
         window = {"composition": {"center_x": cx, "center_y": cy, "luminance_balance": lb}}
-        ensure_dynamic_composition_in_registry(window, config=config)
+        _add("composition", ensure_dynamic_composition_in_registry(
+            window, source_prompt=seed, config=config, out_novel=_bucket("composition"), force_novel=force_novel
+        ))
     for symmetry in composition_origins.get("symmetry", ["asymmetric", "slight", "bilateral"]):
-        # Slight center offsets encode symmetry classes until extractor stores them explicitly.
         offset = 0.12 if symmetry == "asymmetric" else (0.04 if symmetry == "slight" else 0.0)
         window = {"composition": {"center_x": 0.5 + offset, "center_y": 0.5, "luminance_balance": 0.5, "symmetry": symmetry}}
-        ensure_dynamic_composition_in_registry(window, config=config)
-    # Time: duration + fps primitives
-    time_durations = [1.0, 2.0, 5.0, 10.0]
-    time_fps = [24.0, 30.0]
-    for duration in time_durations:
-        for fps in time_fps:
+        _add("composition", ensure_dynamic_composition_in_registry(
+            window, source_prompt=seed, config=config, out_novel=_bucket("composition"), force_novel=force_novel
+        ))
+    # Time
+    for duration in (1.0, 2.0, 5.0, 10.0):
+        for fps in (24.0, 30.0):
             window = {"time": {"duration": duration, "fps": fps}}
-            ensure_dynamic_time_in_registry(window, config=config)
-    # Temporal: shot length + story beats + cut frequency
+            _add("time", ensure_dynamic_time_in_registry(
+                window, source_prompt=seed, config=config, out_novel=_bucket("time"), force_novel=force_novel
+            ))
+    # Temporal
     temporal_origins = origins.get("temporal") or {}
     for duration in temporal_origins.get("shot_length_seconds", [1.0, 2.0, 4.0, 6.0, 10.0]):
         window = {"time": {"duration": duration}, "motion": {"trend": "steady"}}
-        ensure_dynamic_temporal_in_registry(window, config=config)
+        _add("temporal", ensure_dynamic_temporal_in_registry(
+            window, source_prompt=seed, config=config, out_novel=_bucket("temporal"), force_novel=force_novel
+        ))
     for beat in temporal_origins.get("story_beats", ["setup", "development", "climax", "resolution"]):
         window = {"time": {"duration": 2.0}, "motion": {"trend": f"beat:{beat}"}}
-        ensure_dynamic_temporal_in_registry(window, config=config)
+        _add("temporal", ensure_dynamic_temporal_in_registry(
+            window, source_prompt=seed, config=config, out_novel=_bucket("temporal"), force_novel=force_novel
+        ))
     for cut in temporal_origins.get("cut_frequency", ["none", "rare", "normal", "fast", "rapid"]):
         window = {"time": {"duration": 1.0}, "motion": {"trend": f"cut:{cut}"}}
-        ensure_dynamic_temporal_in_registry(window, config=config)
-    # Technical: full resolution × fps × aspect (aspect encoded in width/height choice)
+        _add("temporal", ensure_dynamic_temporal_in_registry(
+            window, source_prompt=seed, config=config, out_novel=_bucket("temporal"), force_novel=force_novel
+        ))
+    for pacing in temporal_origins.get("pacing", [0.5, 0.75, 1.0, 1.25, 1.5]):
+        window = {"time": {"duration": 2.0 * pacing}, "motion": {"trend": f"pacing:{pacing}"}}
+        _add("temporal", ensure_dynamic_temporal_in_registry(
+            window, source_prompt=seed, config=config, out_novel=_bucket("temporal"), force_novel=force_novel
+        ))
+    # Technical
     tech_origins = origins.get("technical") or {}
     for res in tech_origins.get("resolution", [(512, 512), (1280, 720), (1920, 1080)]):
         w, h = res[0], res[1]
         for fps in tech_origins.get("fps", [24, 30]):
             window = {"time": {"fps": float(fps)}}
-            ensure_dynamic_technical_in_registry(window, width=w, height=h, fps=float(fps), config=config)
-    # Depth: parallax_strength + layer_count
+            _add("technical", ensure_dynamic_technical_in_registry(
+                window, width=w, height=h, fps=float(fps), source_prompt=seed, config=config,
+                out_novel=_bucket("technical"), force_novel=force_novel
+            ))
+    # Depth
     depth_origins = origins.get("depth") or {}
     for para in depth_origins.get("parallax_strength", [0.0, 0.05, 0.1, 0.2]):
         for layers in depth_origins.get("layer_count", [1, 2, 3, 4]):
             window = {"depth": {"parallax_strength": para, "layer_count": layers}}
-            ensure_dynamic_depth_in_registry(window, config=config)
+            _add("depth", ensure_dynamic_depth_in_registry(
+                window, source_prompt=seed, config=config, out_novel=_bucket("depth"), force_novel=force_novel
+            ))
+    return counts
 
 
 def ensure_static_sound_in_registry(
@@ -442,6 +544,7 @@ def ensure_static_sound_in_registry(
     source_prompt: str = "",
     config: dict[str, Any] | None = None,
     out_novel: list[dict[str, Any]] | None = None,
+    force_novel: bool = False,
 ) -> str | None:
     """
     Record a pure sound (one instant/frame) in the mesh (static_sound registry).
@@ -449,6 +552,7 @@ def ensure_static_sound_in_registry(
     is stored as a blend of primitives (depth_breakdown = origin_noises). If novel,
     add with a sensible name so the mesh grows. Returns the assigned name if added,
     else None. No-op if sound is empty. If out_novel is set and added, appends payload.
+    When force_novel=True, always append the API payload (for D1 primitive reseed).
     """
     if not sound:
         return None
@@ -458,17 +562,6 @@ def ensure_static_sound_in_registry(
     data = load_static_registry("sound", config)
     entries = data.get("entries", [])
     existing = {e.get("key", "") for e in entries if e.get("key")}
-    if key in existing:
-        entries_by_key = {e.get("key"): e for e in entries if e.get("key")}
-        e = entries_by_key.get(key)
-        if e is not None:
-            e["count"] = e.get("count", 0) + 1
-            if source_prompt:
-                e.setdefault("sources", []).append(source_prompt[:80])
-        save_static_registry("sound", data, config)
-        return None
-    names = {e.get("name", "") for e in entries if e.get("name")}
-    name = generate_sensible_name("sound", key, existing_names=names)
     amp = float(sound.get("amplitude") or sound.get("weight") or 0)
     from .blend_depth import compute_sound_depth, normalize_tone_to_primitive
     raw_tone = (sound.get("tone") or "mid").strip()
@@ -481,6 +574,34 @@ def ensure_static_sound_in_registry(
         zcr=sound.get("zcr"),
     )
     strength_pct = depth_breakdown.get("strength_pct") if isinstance(depth_breakdown, dict) else amp
+    if key in existing:
+        entries_by_key = {e.get("key"): e for e in entries if e.get("key")}
+        e = entries_by_key.get(key)
+        name = (e or {}).get("name") or ""
+        if e is not None:
+            e["count"] = e.get("count", 0) + 1
+            if source_prompt:
+                e.setdefault("sources", []).append(source_prompt[:80])
+            if not e.get("depth_breakdown"):
+                e["depth_breakdown"] = depth_breakdown
+            name = e.get("name") or name
+            strength_pct = e.get("strength_pct", strength_pct)
+        save_static_registry("sound", data, config)
+        if force_novel and out_novel is not None:
+            out_novel.append({
+                "key": key,
+                "amplitude": (e or {}).get("amplitude", sound.get("amplitude")),
+                "weight": (e or {}).get("weight", sound.get("weight")),
+                "strength_pct": strength_pct,
+                "tone": (e or {}).get("tone", sound.get("tone")),
+                "timbre": (e or {}).get("timbre", sound.get("timbre")),
+                "depth_breakdown": (e or {}).get("depth_breakdown", depth_breakdown),
+                "source_prompt": source_prompt[:80] if source_prompt else "primitive_seed",
+                "name": name,
+            })
+        return None
+    names = {e.get("name", "") for e in entries if e.get("name")}
+    name = generate_sensible_name("sound", key, existing_names=names)
     entry = {
         "key": key,
         "amplitude": sound.get("amplitude"),
@@ -491,7 +612,7 @@ def ensure_static_sound_in_registry(
         "tempo": sound.get("tempo", ""),
         "name": name,
         "count": 1,
-        "sources": [source_prompt[:80]] if source_prompt else [],
+        "sources": [source_prompt[:80]] if source_prompt else ["primitive_seed"],
         "depth_breakdown": depth_breakdown,
     }
     data.setdefault("entries", []).append(entry)
@@ -506,7 +627,7 @@ def ensure_static_sound_in_registry(
             "tone": entry.get("tone"),
             "timbre": entry.get("timbre"),
             "depth_breakdown": depth_breakdown,
-            "source_prompt": source_prompt[:80] if source_prompt else "",
+            "source_prompt": source_prompt[:80] if source_prompt else "primitive_seed",
             "name": name,
         })
     return name
@@ -553,9 +674,11 @@ def _ensure_dynamic_in_registry(
     out_novel: list[dict[str, Any]] | None = None,
     api_payload: dict[str, Any] | None = None,
     registry_cache: dict[str, dict[str, Any]] | None = None,
+    force_novel: bool = False,
 ) -> str | None:
     """Generic: add one dynamic entry if key not in registry. Returns name if added.
-    When registry_cache is provided, uses cached registry data to avoid repeated disk reads."""
+    When registry_cache is provided, uses cached registry data to avoid repeated disk reads.
+    When force_novel=True, append API payload even if the key already exists (D1 reseed)."""
     if registry_cache is not None and aspect in registry_cache:
         data = registry_cache[aspect]
     else:
@@ -564,22 +687,29 @@ def _ensure_dynamic_in_registry(
             registry_cache[aspect] = data
     existing = _entries_keys(data)
     if key in existing:
+        name = ""
         for e in data.get("entries", []):
             if e.get("key") == key:
                 e["count"] = e.get("count", 0) + 1
                 if source_prompt:
                     e.setdefault("sources", []).append(source_prompt[:80])
+                name = e.get("name") or ""
                 break
         save_dynamic_registry(aspect, data, config)
+        if force_novel and out_novel is not None and api_payload is not None:
+            payload = {**api_payload, "source_prompt": source_prompt[:80] if source_prompt else "primitive_seed"}
+            if name:
+                payload["name"] = name
+            out_novel.append(payload)
         return None
     names = {e.get("name", "") for e in data.get("entries", []) if e.get("name")}
     name = generate_sensible_name(aspect, key, existing_names=names)
-    entry = {"key": key, "name": name, "count": 1, "sources": [source_prompt[:80]] if source_prompt else [], **entry_payload}
+    entry = {"key": key, "name": name, "count": 1, "sources": [source_prompt[:80]] if source_prompt else ["primitive_seed"], **entry_payload}
     data.setdefault("entries", []).append(entry)
     data["count"] = len(data["entries"])
     save_dynamic_registry(aspect, data, config)
     if out_novel is not None and api_payload is not None:
-        out_novel.append({**api_payload, "source_prompt": source_prompt[:80] if source_prompt else ""})
+        out_novel.append({**api_payload, "name": name, "source_prompt": source_prompt[:80] if source_prompt else "primitive_seed"})
     return name
 
 
@@ -590,6 +720,7 @@ def ensure_dynamic_motion_in_registry(
     config: dict[str, Any] | None = None,
     out_novel: list[dict[str, Any]] | None = None,
     registry_cache: dict[str, dict[str, Any]] | None = None,
+    force_novel: bool = False,
 ) -> str | None:
     from .blend_depth import compute_motion_depth
     motion = window.get("motion", {})
@@ -613,7 +744,7 @@ def ensure_dynamic_motion_in_registry(
         "motion_rhythm": payload["motion_rhythm"],
         "depth_breakdown": compute_motion_depth(motion_level, motion_trend),
     }
-    return _ensure_dynamic_in_registry("motion", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache)
+    return _ensure_dynamic_in_registry("motion", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache, force_novel=force_novel)
 
 
 def ensure_dynamic_time_in_registry(
@@ -623,12 +754,13 @@ def ensure_dynamic_time_in_registry(
     config: dict[str, Any] | None = None,
     out_novel: list[dict[str, Any]] | None = None,
     registry_cache: dict[str, dict[str, Any]] | None = None,
+    force_novel: bool = False,
 ) -> str | None:
     time_dict = window.get("time", {})
     key = _time_key(time_dict)
     payload = {"duration": time_dict.get("duration"), "fps": time_dict.get("fps"), "rate": time_dict.get("rate", time_dict.get("fps"))}
     api = {"key": key, "duration": payload["duration"], "fps": payload["fps"], "rate": payload.get("rate", payload["fps"])}
-    return _ensure_dynamic_in_registry("time", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache)
+    return _ensure_dynamic_in_registry("time", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache, force_novel=force_novel)
 
 
 def ensure_dynamic_lighting_in_registry(
@@ -638,6 +770,7 @@ def ensure_dynamic_lighting_in_registry(
     config: dict[str, Any] | None = None,
     out_novel: list[dict[str, Any]] | None = None,
     registry_cache: dict[str, dict[str, Any]] | None = None,
+    force_novel: bool = False,
 ) -> str | None:
     from .blend_depth import compute_lighting_depth
     lighting = window.get("lighting", {})
@@ -654,7 +787,7 @@ def ensure_dynamic_lighting_in_registry(
         "saturation": saturation,
         "depth_breakdown": depth,
     }
-    return _ensure_dynamic_in_registry("lighting", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache)
+    return _ensure_dynamic_in_registry("lighting", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache, force_novel=force_novel)
 
 
 def ensure_dynamic_composition_in_registry(
@@ -664,6 +797,7 @@ def ensure_dynamic_composition_in_registry(
     config: dict[str, Any] | None = None,
     out_novel: list[dict[str, Any]] | None = None,
     registry_cache: dict[str, dict[str, Any]] | None = None,
+    force_novel: bool = False,
 ) -> str | None:
     from .blend_depth import compute_composition_depth
     comp = window.get("composition", {})
@@ -680,7 +814,7 @@ def ensure_dynamic_composition_in_registry(
         "luminance_balance": lb,
         "depth_breakdown": depth,
     }
-    return _ensure_dynamic_in_registry("composition", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache)
+    return _ensure_dynamic_in_registry("composition", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache, force_novel=force_novel)
 
 
 def ensure_dynamic_graphics_in_registry(
@@ -690,6 +824,7 @@ def ensure_dynamic_graphics_in_registry(
     config: dict[str, Any] | None = None,
     out_novel: list[dict[str, Any]] | None = None,
     registry_cache: dict[str, dict[str, Any]] | None = None,
+    force_novel: bool = False,
 ) -> str | None:
     from .blend_depth import compute_graphics_depth
     graphics = window.get("graphics", {})
@@ -706,7 +841,7 @@ def ensure_dynamic_graphics_in_registry(
         "busyness": busy,
         "depth_breakdown": depth,
     }
-    return _ensure_dynamic_in_registry("graphics", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache)
+    return _ensure_dynamic_in_registry("graphics", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache, force_novel=force_novel)
 
 
 def ensure_dynamic_temporal_in_registry(
@@ -716,6 +851,7 @@ def ensure_dynamic_temporal_in_registry(
     config: dict[str, Any] | None = None,
     out_novel: list[dict[str, Any]] | None = None,
     registry_cache: dict[str, dict[str, Any]] | None = None,
+    force_novel: bool = False,
 ) -> str | None:
     from .blend_depth import compute_temporal_depth
     key = _temporal_key(window)
@@ -731,7 +867,7 @@ def ensure_dynamic_temporal_in_registry(
         "motion_trend": payload["motion_trend"],
         "depth_breakdown": depth,
     }
-    return _ensure_dynamic_in_registry("temporal", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache)
+    return _ensure_dynamic_in_registry("temporal", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache, force_novel=force_novel)
 
 
 def ensure_dynamic_technical_in_registry(
@@ -744,6 +880,7 @@ def ensure_dynamic_technical_in_registry(
     config: dict[str, Any] | None = None,
     out_novel: list[dict[str, Any]] | None = None,
     registry_cache: dict[str, dict[str, Any]] | None = None,
+    force_novel: bool = False,
 ) -> str | None:
     from .blend_depth import compute_technical_depth
     time_dict = window.get("time", {})
@@ -760,7 +897,7 @@ def ensure_dynamic_technical_in_registry(
         "fps": f,
         "depth_breakdown": depth,
     }
-    return _ensure_dynamic_in_registry("technical", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache)
+    return _ensure_dynamic_in_registry("technical", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache, force_novel=force_novel)
 
 
 def ensure_dynamic_gradient_in_registry(
@@ -770,6 +907,7 @@ def ensure_dynamic_gradient_in_registry(
     config: dict[str, Any] | None = None,
     out_novel: list[dict[str, Any]] | None = None,
     registry_cache: dict[str, dict[str, Any]] | None = None,
+    force_novel: bool = False,
 ) -> str | None:
     """Add gradient (type + strength) to dynamic registry if novel."""
     grad = window.get("gradient", {})
@@ -785,7 +923,7 @@ def ensure_dynamic_gradient_in_registry(
         "strength": payload["strength"],
         "depth_breakdown": depth,
     }
-    return _ensure_dynamic_in_registry("gradient", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache)
+    return _ensure_dynamic_in_registry("gradient", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache, force_novel=force_novel)
 
 
 def ensure_dynamic_camera_in_registry(
@@ -795,6 +933,7 @@ def ensure_dynamic_camera_in_registry(
     config: dict[str, Any] | None = None,
     out_novel: list[dict[str, Any]] | None = None,
     registry_cache: dict[str, dict[str, Any]] | None = None,
+    force_novel: bool = False,
 ) -> str | None:
     """Add camera motion (type + speed) to dynamic registry if novel."""
     cam = window.get("camera", {})
@@ -802,15 +941,23 @@ def ensure_dynamic_camera_in_registry(
         return None
     key = _camera_key(cam)
     motion_type = cam.get("motion_type", "static")
+    speed = cam.get("speed", "medium")
+    steadiness = cam.get("steadiness", "stable")
     depth = {motion_type: 1.0}
-    payload = {"motion_type": motion_type, "speed": cam.get("speed", "medium"), "depth_breakdown": depth}
-    api = {
-        "key": key,
-        "motion_type": payload["motion_type"],
-        "speed": payload["speed"],
+    payload = {
+        "motion_type": motion_type,
+        "speed": speed,
+        "steadiness": steadiness,
         "depth_breakdown": depth,
     }
-    return _ensure_dynamic_in_registry("camera", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache)
+    api = {
+        "key": key,
+        "motion_type": motion_type,
+        "speed": speed,
+        "steadiness": steadiness,
+        "depth_breakdown": depth,
+    }
+    return _ensure_dynamic_in_registry("camera", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache, force_novel=force_novel)
 
 
 def ensure_dynamic_transition_in_registry(
@@ -820,6 +967,7 @@ def ensure_dynamic_transition_in_registry(
     config: dict[str, Any] | None = None,
     out_novel: list[dict[str, Any]] | None = None,
     registry_cache: dict[str, dict[str, Any]] | None = None,
+    force_novel: bool = False,
 ) -> str | None:
     """Add transition (type, duration) to dynamic registry if novel."""
     trans = window.get("transition", {})
@@ -830,7 +978,7 @@ def ensure_dynamic_transition_in_registry(
     depth = {ttype: 1.0}
     payload = {"type": ttype, "duration_seconds": trans.get("duration_seconds", trans.get("duration", 0)), "depth_breakdown": depth}
     api = {"key": key, "type": payload["type"], "duration_seconds": payload["duration_seconds"], "depth_breakdown": depth}
-    return _ensure_dynamic_in_registry("transition", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache)
+    return _ensure_dynamic_in_registry("transition", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache, force_novel=force_novel)
 
 
 def ensure_dynamic_depth_in_registry(
@@ -840,6 +988,7 @@ def ensure_dynamic_depth_in_registry(
     config: dict[str, Any] | None = None,
     out_novel: list[dict[str, Any]] | None = None,
     registry_cache: dict[str, dict[str, Any]] | None = None,
+    force_novel: bool = False,
 ) -> str | None:
     """Add depth (parallax, layer_count) to dynamic registry if novel."""
     dep = window.get("depth", {})
@@ -851,7 +1000,7 @@ def ensure_dynamic_depth_in_registry(
     depth = {"parallax_strength": round(float(parallax), 3), "layer_count": int(layers)}
     payload = {"parallax_strength": parallax, "layer_count": layers, "depth_breakdown": depth}
     api = {"key": key, "parallax_strength": payload["parallax_strength"], "layer_count": payload["layer_count"], "depth_breakdown": depth}
-    return _ensure_dynamic_in_registry("depth", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache)
+    return _ensure_dynamic_in_registry("depth", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache, force_novel=force_novel)
 
 
 def ensure_dynamic_audio_semantic_in_registry(
@@ -861,6 +1010,7 @@ def ensure_dynamic_audio_semantic_in_registry(
     config: dict[str, Any] | None = None,
     out_novel: list[dict[str, Any]] | None = None,
     registry_cache: dict[str, dict[str, Any]] | None = None,
+    force_novel: bool = False,
 ) -> str | None:
     """Add audio_semantic (role, mood, tempo) to dynamic registry if novel."""
     audio = window.get("audio_semantic", {})
@@ -884,7 +1034,7 @@ def ensure_dynamic_audio_semantic_in_registry(
     depth_breakdown: dict[str, Any] = {"role": role, "mood": mood or "neutral", "tempo": tempo or "medium", "presence": presence or "ambient"}
     payload["depth_breakdown"] = depth_breakdown
     api = {"key": key, "role": role, "mood": mood, "tempo": tempo, "depth_breakdown": depth_breakdown}
-    return _ensure_dynamic_in_registry("audio_semantic", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache)
+    return _ensure_dynamic_in_registry("audio_semantic", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache, force_novel=force_novel)
 
 
 def grow_from_video(
