@@ -17,7 +17,7 @@ import os
 import time
 from pathlib import Path
 
-from src.api_client import api_get, api_post, api_post_binary
+from src.api_client import api_get, api_post, api_post_binary, api_request_with_retry
 from src.config import load_config
 from src.pipeline import generate_full_video
 from src.procedural import ProceduralVideoGenerator
@@ -28,10 +28,31 @@ def fetch_pending_jobs(api_base: str) -> list[dict]:
     return out.get("jobs", [])
 
 
+def _learning_spec_payload(spec) -> dict:
+    """Registry-relevant fields from the rendered SceneSpec (not a re-built copy)."""
+    return {
+        "palette_name": getattr(spec, "palette_name", ""),
+        "motion_type": getattr(spec, "motion_type", ""),
+        "intensity": getattr(spec, "intensity", 1.0),
+        "gradient_type": getattr(spec, "gradient_type", None),
+        "camera_motion": getattr(spec, "camera_motion", None),
+        "audio_tempo": getattr(spec, "audio_tempo", None),
+        "audio_mood": getattr(spec, "audio_mood", None),
+        "audio_presence": getattr(spec, "audio_presence", None),
+        "genre": getattr(spec, "genre", None),
+        "mood": getattr(spec, "mood", None),
+        "style": getattr(spec, "style", None),
+    }
+
+
 def log_to_api(
-    api_base: str, job_id: str, prompt: str, spec: dict, analysis: dict
+    api_base: str, job_id: str, prompt: str, spec, analysis: dict
 ) -> None:
-    api_post(api_base, "/api/learning", {"job_id": job_id, "prompt": prompt, "spec": spec, "analysis": analysis})
+    api_post(
+        api_base,
+        "/api/learning",
+        {"job_id": job_id, "prompt": prompt, "spec": _learning_spec_payload(spec), "analysis": analysis},
+    )
 
 
 def upload_video(api_base: str, job_id: str, video_path: Path) -> None:
@@ -67,76 +88,155 @@ def process_job(job: dict, api_base: str, config: dict, learn: bool) -> bool:
             from src.analysis import analyze_video
             from src.interpretation import interpret_user_prompt
             from src.creation import build_spec_from_instruction
-            from src.knowledge.remote_sync import grow_and_sync_to_api, post_static_discoveries, post_dynamic_discoveries, post_narrative_discoveries
-            from src.knowledge.growth_per_instance import grow_from_video
+            from src.knowledge import get_knowledge_for_creation
+            from src.knowledge.remote_sync import (
+                grow_and_sync_to_api,
+                post_all_discoveries,
+                post_static_discoveries,
+                post_dynamic_discoveries,
+                post_narrative_discoveries,
+                post_discoveries,
+                growth_metrics,
+            )
+            from src.knowledge.growth_per_instance import grow_all_from_video
             from src.knowledge.narrative_registry import grow_narrative_from_spec
 
-            instruction = interpret_user_prompt(prompt, default_duration=duration)
-            spec = build_spec_from_instruction(instruction)
+            # Prefer the spec/instruction that actually drove the render
+            instruction = getattr(generator, "_last_instruction", None)
+            spec = getattr(generator, "_last_spec", None)
+            if instruction is None or spec is None:
+                linguistic_registry = None
+                try:
+                    from src.interpretation.linguistic_client import fetch_linguistic_registry
+                    linguistic_registry = fetch_linguistic_registry(api_base.rstrip("/"))
+                except Exception:
+                    linguistic_registry = None
+                if instruction is None:
+                    instruction = interpret_user_prompt(
+                        prompt,
+                        default_duration=duration,
+                        linguistic_registry=linguistic_registry,
+                    )
+                if spec is None:
+                    knowledge = get_knowledge_for_creation(config, api_base=api_base)
+                    spec = build_spec_from_instruction(instruction, knowledge=knowledge)
+
+            # Interpretation + linguistics registries (same as automate_loop)
+            try:
+                payload = (
+                    instruction.to_api_dict()
+                    if hasattr(instruction, "to_api_dict")
+                    else instruction.to_dict()
+                )
+                print("  [interpretation] posting...", flush=True)
+                api_request_with_retry(
+                    api_base,
+                    "POST",
+                    "/api/interpretations",
+                    data={"prompt": prompt, "instruction": payload, "source": "bridge"},
+                    timeout=30,
+                    max_retries=5,
+                    backoff_seconds=2.0,
+                )
+                print("  [interpretation] recorded", flush=True)
+            except Exception as e:
+                print(f"  [interpretation] failed: {e}", flush=True)
+            try:
+                from src.interpretation.linguistic import extract_linguistic_mappings
+                from src.interpretation.linguistic_client import post_linguistic_growth
+                mappings = extract_linguistic_mappings(prompt, instruction)
+                if mappings:
+                    post_linguistic_growth(api_base, mappings)
+            except Exception as e:
+                print(f"  [linguistic] growth skipped: {e}")
+
             analysis = analyze_video(path)
             analysis_dict = analysis.to_dict()
-            log_to_api(
-                api_base,
-                job_id,
-                prompt,
-                {"palette_name": spec.palette_name, "motion_type": spec.motion_type, "intensity": spec.intensity},
-                analysis_dict,
-            )
-            # Per-frame / per-window: add to registry if not found (local JSON + optional D1 sync)
+            log_to_api(api_base, job_id, prompt, spec, analysis_dict)
+
+            extraction_focus = (os.environ.get("LOOP_EXTRACTION_FOCUS") or "all").strip().lower()
+            if extraction_focus not in ("frame", "window", "all"):
+                extraction_focus = "all"
+
             try:
-                added, novel_for_sync = grow_from_video(
+                learning_cfg = config.get("learning") or {}
+                max_frames = learning_cfg.get("max_frames")
+                sample_every = learning_cfg.get("sample_every", 2)
+                if duration < 15 and sample_every > 1:
+                    sample_every = 1
+                added, novel_for_sync = grow_all_from_video(
                     path,
                     prompt=prompt,
                     config=config,
-                    max_frames=None,
-                    sample_every=2,
+                    max_frames=max_frames,
+                    sample_every=sample_every,
                     window_seconds=1.0,
-                    collect_novel_for_sync=bool(api_base),
+                    collect_novel_for_sync=True,
                     spec=spec,
+                    extraction_focus=extraction_focus,
                 )
                 if any(added.values()):
-                    print(f"  Per-instance registry: {sum(added.values())} new entries — {added}")
-                if api_base:
-                    if novel_for_sync.get("static_colors") or novel_for_sync.get("static_sound"):
+                    metrics = growth_metrics(added)
+                    print(
+                        f"  Growth [{extraction_focus}]: total={metrics['total_added']} "
+                        f"static={metrics['static_added']} dynamic={metrics['dynamic_added']}"
+                    )
+
+                narrative_novel = {}
+                if extraction_focus in ("window", "all"):
+                    narrative_added, narrative_novel = grow_narrative_from_spec(
+                        spec,
+                        prompt=prompt,
+                        config=config,
+                        instruction=instruction,
+                        collect_novel_for_sync=True,
+                    )
+                    if any(narrative_added.values()):
+                        print(f"  Narrative registry: {sum(narrative_added.values())} new — {narrative_added}")
+
+                if extraction_focus == "frame":
+                    post_static_discoveries(
+                        api_base,
+                        novel_for_sync.get("static_colors", []),
+                        novel_for_sync.get("static_sound") or [],
+                        job_id=job_id,
+                    )
+                elif extraction_focus == "window":
+                    post_dynamic_discoveries(api_base, novel_for_sync, job_id=job_id)
+                    if narrative_novel and any(narrative_novel.values()):
+                        post_narrative_discoveries(api_base, narrative_novel, job_id=job_id)
+                    if novel_for_sync.get("static_colors"):
                         post_static_discoveries(
                             api_base,
                             novel_for_sync.get("static_colors", []),
-                            novel_for_sync.get("static_sound"),
+                            novel_for_sync.get("static_sound") or [],
                             job_id=job_id,
                         )
-                        print("  Static discoveries synced to D1")
-                    post_dynamic_discoveries(api_base, novel_for_sync, job_id=job_id)
+                else:
+                    post_all_discoveries(
+                        api_base,
+                        novel_for_sync.get("static_colors", []),
+                        novel_for_sync.get("static_sound") or [],
+                        novel_for_sync,
+                        narrative_novel,
+                        job_id=job_id,
+                    )
+                print("  Discoveries synced to D1")
             except Exception as e:
                 print(f"  Per-instance growth failed: {e}")
-            # Narrative registry: themes, plots, settings from spec + instruction (novel → add; unnamed → name-generator)
+
+            if extraction_focus in ("window", "all"):
+                try:
+                    sync_resp = grow_and_sync_to_api(
+                        analysis_dict, prompt=prompt, api_base=api_base, spec=spec, job_id=job_id
+                    )
+                    print("  Logged for learning (D1 + KV)")
+                    if sync_resp.get("results"):
+                        print(f"  Discoveries recorded: {sync_resp.get('results')}")
+                except Exception as e:
+                    print(f"  Learning run logged; discoveries sync failed: {e}")
+
             try:
-                narrative_added, narrative_novel = grow_narrative_from_spec(
-                    spec,
-                    prompt=prompt,
-                    config=config,
-                    instruction=instruction,
-                    collect_novel_for_sync=bool(api_base),
-                )
-                if any(narrative_added.values()):
-                    print(f"  Narrative registry: {sum(narrative_added.values())} new — {narrative_added}")
-                if api_base and any(narrative_novel.get(a) for a in ("genre", "mood", "plots", "settings", "themes", "scene_type")):
-                    post_narrative_discoveries(api_base, narrative_novel, job_id=job_id)
-                    print("  Narrative discoveries synced to D1")
-            except Exception as e:
-                print(f"  Narrative growth failed: {e}")
-            # Whole-video discoveries (blends, colors, motion, etc.) to D1/KV — pass spec for camera/audio/narrative
-            try:
-                sync_resp = grow_and_sync_to_api(
-                    analysis_dict, prompt=prompt, api_base=api_base, spec=spec, job_id=job_id
-                )
-                print("  Logged for learning (D1 + KV)")
-                if sync_resp.get("results"):
-                    print(f"  Discoveries recorded: {sync_resp.get('results')}")
-            except Exception as e:
-                print(f"  Learning run logged; discoveries sync failed: {e}")
-            # Guaranteed discovery run recording for diagnostics (even when sync paths failed)
-            try:
-                from src.knowledge.remote_sync import post_discoveries
                 post_discoveries(api_base, {"job_id": job_id})
             except Exception:
                 pass

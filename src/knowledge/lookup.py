@@ -79,6 +79,7 @@ def get_knowledge_for_creation(
             knowledge["interpretation_prompts"] = data.get("interpretation_prompts", [])
             knowledge["static_colors"] = data.get("static_colors", {})
             knowledge["static_sound"] = data.get("static_sound", [])
+            knowledge["narrative"] = data.get("narrative", {})
         except Exception as e:
             from ..api_client import APIError
             if isinstance(e, APIError):
@@ -94,12 +95,15 @@ def get_knowledge_for_creation(
             knowledge["origin_motion"] = []
             knowledge["interpretation_prompts"] = []
             knowledge["static_sound"] = []
+            knowledge["narrative"] = {}
     if "interpretation_prompts" not in knowledge:
         knowledge["interpretation_prompts"] = []
     if "static_sound" not in knowledge:
         knowledge["static_sound"] = []
     if "learned_entities" not in knowledge:
         knowledge["learned_entities"] = []
+    if "narrative" not in knowledge:
+        knowledge["narrative"] = {}
     if not knowledge.get("learned_colors"):
         try:
             learned_colors = load_registry("learned_colors", config)
@@ -124,8 +128,26 @@ def get_knowledge_for_creation(
         knowledge["origin_camera"] = []
     if "origin_motion" not in knowledge:
         knowledge["origin_motion"] = []
-    if "static_colors" not in knowledge:
-        knowledge["static_colors"] = {}
+    if not knowledge.get("static_colors"):
+        try:
+            from .static_registry import load_static_registry
+            color_data = load_static_registry("color", config)
+            entries = color_data.get("entries", [])
+            static_colors: dict[str, Any] = {}
+            for e in entries:
+                key = e.get("key")
+                if not key:
+                    continue
+                static_colors[key] = {
+                    "r": e.get("r"),
+                    "g": e.get("g"),
+                    "b": e.get("b"),
+                    "name": e.get("name"),
+                    "count": e.get("count"),
+                }
+            knowledge["static_colors"] = static_colors
+        except Exception:
+            knowledge["static_colors"] = {}
     if not knowledge.get("static_sound"):
         try:
             from .static_registry import load_static_registry
@@ -137,5 +159,27 @@ def get_knowledge_for_creation(
             ]
         except Exception:
             knowledge["static_sound"] = []
+    if not knowledge.get("narrative"):
+        try:
+            from .narrative_registry import load_narrative_registry, NARRATIVE_ASPECTS
+            narrative: dict[str, list[dict[str, Any]]] = {}
+            for aspect_info in NARRATIVE_ASPECTS:
+                aspect = aspect_info["id"] if isinstance(aspect_info, dict) else aspect_info
+                data = load_narrative_registry(aspect, config)
+                entries = data.get("entries", [])
+                if entries:
+                    narrative[aspect] = [
+                        {
+                            "key": e.get("key") or e.get("entry_key"),
+                            "value": e.get("value"),
+                            "name": e.get("name"),
+                            "count": e.get("count", 1),
+                        }
+                        for e in entries
+                        if e.get("key") or e.get("entry_key")
+                    ]
+            knowledge["narrative"] = narrative
+        except Exception:
+            knowledge["narrative"] = {}
 
     return knowledge

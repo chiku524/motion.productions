@@ -370,6 +370,14 @@ def _post_learning_with_retry(
             "palette_name": getattr(spec, "palette_name", ""),
             "motion_type": getattr(spec, "motion_type", ""),
             "intensity": getattr(spec, "intensity", 1.0),
+            "gradient_type": getattr(spec, "gradient_type", None),
+            "camera_motion": getattr(spec, "camera_motion", None),
+            "audio_tempo": getattr(spec, "audio_tempo", None),
+            "audio_mood": getattr(spec, "audio_mood", None),
+            "audio_presence": getattr(spec, "audio_presence", None),
+            "genre": getattr(spec, "genre", None),
+            "mood": getattr(spec, "mood", None),
+            "style": getattr(spec, "style", None),
         },
         "analysis": analysis_dict,
     }
@@ -610,18 +618,27 @@ def run() -> None:
             )
             run_succeeded = True
 
-            linguistic_registry = None
-            if args.api_base:
-                try:
-                    from src.interpretation.linguistic_client import fetch_linguistic_registry
-                    linguistic_registry = fetch_linguistic_registry(args.api_base.rstrip("/"))
-                except Exception as e:
-                    logger.debug("linguistic registry fetch skipped: %s", e)
-            instruction = interpret_user_prompt(
-                prompt,
-                default_duration=duration,
-                linguistic_registry=linguistic_registry,
-            )
+            # Prefer the instruction + spec that actually drove the render (avoid re-roll of random registry picks)
+            instruction = getattr(generator, "_last_instruction", None)
+            spec = getattr(generator, "_last_spec", None)
+            if instruction is None:
+                linguistic_registry = None
+                if args.api_base:
+                    try:
+                        from src.interpretation.linguistic_client import fetch_linguistic_registry
+                        linguistic_registry = fetch_linguistic_registry(args.api_base.rstrip("/"))
+                    except Exception as e:
+                        logger.debug("linguistic registry fetch skipped: %s", e)
+                instruction = interpret_user_prompt(
+                    prompt,
+                    default_duration=duration,
+                    linguistic_registry=linguistic_registry,
+                )
+            if spec is None:
+                from src.knowledge import get_knowledge_for_creation
+                spec = build_spec_from_instruction(
+                    instruction, knowledge=get_knowledge_for_creation(config)
+                )
             # Record interpretation first (so it's never skipped by later errors); visible in worker logs
             if args.api_base:
                 try:
@@ -641,8 +658,6 @@ def run() -> None:
                 except Exception as e:
                     print(f"  [interpretation] failed: {e}", flush=True)
                     logger.warning("Interpretation registry record failed: %s", e)
-            from src.knowledge import get_knowledge_for_creation
-            spec = build_spec_from_instruction(instruction, knowledge=get_knowledge_for_creation(config))
             # Learn from this prompt: extract (span, canonical, domain) so linguistic registry improves (slang, multi-sense)
             if args.api_base:
                 try:
@@ -701,19 +716,20 @@ def run() -> None:
                     narrative_added, narrative_novel = grow_narrative_from_spec(
                         spec, prompt=prompt, config=config, instruction=instruction, collect_novel_for_sync=True
                     )
-                # Phase C: persist stylized entities from this run into learned_entities
+                # Blended sub-aspect: stylized entities (window/all only — frame workers stay pure/static)
                 entity_novel: list = []
-                try:
-                    from src.knowledge.entity_registry import grow_entities_from_spec
-                    entity_added, entity_novel = grow_entities_from_spec(
-                        instruction, spec, prompt=prompt, collect_novel_for_sync=bool(args.api_base)
-                    )
-                    if entity_added:
-                        novel_for_sync["entities"] = entity_novel
-                        added["dynamic_entities"] = added.get("dynamic_entities", 0) + entity_added
-                        logger.info("Growth [entities]: %s profiles", entity_added)
-                except Exception as e:
-                    logger.warning("Entity growth failed: %s", e)
+                if extraction_focus in ("window", "all"):
+                    try:
+                        from src.knowledge.entity_registry import grow_entities_from_spec
+                        entity_added, entity_novel = grow_entities_from_spec(
+                            instruction, spec, prompt=prompt, collect_novel_for_sync=bool(args.api_base)
+                        )
+                        if entity_added:
+                            novel_for_sync["entities"] = entity_novel
+                            added["dynamic_entities"] = added.get("dynamic_entities", 0) + entity_added
+                            logger.info("Growth [entities]: %s profiles", entity_added)
+                    except Exception as e:
+                        logger.warning("Entity growth failed: %s", e)
                 if args.api_base:
                     if extraction_focus == "frame":
                         post_static_discoveries(
@@ -722,13 +738,6 @@ def run() -> None:
                             novel_for_sync.get("static_sound") or [],
                             job_id=job_id,
                         )
-                        # Entities are spec-derived; still sync on frame workers
-                        if novel_for_sync.get("entities"):
-                            post_dynamic_discoveries(
-                                args.api_base,
-                                {"entities": novel_for_sync["entities"]},
-                                job_id=job_id,
-                            )
                     elif extraction_focus == "window":
                         post_dynamic_discoveries(args.api_base, novel_for_sync, job_id=job_id)
                         if narrative_novel and any(narrative_novel.values()):

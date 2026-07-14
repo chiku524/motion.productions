@@ -197,6 +197,11 @@ def build_spec_from_instruction(
             audio_tempo, audio_mood, audio_presence,
             knowledge,
         )
+        genre_val, style_val, mood_from_narrative = _refine_narrative_from_knowledge(
+            knowledge, genre_val, style_val
+        )
+        if mood_from_narrative and (not tone_val or tone_val == "neutral"):
+            tone_val = mood_from_narrative
 
     # INTENDED_LOOP: Blend primitives + learned (enforce avoid lists)
     palette_colors = _build_palette_from_blending(
@@ -585,11 +590,24 @@ def _build_palette_from_blending(
                             if name not in pool:
                                 pool.append(name)
                             name_to_count[name] = int(data.get("count", 0) or 0)
+                # Named pure colors: prefer underused static registry entries by name when they map to PALETTES;
+                # otherwise keep RGB triples for direct palette_colors construction below.
+                static_rgb_pool: list[tuple[int, int, int]] = []
                 for _key, data in (knowledge.get("static_colors") or {}).items():
-                    if isinstance(data, dict):
-                        name = (data.get("name") or "").strip()
-                        if name and name in PALETTES and name not in avoid and name in name_to_count:
-                            name_to_count[name] = int(data.get("count", 0) or 0)
+                    if not isinstance(data, dict):
+                        continue
+                    name = (data.get("name") or "").strip()
+                    if name and name in PALETTES and name not in avoid:
+                        if name not in pool:
+                            pool.append(name)
+                        name_to_count[name] = name_to_count.get(name, 0) + int(data.get("count", 0) or 0)
+                    try:
+                        r, g, b = int(data.get("r")), int(data.get("g")), int(data.get("b"))
+                        static_rgb_pool.append((r, g, b))
+                    except (TypeError, ValueError):
+                        pass
+            else:
+                static_rgb_pool = []
             # Pick 2–3 distinct palette hints, biased toward underused
             n_hints = min(3, max(2, len(pool))) if len(pool) >= 2 else 1
             hints = []
@@ -607,6 +625,18 @@ def _build_palette_from_blending(
                 hints = [fallback_palette_name] if fallback_palette_name not in avoid else list(PALETTES.keys())[:1]
             if not hints:
                 hints = ["default"]
+            # If still only defaults and we have static RGB discoveries, build a custom palette from them
+            if hints == ["default"] and static_rgb_pool:
+                from ..random_utils import secure_choice as _sc
+                picked = []
+                pool_rgb = list(static_rgb_pool)
+                for _ in range(min(4, len(pool_rgb))):
+                    c = _sc(pool_rgb)
+                    if c is not None:
+                        picked.append(c)
+                        pool_rgb = [x for x in pool_rgb if x != c]
+                if picked:
+                    return picked if len(picked) >= 2 else picked + picked
         result = list(PALETTES.get(hints[0], PALETTES.get("default", list(PALETTES.values())[0])))
         for name in hints[1:]:
             other = PALETTES.get(name, PALETTES.get("default", list(PALETTES.values())[0]))
@@ -764,6 +794,61 @@ def _build_composition_symmetry_from_blending(instruction: InterpretedInstructio
     for h in hints[1:]:
         result = blend_symmetry(result, h, weight=0.5)
     return result
+
+
+def _refine_narrative_from_knowledge(
+    knowledge: dict[str, Any] | None,
+    genre_val: str,
+    style_val: str | None,
+) -> tuple[str, str | None, str | None]:
+    """
+    Prefer Semantic registry values when genre/style are still defaults.
+    Returns (genre, style, mood_or_tone).
+    """
+    narrative = (knowledge or {}).get("narrative") or {}
+    mood_out: str | None = None
+
+    def _pick(aspect: str) -> str | None:
+        entries = narrative.get(aspect) or []
+        if not entries:
+            return None
+        # Prefer underused named entries
+        scored = []
+        for e in entries:
+            if not isinstance(e, dict):
+                continue
+            val = (e.get("value") or e.get("key") or e.get("name") or "").strip()
+            if not val:
+                continue
+            scored.append((int(e.get("count", 0) or 0), val))
+        if not scored:
+            return None
+        scored.sort(key=lambda t: t[0])
+        # Bias toward lower count (underused)
+        from ..random_utils import weighted_choice_favor_underused
+        values = [v for _, v in scored]
+        counts = {v: c for c, v in scored}
+        chosen = weighted_choice_favor_underused(values, lambda v: counts.get(v, 0))
+        return chosen or values[0]
+
+    if genre_val in ("general", "", "default"):
+        picked = _pick("genre")
+        if picked:
+            genre_val = picked.replace(" ", "_").lower()
+    if not style_val or style_val in ("cinematic", "default"):
+        # Only override default cinematic when registry has a clear style and we want variety
+        picked = _pick("style")
+        if picked and (not style_val or style_val == "default"):
+            style_val = picked.replace(" ", "_").lower()
+        elif picked and style_val == "cinematic":
+            # 50% chance to explore registry style over default cinematic
+            from ..random_utils import secure_random
+            if secure_random() < 0.5:
+                style_val = picked.replace(" ", "_").lower()
+    mood_pick = _pick("mood")
+    if mood_pick:
+        mood_out = mood_pick.replace(" ", "_").lower()
+    return genre_val, style_val, mood_out
 
 
 def _refine_from_knowledge(

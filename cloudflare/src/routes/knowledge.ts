@@ -509,8 +509,9 @@ if (path === "/api/knowledge/for-creation" && request.method === "GET") {
     db.prepare("SELECT output_json FROM learned_blends WHERE domain = 'camera' ORDER BY created_at DESC LIMIT ?").bind(limit),
     db.prepare("SELECT motion_type FROM learned_camera ORDER BY count DESC LIMIT ?").bind(limit),
     db.prepare("SELECT prompt, instruction_json FROM interpretations WHERE status = 'done' AND instruction_json IS NOT NULL ORDER BY updated_at DESC LIMIT ?").bind(interpLimit),
-    db.prepare("SELECT color_key, r, g, b, count, created_at FROM static_colors ORDER BY count DESC LIMIT ?").bind(limit),
+    db.prepare("SELECT color_key, r, g, b, name, count, created_at FROM static_colors ORDER BY count DESC LIMIT ?").bind(limit),
     db.prepare("SELECT sound_key, tone, timbre, amplitude, name, count, created_at FROM static_sound ORDER BY count DESC LIMIT ?").bind(limit),
+    db.prepare("SELECT aspect, entry_key, value, name, count FROM narrative_entries ORDER BY count DESC LIMIT ?").bind(limit),
   ]);
   type ColorRow = { color_key: string; r: number; g: number; b: number; count: number; sources_json: string | null; name: string };
   type MotionRow = { profile_key: string; motion_level: number; motion_std: number; motion_trend: string; count: number; sources_json: string | null; name: string | null };
@@ -519,8 +520,9 @@ if (path === "/api/knowledge/for-creation" && request.method === "GET") {
   type GradientRow = { gradient_type: string };
   type CameraRow = { motion_type: string };
   type InterpRow = { prompt: string; instruction_json: string };
-  type StaticColorRow = { color_key: string; r: number; g: number; b: number; count: number; created_at: string | null };
+  type StaticColorRow = { color_key: string; r: number; g: number; b: number; name: string | null; count: number; created_at: string | null };
   type StaticSoundRow = { sound_key: string; tone: string | null; timbre: string | null; amplitude: number | null; name: string | null; count: number; created_at: string | null };
+  type NarrativeRow = { aspect: string; entry_key: string; value: string | null; name: string | null; count: number };
   const colorRows = (batchResults[0].results || []) as ColorRow[];
   const colors: Record<string, { r: number; g: number; b: number; count: number; sources: string[]; name: string }> = {};
   for (const r of colorRows) {
@@ -594,9 +596,16 @@ if (path === "/api/knowledge/for-creation" && request.method === "GET") {
     instruction: r.instruction_json ? (JSON.parse(r.instruction_json) as Record<string, unknown>) : {},
   }));
   const staticColorRows = (batchResults[8].results || []) as StaticColorRow[];
-  const static_colors: Record<string, { r: number; g: number; b: number; count?: number; created_at?: string }> = {};
+  const static_colors: Record<string, { r: number; g: number; b: number; name?: string; count?: number; created_at?: string }> = {};
   for (const r of staticColorRows) {
-    static_colors[r.color_key] = { r: r.r, g: r.g, b: r.b, count: r.count, created_at: r.created_at ?? undefined };
+    static_colors[r.color_key] = {
+      r: r.r,
+      g: r.g,
+      b: r.b,
+      name: r.name ?? undefined,
+      count: r.count,
+      created_at: r.created_at ?? undefined,
+    };
   }
   const staticSoundRows = (batchResults[9].results || []) as StaticSoundRow[];
   const static_sound = staticSoundRows.map((r) => ({
@@ -608,6 +617,18 @@ if (path === "/api/knowledge/for-creation" && request.method === "GET") {
     count: r.count,
     created_at: r.created_at ?? undefined,
   }));
+  const narrativeRows = (batchResults[10].results || []) as NarrativeRow[];
+  const narrative: Record<string, Array<{ key: string; value?: string; name?: string; count: number }>> = {};
+  for (const r of narrativeRows) {
+    const aspect = (r.aspect || "").trim() || "unknown";
+    if (!narrative[aspect]) narrative[aspect] = [];
+    narrative[aspect].push({
+      key: r.entry_key,
+      value: r.value ?? undefined,
+      name: r.name ?? undefined,
+      count: r.count,
+    });
+  }
   // Separate query so for-creation still works before migration 0021 is applied
   let learned_entities: Array<{
     key: string;
@@ -665,6 +686,7 @@ if (path === "/api/knowledge/for-creation" && request.method === "GET") {
     interpretation_prompts,
     static_colors,
     static_sound,
+    narrative,
   };
   const body = JSON.stringify(payload);
   if (env.MOTION_KV) {

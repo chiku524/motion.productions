@@ -93,36 +93,40 @@ def main() -> None:
     print(f"Done. Video: {path}")
 
     if args.learn:
-        from src.analysis import analyze_video
-        from src.interpretation import interpret_user_prompt
-        from src.creation import build_spec_from_instruction
-        from src.knowledge.growth_per_instance import grow_from_video, grow_dynamic_from_video
-        from src.knowledge.narrative_registry import grow_narrative_from_spec
         from src.learning import log_run
+        from src.knowledge.growth_per_instance import grow_all_from_video
+        from src.knowledge.narrative_registry import grow_narrative_from_spec
+        from src.knowledge import extract_from_video
 
-        instruction = interpret_user_prompt(args.prompt, default_duration=args.duration)
-        spec = build_spec_from_instruction(instruction, knowledge=None)
-        analysis = analyze_video(path)
-        analysis_dict = analysis.to_dict()
+        instruction = getattr(generator, "_last_instruction", None)
+        spec = getattr(generator, "_last_spec", None)
+        if instruction is None or spec is None:
+            from src.interpretation import interpret_user_prompt
+            from src.creation import build_spec_from_instruction
+            from src.knowledge import get_knowledge_for_creation
+            if instruction is None:
+                instruction = interpret_user_prompt(args.prompt, default_duration=args.duration)
+            if spec is None:
+                spec = build_spec_from_instruction(
+                    instruction, knowledge=get_knowledge_for_creation(config)
+                )
+
+        analysis_dict = extract_from_video(path).to_dict()
         log_path = log_run(
             args.prompt,
-            {"palette_name": spec.palette_name, "motion_type": spec.motion_type, "intensity": spec.intensity},
+            {
+                "palette_name": getattr(spec, "palette_name", ""),
+                "motion_type": getattr(spec, "motion_type", ""),
+                "intensity": getattr(spec, "intensity", 1.0),
+                "gradient_type": getattr(spec, "gradient_type", None),
+                "camera_motion": getattr(spec, "camera_motion", None),
+            },
             analysis_dict,
             video_path=str(path),
             config=config,
         )
-        # Full growth pipeline (same as automate_loop / generate_bridge): static + dynamic + narrative
         try:
-            added_static, _ = grow_from_video(
-                path,
-                prompt=args.prompt,
-                config=config,
-                max_frames=None,
-                sample_every=2,
-                collect_novel_for_sync=False,
-                spec=spec,
-            )
-            added_dynamic, _ = grow_dynamic_from_video(
+            added, _ = grow_all_from_video(
                 path,
                 prompt=args.prompt,
                 config=config,
@@ -131,26 +135,22 @@ def main() -> None:
                 window_seconds=1.0,
                 collect_novel_for_sync=False,
                 spec=spec,
+                extraction_focus="all",
             )
-            added_narrative, _ = grow_narrative_from_spec(
+            narrative_added, _ = grow_narrative_from_spec(
                 spec,
                 prompt=args.prompt,
                 config=config,
                 instruction=instruction,
                 collect_novel_for_sync=False,
             )
-            total = sum(added_static.values()) + sum(added_dynamic.values()) + sum(added_narrative.values())
-            print(f"Registry growth: static={sum(added_static.values())}, dynamic={sum(added_dynamic.values())}, narrative={sum(added_narrative.values())} (total {total})")
+            total = sum(added.values()) + sum(narrative_added.values())
+            print(
+                f"Registry growth: static+dynamic={sum(added.values())}, "
+                f"narrative={sum(narrative_added.values())} (total {total})"
+            )
         except Exception as e:
             print(f"Registry growth failed: {e}")
-        # Legacy: also run grow_from_analysis for backward compatibility with existing learning logs
-        try:
-            from src.knowledge import grow_from_analysis
-            grown = grow_from_analysis(analysis_dict, prompt=args.prompt, config=config)
-            if grown:
-                print(f"Legacy growth: {grown}")
-        except Exception:
-            pass
         print(f"Logged for learning: {log_path}")
 
 

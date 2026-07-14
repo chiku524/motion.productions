@@ -97,8 +97,10 @@ class SceneSpec:
 
 def parse_prompt_to_spec(prompt: str, *, seed: int | None = None) -> SceneSpec:
     """
-    Turn a text prompt into a scene specification using only our keyword tables.
-    Blends at primitive level: all matching palette/motion keywords → single blended value.
+    Legacy keyword-only prompt → SceneSpec (no registries / interpretation).
+
+    Prefer: interpret_user_prompt() → build_spec_from_instruction(knowledge=...).
+    Kept for backward compatibility; not used by the operational loop or bridge.
     """
     from .data.palettes import PALETTES
     from ..knowledge.blending import blend_palettes, blend_motion_params

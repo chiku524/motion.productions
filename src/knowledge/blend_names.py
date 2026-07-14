@@ -259,7 +259,7 @@ def generate_sensible_name(
         if cap not in existing:
             return cap
 
-    for i in range(300):
+    for i in range(500):
         word = _invent_word(seed + i * 7919)
         if len(word) < 4:
             continue
@@ -267,8 +267,32 @@ def generate_sensible_name(
         if candidate not in existing:
             return candidate
 
-    suffix = abs(hash((domain, hint, seed))) % 100000
-    return f"Novel{suffix:05d}"
+    # Exhaustive semantic fallback (no numeric/gibberish suffixes)
+    domain_token = (domain or "tone").strip().lower().replace("_", "")[:8] or "tone"
+    for i in range(1000):
+        start = _START[(seed + i) % len(_START)]
+        end = _END[(seed + i * 17) % len(_END)]
+        raw = f"{start}{end}{domain_token}"[:_MAX_WORD_LEN]
+        candidate = raw[0].upper() + raw[1:].lower() if len(raw) > 1 else raw.upper()
+        if candidate not in existing and len(candidate) >= 4:
+            return candidate
+    # Last resort: domain + real word indexed by seed (still name-like)
+    word = _REAL_WORDS[(seed + len(existing)) % len(_REAL_WORDS)]
+    base = f"{domain_token}{word}"
+    candidate = base[0].upper() + base[1:].lower()
+    n = 0
+    while candidate in existing:
+        n += 1
+        word = _REAL_WORDS[(seed + len(existing) + n) % len(_REAL_WORDS)]
+        base = f"{domain_token}{word}"
+        candidate = base[0].upper() + base[1:].lower()
+        if n > len(_REAL_WORDS) * 2:
+            # Prefix with start syllable to guarantee uniqueness without digits
+            start = _START[n % len(_START)]
+            candidate = (start + base)[0].upper() + (start + base)[1:_MAX_WORD_LEN].lower()
+            if candidate not in existing:
+                break
+    return candidate
 
 
 def _combine_words(words: list[str], max_len: int = 14) -> str:
@@ -309,7 +333,7 @@ def generate_blend_name(
     """
     Generate a unique, sensible name for a blend. No underscores — resembles
     actual names (e.g. Suntor, Velvet). Tries: (1) combined prompt words;
-    (2) invented word; (3) numeric fallback.
+    (2) invented word; (3) semantic domain+word fallback (never numeric).
     """
     existing = existing_names or set()
     words = _words_from_prompt(prompt)
@@ -324,10 +348,10 @@ def generate_blend_name(
         return sensible
 
     seed = hash((domain, prompt, len(existing))) % (2**31)
-    for i in range(100):
+    for i in range(200):
         word = _invent_word(seed + i * 4567)
         candidate = word[0].upper() + word[1:].lower() if len(word) > 1 else word.upper()
         if candidate not in existing:
             return candidate
 
-    return f"Blend{abs(hash((domain, prompt))) % 100000:05d}"
+    return generate_sensible_name(domain, prompt or domain, existing_names=existing, use_prefix=False)
