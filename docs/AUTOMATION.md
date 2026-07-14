@@ -1,6 +1,6 @@
 # Automation and Deployment
 
-Run automation to continuously generate prompts, create videos, and build a knowledge base. No external models — the procedural engine and keyword data only.
+Run automation to continuously generate prompts, create videos, and grow registries (colors, sounds, narratives, interpretations) from primitives toward exhaustive, named coverage. No external models — the procedural engine and registry data only. Destination: a photoreal engine that uses those registries for prompt-controlled values.
 
 ---
 
@@ -8,9 +8,13 @@ Run automation to continuously generate prompts, create videos, and build a know
 
 | Script                    | Purpose                                                                 |
 |---------------------------|-------------------------------------------------------------------------|
-| `scripts/automate_loop.py`| Self-feeding loop: 70% exploit, 30% explore, baseline on restart. Runs on **Fly.io** via `fly.loop-*.toml`. |
+| `scripts/worker_start.py` | Fly/Docker dispatcher (`WORKER_START_SCRIPT`). |
+| `scripts/automate_loop.py`| Self-feeding loop: exploit/explore, `grow_all_from_video`. Runs on **Fly.io** via `fly.loop-*.toml`. |
 | `scripts/automate.py`     | Interval-based automation: runs with sleep between jobs. For local/scheduled runs. |
-| `scripts/generate_bridge.py` | Process pending API jobs: generate → upload → learn.                 |
+| `scripts/generate_bridge.py` | Process pending API jobs: generate → upload → learn. Also Fly `motion-loop-webjobs`. |
+| `scripts/interpret_loop.py` | Interpretation / linguistics worker (no render). |
+| `scripts/sound_loop.py`   | Pure sound discovery worker (no render). |
+| `scripts/procedural_render_server.py` | HTTP `POST /render` for `engine=procedural`. |
 | `scripts/learn_from_api.py`  | Fetch events/feedback from API, produce suggestions.                |
 | `scripts/learn_report.py`   | Learning report from local JSONL.                                   |
 
@@ -69,7 +73,7 @@ python scripts/automate.py --duration 5 --interval 120
 
 ### Fly.io
 
-The repo ships **`fly.loop-explorer.toml`**, **`fly.loop-exploiter.toml`**, **`fly.loop-balanced.toml`**, and optional **`fly.loop-interpret.toml`** / **`fly.loop-sound.toml`** at the **repository root**. Each file defines one Fly app, the same **`Dockerfile`**, and the env vars for that role.
+The repo ships **`fly.loop-explorer.toml`**, **`fly.loop-exploiter.toml`**, **`fly.loop-balanced.toml`**, **`fly.loop-interpret.toml`**, **`fly.loop-sound.toml`**, **`fly.loop-webjobs.toml`**, and **`fly.procedural-render.toml`** at the **repository root**. Each file defines one Fly app, the same **`Dockerfile`**, and the env vars for that role.
 
 ```bash
 cd motion.productions   # repo root
@@ -125,7 +129,7 @@ Each worker writes to the same D1; the knowledge base grows from all strategies.
 2. **Explorer** — `fly apps create motion-loop-explorer` then `fly deploy --config fly.loop-explorer.toml`.
 3. **Exploiter** — `fly apps create motion-loop-exploiter` then `fly deploy --config fly.loop-exploiter.toml`.
 
-Optional: interpretation and sound use **`fly.loop-interpret.toml`** and **`fly.loop-sound.toml`**. Env vars are already set in each file; change **`primary_region`** if you do not want `iad`.
+Optional: interpretation, sound, webjobs, and procedural-render use **`fly.loop-interpret.toml`**, **`fly.loop-sound.toml`**, **`fly.loop-webjobs.toml`**, and **`fly.procedural-render.toml`**. Env vars are already set in each file; change **`primary_region`** if you do not want `iad`.
 
 **Verify:** `fly logs -a motion-loop-balanced` (etc.) show `[1]`, `[2]`, …; the motion.productions loop UI reflects combined activity.
 
@@ -133,9 +137,9 @@ Optional: interpretation and sound use **`fly.loop-interpret.toml`** and **`fly.
 
 ## Knowledge Base
 
-- **Local state:** `data/automation_state.json` (for automate.py)
-- **Cloud sync:** Fetches prompts from `GET /api/knowledge/prompts` to avoid duplicates
-- **Learning:** Each run logged to D1. Run `scripts/learn_from_api.py` periodically for suggestions
+- **Local state:** `automate.py` may write session state under a local path when configured; cloud loop state lives in **KV** (`loop_state` / `loop_config`).
+- **Cloud sync:** Fetches prompts from `GET /api/knowledge/prompts` to avoid duplicates; discoveries sync to D1.
+- **Learning:** Each run logged to D1. Run `scripts/learn_from_api.py` periodically for suggestions.
 
 ---
 

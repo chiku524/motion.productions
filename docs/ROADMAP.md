@@ -8,6 +8,10 @@ This roadmap outlines the path to video generation that uses industry aspects (c
 
 Video generation software that can utilize any aspect within the movie industry — cinematography, lighting, color, composition, motion, editing, narrative, genre — to produce high-quality videos based on user intent.
 
+**Registry mission (ongoing):** Exhaustive recording of **colors**, **sounds**, **semantics (narratives)**, and **interpretations (linguistics)** — primitives first, then named discoveries — so creation can resort to registries for values the user prompt controls.
+
+**Destination:** A **photoreal engine** on that same registry-backed foundation (today’s path is procedural).
+
 ---
 
 ## Phase 1: Expand Visual Vocabulary
@@ -103,17 +107,18 @@ Video generation software that can utilize any aspect within the movie industry 
 
 ---
 
-## Phase 7: Higher Realism (Optional)
+## Phase 7: Higher Realism / Photoreal Path
 
-**Goal:** Move beyond abstract visuals if desired.
+**Goal:** Move toward **photoreal** output while still driving generation from user instruction + **named registry values** (not a fixed template catalog).
 
 | Task | Description | Status |
 |------|-------------|--------|
 | 7.1 | 2.5D / depth: parallax, layered depth | Done |
 | 7.2 | Asset libraries: textures, shapes, icons | Done |
-| 7.3 | 3D primitives or external model integration | Done |
+| 7.3 | 3D primitives or external model integration | Done (foundation); full photoreal renderer still the destination |
+| 7.4 | Photoreal path that consumes the same interpreted instruction + registries | Pending |
 
-**Success criteria:** More realistic or asset-driven visuals when enabled.
+**Success criteria:** More realistic or asset-driven visuals when enabled; photoreal path uses the same prompt → registries → render contract.
 
 ---
 
@@ -131,11 +136,12 @@ Phase 7 (realism) ← Phase 6 (sound) ← Phase 5 (narrative)
 
 ## Design Principles
 
-1. **Procedural-first** — Generate from parameters; avoid black boxes.
-2. **Knowledge in data** — Cinematography rules, genre rules in config.
-3. **Layered architecture** — Intent → Director → Specialists → Renderer.
-4. **Learn from output** — Loop continues to refine mappings.
-5. **Modular growth** — Each phase adds new specialists without breaking existing behavior.
+1. **Procedural-first (today)** — Generate from parameters; avoid black boxes; photoreal later on the same contracts.
+2. **Knowledge in registries** — Colors, sounds, narratives, interpretations: primitives + named discoveries; D1 source of truth.
+3. **Prompt controls values** — Interpretation maps input → registry elements creation uses.
+4. **Layered architecture** — Intent → Director → Specialists → Renderer.
+5. **Learn from output** — Loop continues to refine mappings and grow registries with non-gibberish names.
+6. **Modular growth** — Each phase adds new specialists without breaking existing behavior.
 
 ---
 

@@ -4,6 +4,16 @@ This document covers: (1) **registry taxonomy** and where things live (Part I); 
 
 ---
 
+## Mission
+
+**Record every combination** of **colors**, **sounds**, **semantics (narratives)**, and **interpretations (linguistics)** so a future **photoreal engine** can generate any video from user instruction by **resorting to the registries** for values the prompt controls.
+
+- Each registry starts from **primitives (origins)**.
+- Loops discover novel values and assign **non-gibberish names**.
+- Accuracy lives in registries; precision lives in algorithms (`src/`, `scripts/`).
+
+---
+
 # Part I — Registries
 
 ## 1. The four registries (Pure, Blended, Semantic, Interpretation)
@@ -31,10 +41,10 @@ All registries fit the **overall mission**: record every element of a complete v
 - **Static registry** → `knowledge/static/`  
   - `static_colors.json`, `static_sound.json` (local); D1 `static_colors`, `static_sound`.
 - **Dynamic registry** → `knowledge/dynamic/`  
-  - `dynamic_time.json`, `dynamic_motion.json`, `dynamic_audio_semantic.json`, `dynamic_lighting.json`, `dynamic_composition.json`, `dynamic_graphics.json`, `dynamic_temporal.json`, `dynamic_technical.json` (local); D1 `learned_*` tables and `learned_blends`.
+  - Aspect files `dynamic_<aspect>.json` for time, motion, gradient, camera, audio_semantic, lighting, composition, graphics, temporal, technical, transition, depth (created on first write; D1 `learned_*` / `learned_blends` is source of truth). Local exports may omit an aspect file until that aspect has been grown once.
 - **Narrative registry** → `knowledge/narrative/`  
   - Themes, plots, settings, genre, mood, style, scene type (local); D1 `narrative_entries`.
-- **Interpretation registry** → D1 table `interpretations` (prompt, instruction_json, status). Human input resolved into elements; referenced by GET /api/knowledge/for-creation as `interpretation_prompts`.
+- **Interpretation registry** → D1 `interpretations` + `linguistic_registry` (prompt → instruction; linguistics). Human input resolved into elements; referenced by GET /api/knowledge/for-creation as `interpretation_prompts`.
 
 Each file is **human-readable JSON**: `_meta` describes the registry and aspect; `entries` holds the recorded values; `count` is the number of entries.
 

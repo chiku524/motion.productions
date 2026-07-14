@@ -3,9 +3,9 @@
 This document audits **every** algorithm and function in the codebase for:
 
 1. **100% precision** — Logic is well-defined, deterministic where required, and correct for its scope.
-2. **Success within the workflow** — The function contributes correctly to the overall mission: continuous loop (interpret → create → render → extract → grow → sync), with all three registries (static, dynamic, narrative) evolving and creation using static elements + origins.
+2. **Success within the workflow** — The function contributes correctly to the overall mission: continuous loop (interpret → create → render → extract → grow → sync), with registries (static/colors+sounds, dynamic/blended, narrative/semantics, interpretation/linguistics) evolving and creation using registry values the prompt controls.
 
-**Mission:** Ready for any user prompt; interpret to pure/non-pure elements; create from instruction (100% precise); render (color + sound every frame); extract per-frame (static) and per-window (dynamic); grow all three registries with sensible names when unknown; sync to API. Pure/single-frame → static; non-pure/2+ frames → dynamic or narrative. For registry taxonomy and pure vs non-pure, see [WORKFLOWS_AND_REGISTRIES.md](WORKFLOWS_AND_REGISTRIES.md) (Part I).
+**Mission:** Exhaustive named registries from primitives; ready for any user prompt; interpret to pure/non-pure elements; create from instruction (100% precise) using registries; render; extract per-frame (static) and per-window (dynamic); grow with sensible (non-gibberish) names; sync to API. Destination: photoreal engine on the same registries. For taxonomy see [WORKFLOWS_AND_REGISTRIES.md](WORKFLOWS_AND_REGISTRIES.md) (Part I).
 
 **Status legend:** ✅ Complete — precise and successful in workflow. ⚠️ Needs work — gap noted. 🔶 Legacy — correct for legacy path but superseded or parallel to current workflow.
 
@@ -13,16 +13,16 @@ This document audits **every** algorithm and function in the codebase for:
 
 ## Part I — Workflow loop: entry points, extraction, keys, depth, growth, sync
 
-Aligned with REGISTRY_FOUNDATION and WORKFLOWS_AND_REGISTRIES: Pure = single frame/primitives; Blended = categories + elements with name + depth_breakdown; Semantic = same; Interpretation = resolved prompts.
+Aligned with REGISTRY_FOUNDATION and WORKFLOWS_AND_REGISTRIES: Pure = single frame/primitives; Blended = categories + elements with name + depth_breakdown; Semantic = same; Interpretation = resolved prompts + linguistics.
 
 | Entry point | What runs | Registries touched |
 |-------------|-----------|--------------------|
-| **automate_loop.py** | pick_prompt → create job → wait → analysis → grow_from_video, grow_narrative_from_spec → POST discoveries | Static, Dynamic, Narrative; uses for-creation (Interpretation) |
-| **generate_bridge.py** | Single run + growth (grow_from_video, grow_narrative_from_spec) | Static, Narrative |
+| **automate_loop.py** | pick_prompt → create job → wait → analysis → **`grow_all_from_video(extraction_focus=…)`** → grow_narrative_from_spec → POST discoveries (gated by focus) | Static, Dynamic, Narrative; uses for-creation (Interpretation) |
+| **generate_bridge.py** | Single run + growth (`grow_all_from_video` / per-instance helpers + narrative) | Static, Dynamic, Narrative |
 | **Worker POST /api/knowledge/discoveries** | Receives static_colors, static_sound, narrative, colors, motion, …; writes to D1 | All four (D1 tables) |
 | **Worker GET /api/knowledge/for-creation** | Returns static, dynamic, narrative, interpretation_prompts for creation/pick_prompt | Read-only |
 
-**Extraction (per-instance):** extract_static_per_frame, extract_dynamic_per_window, _extract_audio_segments (extractor_per_instance.py) — Pure = single frame; Blended = multi-frame. **Keys:** _static_color_key (rgb_opacity), _static_sound_key (amplitude_tone_timbre), _motion_key, _audio_semantic_key, etc. **Depth:** compute_color_depth (COLOR_ORIGIN_PRIMITIVES), compute_sound_depth (origin_noises + strength_pct), compute_*_depth per domain. **Growth:** ensure_static_color_in_registry, ensure_static_sound_in_registry, ensure_dynamic_*_in_registry, ensure_narrative_in_registry; all use generate_sensible_name and depth_breakdown. **Sync:** post_discoveries / POST /api/knowledge/discoveries; Worker persists depth_breakdown_json, strength_pct.
+**Extraction (per-instance):** extract_static_per_frame, extract_dynamic_per_window, _extract_audio_segments (extractor_per_instance.py) — Pure = single frame; Blended = multi-frame. **Keys:** _static_color_key (rgb_opacity), _static_sound_key (amplitude_tone_timbre), _motion_key, _audio_semantic_key, etc. **Depth:** compute_color_depth (COLOR_ORIGIN_PRIMITIVES), compute_sound_depth (origin_noises + strength_pct), compute_*_depth per domain. **Growth:** **`grow_all_from_video`** (primary); ensure_static_* / ensure_dynamic_* / ensure_narrative_*; all use generate_sensible_name and depth_breakdown. **Sync:** post_discoveries / POST /api/knowledge/discoveries; Worker persists depth_breakdown_json, strength_pct.
 
 ---
 
@@ -222,14 +222,14 @@ Aligned with REGISTRY_FOUNDATION and WORKFLOWS_AND_REGISTRIES: Pure = single fra
 
 | Script / entry | Purpose | Precision | Workflow success | Status |
 |----------------|----------|-----------|------------------|--------|
-| `automate_loop.py` | Loop: pick_prompt → job → generate_full_video → upload → interpret + build_spec → extract_from_video → grow_from_video, grow_dynamic_from_video, grow_narrative_from_spec → post_static_discoveries, post_dynamic_discoveries, post_narrative_discoveries → grow_and_sync_to_api(analysis) → POST /api/learning → update state. | Calls per-frame static growth and per-window dynamic growth; narrative from spec; all three sync. | Full workflow; all registries evolved. | ✅ |
+| `automate_loop.py` | Loop: pick_prompt → job → generate_full_video → upload → interpret + build_spec → extract_from_video → **`grow_all_from_video(extraction_focus=…)`** → grow_narrative_from_spec → post_*_discoveries (gated) → grow_and_sync_to_api(analysis) when window/all → POST /api/learning → update state. | Primary growth is `grow_all_from_video`; helpers remain for focused use. | Full workflow; registries evolve. | ✅ |
 | `pick_prompt()` | Exploit (good_prompts) or explore (generate_procedural_prompt). | Random with ratio. | Variety and quality. | ✅ |
 | `is_good_outcome()` | Quality thresholds (brightness_std, motion_level). | Fixed constants. | Good prompts list. | ✅ |
 | `generate_procedural_prompt()` | Subject + modifier(s) from pools; avoid recent. | Random combo; unique. | Exploration. | ✅ |
-| `generate_bridge.py` (--learn) | Job → generate → upload → extract → grow_from_video, grow_dynamic_from_video, grow_narrative → post_*_discoveries, grow_and_sync_to_api. | Same as loop. | ✅ |
+| `generate_bridge.py` (--learn) | Job → generate → upload → extract → grow_all_from_video / per-instance helpers + narrative → post_*_discoveries, grow_and_sync_to_api. | Same family as loop. | ✅ |
 | `generate.py` | One-off generate → analyze_video → log_run → grow_from_analysis. | Uses legacy grow_from_analysis (one per video). | 🔶 Legacy path; does not run per-frame/per-window growth. | ⚠️ |
 
-**Summary:** automate_loop and generate_bridge use the full growth pipeline (static + dynamic + narrative). generate.py uses legacy growth only. ⚠️ generate.py could be updated to call grow_from_video + grow_dynamic_from_video + grow_narrative_from_spec when learning is desired.
+**Summary:** automate_loop and generate_bridge use the full growth pipeline via **`grow_all_from_video`** (static + dynamic + narrative sync). generate.py uses legacy growth only. ⚠️ generate.py could call `grow_all_from_video` + `grow_narrative_from_spec` when learning is desired.
 
 ---
 

@@ -172,7 +172,7 @@ Resolve the blocking pending migrations separately (trim `static_colors`, D1 das
 
 **Note:** D1's SQLite does not support `ADD COLUMN IF NOT EXISTS`. Migrations use plain `ADD COLUMN`. If a migration fails with **"duplicate column name"**, that column was already added (e.g. by a previous partial run). You can mark that migration as applied by inserting its name into the `d1_migrations` table via the D1 dashboard or `wrangler d1 execute ... --remote`, then re-run the migration script.
 
-Migrations **`0018_learned_temporal_depth.sql`** and **`0019_learned_technical_depth.sql`** are **no-op** `SELECT 1` files (ordering + marking applied). **`learned_dynamic_meta`** and its indexes are created at **runtime in the Worker** (`ensureLearnedDynamicMetaTable` in `cloudflare/src/index.ts`) because remote migration **import** can still hit D1 CPU limit **7429** on very large databases even for `CREATE TABLE`. Temporal/technical **depth_breakdown** is stored in `learned_dynamic_meta` (`aspect` = `temporal` | `technical`, `profile_key`, `depth_breakdown_json`). The Worker reads/writes that table; `learned_temporal` / `learned_technical` rows stay unchanged. **Deploy the Worker** after pulling this change so production creates the table on first use.
+Migrations **`0018_learned_temporal_depth.sql`** and **`0019_learned_technical_depth.sql`** are **no-op** `SELECT 1` files (ordering + marking applied). **`learned_dynamic_meta`** and its indexes are created at **runtime in the Worker** (`ensureLearnedDynamicMetaTable` in `cloudflare/src/db.ts`) because remote migration **import** can still hit D1 CPU limit **7429** on very large databases even for `CREATE TABLE`. Temporal/technical **depth_breakdown** is stored in `learned_dynamic_meta` (`aspect` = `temporal` | `technical`, `profile_key`, `depth_breakdown_json`). The Worker reads/writes that table; `learned_temporal` / `learned_technical` rows stay unchanged. **Deploy the Worker** after pulling this change so production creates the table on first use.
 
 Or run Wrangler directly from the **`cloudflare/`** directory:
 
@@ -381,7 +381,7 @@ npx wrangler secret put PROCEDURAL_RENDER_URL
 | **Service name** | e.g. `motion-explorer` or `motion-loop-explorer` |
 | **Root Directory** | (empty or repo root) |
 | **Builder** | Dockerfile |
-| **Start Command** | `python scripts/automate_loop.py` |
+| **Start Command** | (from Dockerfile — do not override; `worker_start.py` → `automate_loop`) |
 
 **Environment variables (required):**
 
@@ -408,7 +408,7 @@ Effect: **Per-frame extraction only** (pure/static registry); 100% **explore** p
 | **Service name** | e.g. `motion-exploiter` or `motion-loop-exploiter` |
 | **Root Directory** | (empty or repo root) |
 | **Builder** | Dockerfile |
-| **Start Command** | `python scripts/automate_loop.py` |
+| **Start Command** | (from Dockerfile — do not override; `worker_start.py` → `automate_loop`) |
 
 **Environment variables (required):**
 
@@ -437,7 +437,7 @@ This is the **middle** workflow: exploit/explore ratio, delay, and duration come
 | **Service name** | e.g. `motion-balanced` or `motion-loop` |
 | **Root Directory** | (empty or repo root) |
 | **Builder** | Dockerfile |
-| **Start Command** | `python scripts/automate_loop.py` |
+| **Start Command** | (from Dockerfile — do not override; `worker_start.py` → `automate_loop`) |
 
 **Environment variables (required):**
 

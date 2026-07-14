@@ -4,15 +4,23 @@ This document describes the core design of Motion Productions: **foundation**, b
 
 ---
 
+## Mission and goal
+
+**Registry mission:** Record **all combinations** of **colors**, **sounds**, **semantics (narratives)**, and **interpretations (linguistics)** in the registries. Each registry starts from **primitives**; as loops continue, newly discovered values receive **non-gibberish, sensible names**.
+
+**Product goal:** A **photoreal engine** capable of generating any sort of video from user instruction, **resorting to the registries** for the values the prompt is in control of. The current engine is procedural on that foundation; photoreal is the destination.
+
+---
+
 ## The Foundation
 
 **Base knowledge** is everything that resides within video files: colors, graphics, resolutions, motion, frame rate, composition, brightness, contrast, consistency over time — every aspect that makes a video what it is.
 
 As the program loops continuously, it **extracts every single thing** from this base knowledge. Each generation is analyzed; each analysis feeds back into the knowledge base.
 
-With all that information extracted and available, the software is **capable of creating and producing videos** from a text, script, or prompt provided by a user. User input drives generation; generation is informed by everything we have learned from the base knowledge.
+With all that information extracted and available, the software is **capable of creating and producing videos** from a text, script, or prompt provided by a user. User input drives generation; generation is informed by everything we have learned from the base knowledge — especially **named registry values** the instruction selects.
 
-**The cycle:** Base knowledge → Continuous loop (extract every aspect, each output → analysis → knowledge update) → Video creation (user provides prompt; software produces video from extracted knowledge).
+**The cycle:** Primitives (origins) → Continuous loop (extract every aspect → grow registries with sensible names) → Video creation (user prompt → registries → video).
 
 ---
 
@@ -22,7 +30,7 @@ Motion Productions is built to be the **go-to AI video generator**. The software
 
 1. Uses the **origins** (fundamental primitives) of every aspect within filmmaking/video-making as its ground truth — base knowledge.
 2. Is **ready for any user prompt** — abstract, unexpected, novel. The system interprets whatever the user provides without being limited to predefined templates.
-3. **Grows continuously** — each generation is analyzed; what emerges from blending primitives becomes new knowledge. The more it generates, the more it learns.
+3. **Grows continuously** — each generation is analyzed; what emerges from blending primitives becomes new named knowledge. The more it generates, the more complete the registries become toward photoreal, prompt-faithful generation.
 
 ---
 
@@ -165,7 +173,7 @@ One full loop iteration:
 | **5. Render → MP4** | **Renderer:** spec + time → pixel frames; **color + sound on every frame** (audio from spec). Pipeline assembles frames + audio → MP4. Blends (non-pure) form over the duration. | `src/procedural/renderer.py` → `render_frame()`; `src/pipeline.py` → `generate_full_video()` |
 | **6. Upload** | POST video to `/api/jobs/{id}/upload`. | `automate_loop.py` |
 | **7. Extract** | Per-frame **static (color + sound)**; full-video analysis (motion, brightness, etc.). **Sound is extracted** like color (sound is in the STATIC registry). Extraction captures what actually appeared. | `src/knowledge/` → `extract_from_video()`, `extract_static_per_frame()` |
-| **8. Growth (all three registries)** | **Static:** Compare extracted color + sound (single-frame/pure) to static registry; if novel → add with name. **Dynamic:** Compare extracted non-pure (2+ frames) to dynamic registry; if novel → add with name (new styles, e.g. sunset + sunrise blend). **Narrative:** From spec → add if novel. **Unknown names → sensible generated name in every registry.** Target: 95%+ of successful loops with successful growth. | `grow_from_video()` (static), `grow_dynamic_from_video()` (dynamic), `grow_narrative_from_spec()` (narrative) |
+| **8. Growth (registries)** | **Operational path:** `grow_all_from_video(..., extraction_focus=)` seeds primitives, then grows static (per-frame color/sound) and/or dynamic (per-window blends) gated by `LOOP_EXTRACTION_FOCUS` (`frame` \| `window` \| `all`). Narrative via `grow_narrative_from_spec()`. Novel entries get **sensible (non-gibberish) names**. Lower-level helpers `grow_from_video()` / `grow_dynamic_from_video()` still exist for focused callers. | `grow_all_from_video()`; `grow_narrative_from_spec()` |
 | **9. Sync discoveries** | POST static, dynamic, and narrative novel entries to API (D1). Optional: whole-video composite records (e.g. learned_blends) for loop analytics. | `post_static_discoveries()`, `post_dynamic_discoveries()`, `post_narrative_discoveries()`; `grow_and_sync_to_api()` for composite |
 | **10. Learning log** | POST `/api/learning` with job_id, prompt, spec, analysis (for UI/history). | `automate_loop.py` |
 | **11. Update state** | Increment run_count; append prompt to recent/good. Save state to KV. | `automate_loop.py` → `_save_state()` |
@@ -185,14 +193,14 @@ So: **good** = reuse a prompt that worked well; **procedural** = generate a new 
 
 | Optimization | Why it helps |
 |--------------|--------------|
-| **Short duration (1–2 s) for learning** | More runs per hour → more distinct prompts → more variety in static/narrative registries. One window per video keeps extraction cheap. |
-| **Growth = static + narrative only** | Keeps growth logic precise. Dynamic elements are non-pure; not growing them avoids diluting algorithmic precision. |
+| **Short duration (1–2 s) for learning** | More runs per hour → more distinct prompts → more variety across color/sound/narrative/interpretation registries. One window per video keeps extraction cheap. |
+| **Frame vs window focus on workers** | Explorer/Exploiter grow pure (static) via `LOOP_EXTRACTION_FOCUS=frame`; Balanced grows blended/semantic via `window`. Same code path: `grow_all_from_video`. |
 | **95%+ of successful loops → successful growth** | Target: the program should be learning in 95%+ of loops that complete successfully (i.e. growth/learning happens in almost every run). |
 | **Exploit/explore balance** | Reuse prompts that yielded good outcomes (exploit) so quality is reinforced; sometimes pick new prompts (explore) so registries see new colors/sounds/narrative. Configurable via loop config (e.g. 70% exploit / 30% explore). |
 | **Per-frame static extraction** | Every frame checked for novel color/sound. Use `sample_every` (e.g. 2) to trade off cost vs coverage. |
-| **Name reserve + English-like names** | New static values get consistent, pronounceable names so the registry stays usable and human-readable. |
+| **Name reserve + English-like names** | New values get consistent, pronounceable (non-gibberish) names so the registry stays usable and human-readable. |
 | **API retries + failure handling** | Loop survives transient API errors; state and discoveries are not lost. |
-| **Knowledge fetch before each run** | Creation and prompt picking use latest learned static/narrative from D1 so each generation benefits from prior runs. |
+| **Knowledge fetch before each run** | Creation and prompt picking use latest learned values from D1 so each generation benefits from prior runs (prompt-controlled registry values). |
 
 See [BACKLOG_AND_ENHANCEMENTS.md](BACKLOG_AND_ENHANCEMENTS.md) for the enhancement checklist and [WORKFLOWS_AND_REGISTRIES.md](WORKFLOWS_AND_REGISTRIES.md) (Part I) for what lives in static vs dynamic vs narrative.
 
@@ -264,7 +272,7 @@ Algorithms and functions must be **100% precise** with these rules so the regist
 - **Registry:** All **pure** discoveries (including pure blends that become single values) → static registry. All **non-pure** → dynamic or narrative (by category). **Growth and creation both use this same STATIC registry** (and origins). Local: `config/knowledge/` (or project `knowledge/`); when `api_base` is set, discoveries sync to D1/KV and creation fetches from GET /api/knowledge/for-creation.
 - **Interpretation:** `src/interpretation/` — interpret prompts to **pure elements or non-pure elements**. Goal: something new every loop so extraction and growth can happen (optimization).
 - **Creation:** `src/creation/` — **precisely follow instruction** (100% precise). Use **only static elements (values)** from the static registry (and origins). **Audio/sound is part of creation:** spec includes audio_tempo, audio_mood, audio_presence (sound is in STATIC registry and is specified here, then extracted and grown like color). Output is a **spec** (blueprint); no pixels or audio file yet. Instruction is the root cause for discoveries.
-- **Growth:** `src/knowledge/growth.py` — legacy extraction → compare → add novel; **per-instance:** `grow_from_video()` (static), `grow_dynamic_from_video()` (dynamic), `grow_narrative_from_spec()` (narrative). **All three registries evolve via growth;** non-pure (2+ frames) and new blends (e.g. sunset + sunrise → new style) are added to the dynamic registry with a sensible name when unknown. Target: 95%+ of successful loops with successful growth. **If any element/blend is truly unknown, provide a sensible generated name — for every registry.**
+- **Growth:** `src/knowledge/growth_per_instance.py` — **operational loop calls `grow_all_from_video(..., extraction_focus=)`** (static + dynamic in one pass, gated by frame/window/all). Helpers: `grow_from_video()` (static only), `grow_dynamic_from_video()` (dynamic only). Narrative: `grow_narrative_from_spec()`. Legacy: `growth.py`. **All registries evolve;** unknown values get a **sensible generated name**. Target: 95%+ of successful loops with successful growth.
 - **Renderer:** `src/procedural/renderer.py` — the step where the **video is put together** into the MP4. **Color + sound are incorporated into every frame**. Renderer: spec + time → one RGB frame; pipeline assembles frames and adds audio → final MP4. Blends (non-pure) form over the duration of the entire video. Uses our procedural algorithms only (gradients, camera motion, lighting, shot types).
 
 ---
@@ -287,8 +295,9 @@ All algorithms and functions below must stay **100% precise** with the two workf
 | **Extraction** | `extract_static_per_frame()` | Per-frame color + sound. | One frame = one static instance (pure); feeds growth. |
 | **Extraction** | `extract_dynamic_per_window()` | Per-window (2+ frames) motion, time, lighting, etc. | Multi-frame = non-pure; feeds **growth** in dynamic registry. |
 | **Extraction** | `extract_from_video()` | Full-video aggregate (legacy). | One summary per video; used for analysis/API; not per-frame/per-window. |
-| **Growth** | `grow_from_video()` | Add novel **static** (color + sound) to registry. | Pure/single-frame only; add if novel with sensible name when unknown. |
-| **Growth** | `grow_dynamic_from_video()` | Add novel **non-pure** (per-window) to DYNAMIC registry. | 2+ frames → growth in dynamic (motion, time, lighting, composition, graphics, temporal, technical, audio_semantic); new blends/styles with sensible name when unknown. |
+| **Growth** | `grow_all_from_video()` | **Primary loop path:** seed primitives; grow static and/or dynamic by `extraction_focus`. | Novel → sensible name; frame vs window gating. |
+| **Growth** | `grow_from_video()` | Add novel **static** (color + sound) only. | Pure/single-frame helper. |
+| **Growth** | `grow_dynamic_from_video()` | Add novel **non-pure** (per-window) to DYNAMIC only. | Multi-frame helper. |
 | **Narrative** | `grow_narrative_from_spec()` | Add narrative from spec to narrative registry. | Imaginable non-pure; add if novel with sensible name when unknown. |
 | **Static registry** | `load_static_registry()`, `save_static_registry()`, `ensure_static_*_in_registry()` | Persist and add static entries. | Keys/values 100% precise; pure and pure-blend-single-value only; sensible name when unknown. |
 | **Dynamic registry** | `load_dynamic_registry()`, `save_dynamic_registry()`, `ensure_dynamic_*_in_registry()` | Persist and add dynamic entries. | Used by **growth** (grow_dynamic_from_video); non-pure only; sensible name when unknown (new styles). |
@@ -301,7 +310,7 @@ All algorithms and functions below must stay **100% precise** with the two workf
 **Checks for 100% precision**
 
 1. **Single frame** → only static extraction and static growth. No dynamic registry write from a single frame.
-2. **Window (2+ frames)** → dynamic extraction and **growth** in dynamic registry (`grow_dynamic_from_video`). Non-pure blends (e.g. sunset + sunrise → new style) added with sensible name when unknown.
+2. **Window (2+ frames)** → dynamic extraction and **growth** in dynamic registry (via `grow_all_from_video` with `extraction_focus=window|all`, or `grow_dynamic_from_video`). Non-pure blends added with sensible name when unknown.
 3. **Creation** reads from static registry + origins (and can use dynamic/narrative for non-pure styles where appropriate).
 4. **Interpretation** produces instruction that creation can follow 100% precisely; no hard-coded palette/motion hints required.
 5. **Loop** runs **growth for all three registries** (static, dynamic, narrative); every unknown element/blend gets a sensible generated name in the appropriate registry.

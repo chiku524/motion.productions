@@ -1,6 +1,7 @@
 ## Learned User Preferences
 
-- Primary mission is exhaustive, named registry growth across video aspects (pure, blended, semantic, interpretation) to support a precise prompt interpreter.
+- Primary mission is exhaustive, named registry growth: **colors**, **sounds**, **semantics (narratives)**, and **interpretations (linguistics)** — each registry starts from primitives; novel discoveries get non-gibberish names — to support a precise prompt interpreter.
+- End goal is a **photoreal engine** that generates any video from user instruction by resorting to registries for prompt-controlled values; current path is procedural on that foundation.
 - Wants distinct pure-sound vs pure-color workflows; blended/semantic emphasis on roughly one-second windows; frame-level sound mesh blending primitives with discoveries over loop iterations.
 - Prefers Cloudflare for edge APIs and storage orchestration; AI video should use numeric or recipe-style parameters rather than fixed template catalogs when possible.
 - Will spend on the order of tens of dollars per month when it clearly improves reliability or throughput.

@@ -1,13 +1,20 @@
 # Motion Productions
 
 **One prompt → one full video.**  
-Create and produce videos from text, script, or prompt — driven by base knowledge of everything in video files (colors, graphics, resolutions, motion, etc.). The continuous loop extracts every aspect from this knowledge; the software creates videos from user input informed by that extraction. **No external “model”** — the default engine is **our own procedural system**: algorithms and data (pixels, graphics, motion, color) only.
+User instruction drives generation; registries supply the named values that prompt controls. The continuous loop grows those registries from every output.
 
-- **Core foundation and loop:** [docs/INTENDED_LOOP.md](./docs/INTENDED_LOOP.md) — base knowledge, extraction, creation, learning loop
-- **Architecture:** [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) — procedural engine, interpreter & learning
+## Mission
+
+**Exhaustive registries** — record all combinations of **colors**, **sounds**, **semantics (narratives)**, and **interpretations (linguistics)**. Each registry starts from **primitives (origins)**; as loops continue, newly discovered values are stored with **non-gibberish, sensible names**.
+
+**End goal** — a **photoreal engine** that can generate any sort of video from arbitrary user input, resorting to the registries for the values the prompt is in control of. Today’s default path is a **procedural** engine (our algorithms + data + FFmpeg); photoreal is the destination on that same registry-backed foundation. No external generative “model” is required for the current loop.
+
+- **Core foundation and loop:** [docs/INTENDED_LOOP.md](./docs/INTENDED_LOOP.md) — origins, extraction, creation, growth
+- **Architecture:** [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) — layout, procedural engine, interpreter & learning
+- **Workflows & registries:** [docs/WORKFLOWS_AND_REGISTRIES.md](./docs/WORKFLOWS_AND_REGISTRIES.md) — Pure / Blended / Semantic / Interpretation
 - **Automation & deployment:** [docs/AUTOMATION.md](./docs/AUTOMATION.md) — automate_loop, **Fly.io** workers (`fly.loop-*.toml`, `video-ai/fly.toml`)
 - **Local compute / Fly from scratch:** [docs/LOCAL_COMPUTE.md](./docs/LOCAL_COMPUTE.md) — Docker Compose on your CPU, tunnel, recreate Fly apps
-- **Deployment:** [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md) — Cloudflare Worker (D1, R2, KV), security, and Fly.io background workers (env, workflows, post-deploy checklist)
+- **Deployment:** [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md) — Cloudflare Worker (D1, R2, KV), security, and Fly.io background workers
 - **Registry improvements:** [docs/REGISTRY_AND_WORKFLOW_IMPROVEMENTS.md](./docs/REGISTRY_AND_WORKFLOW_IMPROVEMENTS.md)
 - **Brand kit:** [docs/BRAND.md](./docs/BRAND.md)
 
@@ -17,9 +24,9 @@ Create and produce videos from text, script, or prompt — driven by base knowle
 
 - **Input:** One text prompt (and optional duration, style, tone).
 - **Output:** One video file. No scene list or manual combining.
-- **Base knowledge → extraction → creation:** The loop extracts color, motion, resolution, and other aspects from every output. User prompts map to parameters drawn from this knowledge; the procedural engine produces videos informed by it. See [docs/INTENDED_LOOP.md](docs/INTENDED_LOOP.md).
-- **No reliance on other software:** We do **not** use Runway, Replicate, PyTorch, diffusers, or any trained neural network. The pipeline uses a **procedural engine** we built:
-  - **Prompt → parameters:** Our keyword/rules parser (palettes, motion hints, intensity — from base knowledge).
+- **Registries → interpretation → creation:** Prompt maps to registry values (color, sound, narrative, linguistic interpretation). Creation builds a spec from those values; the engine renders one video. The loop extracts what appeared and grows registries. See [docs/INTENDED_LOOP.md](docs/INTENDED_LOOP.md).
+- **No reliance on other software:** We do **not** use Runway, Replicate, PyTorch, diffusers, or any trained neural network for the default path. The pipeline uses a **procedural engine** we built:
+  - **Prompt → parameters:** Interpretation + registry lookup (origins + learned named values).
   - **Parameters → pixels:** Our renderer (gradients, noise, motion curves — our algorithms).
   - **Pixels → video file:** Minimal encoding (imageio + FFmpeg) to write the result.
 - **Exception:** The only “external” dependency is **data we use** for video (pixels, color, motion) — all defined in our repo — plus a minimal way to encode frames to MP4 (imageio/imageio-ffmpeg). See [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md).
@@ -103,78 +110,55 @@ print(path)  # one output video file
 
 ## Web app
 
-Visit **https://motion.productions** to generate videos from a prompt. The app creates a job, and the procedural engine (run via `scripts/generate_bridge.py` locally or on a server) processes it and uploads the result. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+Visit **https://motion.productions** for the library, loop status, and registries browser. Public browser job-create is paused when `MOTION_API_SECRET` is set; authenticated workers create jobs via the API. Pending jobs are fulfilled by `scripts/generate_bridge.py` (local or Fly `motion-loop-webjobs`). See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ## Project layout
 
 ```
 motion.productions/
-├── config/
-│   └── default.yaml           # Output dir, resolution, fps
-├── fly.loop-explorer.toml     # Fly.io: Explorer learning loop
-├── fly.loop-exploiter.toml    # Fly.io: Exploiter loop
-├── fly.loop-balanced.toml     # Fly.io: Balanced (UI ratio) loop
-├── fly.loop-interpret.toml    # Fly.io: interpretation worker
-├── fly.loop-sound.toml        # Fly.io: sound discovery worker
-├── Dockerfile                 # Python workers (repo root)
-├── docs/
-│   ├── INTENDED_LOOP.md        # Core: foundation, loop, extraction, creation
-│   ├── ARCHITECTURE.md         # Procedural engine, interpreter & learning
-│   ├── AUTOMATION.md           # Scripts, container worker deployment
-│   ├── DEPLOYMENT.md           # Cloudflare + Fly.io deploy & ops
-│   ├── REGISTRY_AND_WORKFLOW_IMPROVEMENTS.md  # Improvement plans & reports
-│   └── BRAND.md                # Brand kit
-├── output/                     # Generated videos
-├── src/
-│   ├── config.py               # Load YAML config
-│   ├── prompt.py               # Optional prompt enrichment
-│   ├── pipeline.py             # One prompt → one video path
-│   ├── concat.py               # FFmpeg concat (for long-form segments)
-│   ├── video_generator/
-│   │   └── base.py             # VideoGenerator interface
-│   ├── procedural/             # Procedural engine — no external model
-│   │   ├── parser.py           # Prompt → spec (keywords & rules)
-│   │   ├── renderer.py         # Spec + time → pixels
-│   │   ├── generator.py        # ProceduralVideoGenerator
-│   │   ├── motion.py           # Motion curves
-│   │   └── data/               # palettes.py, keywords.py
-│   ├── knowledge/              # Base-knowledge extraction (every aspect in video)
-│   │   ├── schema.py           # BaseKnowledgeExtract
-│   │   └── extractor.py        # extract_from_video()
-│   ├── interpretation/         # User-instruction parser (precise)
-│   │   ├── schema.py           # InterpretedInstruction
-│   │   └── parser.py           # interpret_user_prompt()
-│   ├── creation/               # Build output from extracted knowledge
-│   │   └── builder.py          # build_spec_from_instruction()
-│   ├── analysis/               # analyze_video → OutputAnalysis (backward compat)
-│   │   ├── analyzer.py
-│   │   └── metrics.py
-│   └── learning/               # Log, aggregate, suggest
-│       ├── log.py
-│       ├── aggregate.py
-│       └── suggest.py
-├── cloudflare/                 # Worker API + static app
-│   ├── public/                 # Web app (index.html, app.css, app.js)
-│   └── src/index.ts            # Jobs API
-├── video-ai/
-│   └── fly.toml                # Fly.io: Video AI FFmpeg render service
-├── scripts/                    # Python entry points
-│   ├── generate.py             # CLI: generate video
-│   ├── generate_bridge.py      # Process pending jobs from API
-│   ├── automate_loop.py        # Self-feeding loop (Fly.io workers)
-│   ├── automate.py             # Interval-based automation
-│   ├── learn_report.py         # Learning report (local JSONL)
-│   ├── learn_from_api.py       # Fetch events/feedback, produce suggestions
-│   ├── color_sweep.py          # Batch static color coverage (operational)
-│   └── registry_export_analysis.py  # Validate export JSON (operational)
+├── config/                      # default.yaml, workflows.yaml
+├── knowledge/                   # Local registry cache/export (D1 is source of truth)
+│   ├── static/                  # static_colors.json, static_sound.json
+│   ├── dynamic/                 # dynamic_*.json (motion, time, gradient, …)
+│   └── narrative/               # narrative_*.json (genre, mood, themes, …)
+├── docs/                        # Architecture, registries, deployment, roadmap
+├── cloudflare/                  # Worker API (D1, R2, KV) + static app
+│   ├── migrations/              # D1 schema 0000…0021
+│   ├── public/                  # Site, registries UI, /video-ai lab
+│   └── src/                     # index.ts, routes/, videoAiApi.ts
+├── video-ai/                    # Node FFmpeg recipe render (Fly)
+├── src/                         # Python package (procedural + registries)
+│   ├── pipeline.py              # One prompt → one video
+│   ├── interpretation/          # Prompt → instruction (+ linguistics)
+│   ├── creation/                # Instruction → SceneSpec
+│   ├── procedural/              # Parser, renderer, generator, data/
+│   ├── knowledge/               # Origins, growth, static/dynamic/narrative
+│   ├── audio/, automation/, analysis/, learning/, …
+│   └── cinematography/, depth/, graphics/, lighting/, narrative/
+├── scripts/                     # Entrypoints (see ARCHITECTURE.md for full list)
+│   ├── worker_start.py          # Fly/Docker dispatcher (WORKER_START_SCRIPT)
+│   ├── automate_loop.py         # Learning loops (explorer/exploiter/balanced)
+│   ├── generate_bridge.py       # Pending jobs → generate → upload
+│   ├── interpret_loop.py        # Interpretation registry worker
+│   ├── sound_loop.py            # Pure sound discovery worker
+│   ├── procedural_render_server.py  # HTTP POST /render (engine=procedural)
+│   ├── generate.py              # CLI one-shot generate
+│   └── run_d1_migrations.py, color_sweep.py, registry_*, seed_*, …
+├── fly.loop-*.toml              # Explorer, exploiter, balanced, interpret, sound, webjobs
+├── fly.procedural-render.toml
+├── docker-compose.local.yml     # Local fleet (see LOCAL_COMPUTE.md)
+├── Dockerfile                   # Python workers
 └── requirements.txt
 ```
+
+Full path table: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §4. Registry taxonomy: [docs/WORKFLOWS_AND_REGISTRIES.md](docs/WORKFLOWS_AND_REGISTRIES.md).
 
 ---
 
 ## Extending
 
+- **Primitives / registries:** Seed and grow via `src/knowledge/` (origins, static/dynamic/narrative); names via the name-generator (non-gibberish).
 - **More keywords / palettes:** Edit `src/procedural/data/keywords.py` and `palettes.py` (our data).
 - **Richer motion or visuals:** Extend `src/procedural/motion.py` and `renderer.py` (our algorithms).
-- **Interpreter / learning:** Add metrics in `src/analysis/metrics.py`, tune aggregation and suggestion rules in `src/learning/aggregate.py` and `suggest.py`.
-- **Optional:** You can plug in a different `VideoGenerator` in `scripts/generate.py` if you later choose — but the default is **no external model**, only our procedural engine.
+- **Interpreter / linguistics:** `src/interpretation/` (parser, linguistic registry); creation pulls registry values the prompt controls.
+- **Optional:** You can plug in a different `VideoGenerator` later (including a photoreal path) — the default remains **no external model**, only our procedural engine on the same registries.

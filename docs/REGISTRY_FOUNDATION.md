@@ -2,6 +2,8 @@
 
 This document is the **authoritative foundation** for all registries. Everything recorded and computed must align with it. Algorithms and functions are **100% precise**; what we record is **100% accurate**.
 
+**Mission:** Exhaustively record **colors**, **sounds**, **semantics (narratives)**, and **interpretations (linguistics)**. Each registry starts from **primitives**; loops add novel combinations under **non-gibberish names**. Creation and a future **photoreal engine** resort to these registries for values the user prompt controls.
+
 ---
 
 ## 1. The four registries

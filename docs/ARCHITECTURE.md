@@ -4,13 +4,23 @@ This document describes how Motion implements the [core foundation and loop](INT
 
 ---
 
+## Mission and goal
+
+**Registry mission:** Exhaustively record **colors**, **sounds**, **semantics (narratives)**, and **interpretations (linguistics)** in the four registries (Pure / Blended / Semantic / Interpretation). Each registry is seeded with **primitives (origins)**; as loops continue, novel combinations are stored under **non-gibberish names** so creation can reuse them.
+
+**Product goal:** A **photoreal engine** that generates any sort of video from arbitrary user instruction, **resorting to the registries** for the values the prompt controls. The current shipped path is **procedural** (parser → renderer → FFmpeg) on that same foundation; photoreal is the destination, not a separate catalog of fixed templates.
+
+See [INTENDED_LOOP.md](INTENDED_LOOP.md) and [WORKFLOWS_AND_REGISTRIES.md](WORKFLOWS_AND_REGISTRIES.md).
+
+---
+
 ## Foundation (Summary)
 
 - **Origins** — Primitives of every film/video aspect form base knowledge (`src/knowledge/origins.py`).
-- **Interpretation** — Maps any user prompt → parameters; ready for arbitrary input.
-- **Creation** — Software produces videos using origins + learned values.
+- **Interpretation** — Maps any user prompt → parameters (incl. linguistics); ready for arbitrary input.
+- **Creation** — Software produces videos using origins + learned registry values the prompt selects.
 - **Extraction** — The loop extracts every aspect from output as it runs.
-- **Growth** — Novel colors, motion profiles, etc. are added to learned registry.
+- **Growth** — Novel colors, sounds, narratives, interpretations get sensible names and are added to registries.
 
 See [docs/INTENDED_LOOP.md](INTENDED_LOOP.md) for the full design (foundation + loop).
 
@@ -133,12 +143,29 @@ Clean organization: every file is in its respective directory.
 |------|--------|
 | `config/` | YAML config: `default.yaml`, `workflows.yaml`. |
 | `docs/` | All documentation (architecture, registries, deployment, roadmap). |
-| `knowledge/` | **Runtime data** (not code): learned_*.json, narrative/. Written by src/knowledge. |
+| `knowledge/` | **Local registry cache/export** (not code): `static/`, `dynamic/`, `narrative/`. **Source of truth = D1.** |
 | `output/` | Default video output directory (configurable). |
-| `scripts/` | Entrypoints: generate.py, generate_bridge.py, automate_loop.py, automate.py, learn_from_api.py, learn_report.py, run_d1_migrations.py, seed_name_reserve.py. |
+| `scripts/` | Entrypoints (see below). |
 | `cloudflare/` | Worker API (D1, R2, KV), migrations, static app. |
-| `src/` | Python source (see below). |
-| `Dockerfile`, `Procfile`, `fly.loop-*.toml`, `fly.procedural-render.toml`, `video-ai/fly.toml` | Deployment (Fly.io). |
+| `video-ai/` | Node FFmpeg recipe render service (`fly.toml`). |
+| `docker-compose.local.yml` | Local Docker fleet (webjobs, procedural-render, optional loops). |
+| `Dockerfile`, `Procfile`, `fly.loop-*.toml`, `fly.procedural-render.toml` | Deployment (Fly.io Python workers). |
+
+**`scripts/` — entrypoints**
+
+| Script | Purpose |
+|--------|--------|
+| `worker_start.py` | Fly/Docker dispatcher; `WORKER_START_SCRIPT` selects role. |
+| `automate_loop.py` | Learning loop (explorer / exploiter / balanced). |
+| `generate_bridge.py` | Pending jobs → generate → upload. |
+| `interpret_loop.py` | Interpretation / linguistics worker (no render). |
+| `sound_loop.py` | Pure sound discovery worker (no render). |
+| `procedural_render_server.py` | HTTP `POST /render` for Video AI `engine=procedural`. |
+| `generate.py` | CLI one-shot generate. |
+| `automate.py` | Interval-based local automation. |
+| `learn_from_api.py`, `learn_report.py` | Learning report / API suggestions. |
+| `run_d1_migrations.py` | D1 migrations with 7429 retry. |
+| `color_sweep.py`, `registry_*.py`, `seed_*.py`, `backfill_*.py`, … | Registry ops and seeding. |
 
 **`src/` — Python package**
 
@@ -150,13 +177,13 @@ Clean organization: every file is in its respective directory.
 | `src/prompt.py` | Prompt enrichment (optional style/tone suffix). |
 | `src/api_client.py` | HTTP client for Cloudflare API (jobs, upload, learning, knowledge). |
 | `src/analysis/` | Video analysis: metrics, analyzer (extract_from_video → analysis dict). |
-| `src/interpretation/` | Parse user prompt → InterpretedInstruction (parser, schema). |
-| `src/creation/` | Build SceneSpec from instruction; scene_script. |
+| `src/interpretation/` | Parse user prompt → InterpretedInstruction (parser, schema, linguistics). |
+| `src/creation/` | Build SceneSpec from instruction; scene_script, narrative_script. |
 | `src/procedural/` | Procedural video engine: generator, motion, parser, renderer; data/keywords, data/palettes. |
 | `src/video_generator/` | Base VideoGenerator interface; pipeline uses it. |
-| `src/knowledge/` | Registries (static, dynamic, narrative), extraction, growth, blending, name-generator, lookup, remote_sync. |
+| `src/knowledge/` | Origins, static/dynamic/narrative registries, extraction, `grow_all_from_video`, blending, naming, lookup, remote_sync. |
 | `src/learning/` | Log runs (JSONL), aggregate, suggest updates (local learning). |
-| `src/audio/` | Sound generation. |
+| `src/audio/` | Sound generation (incl. music helpers). |
 | `src/automation/` | Prompt generation for loops (prompt_gen). |
 | `src/cinematography/` | Shot types, transitions, schema. |
 | `src/depth/` | Parallax, layers, assets. |
@@ -169,6 +196,7 @@ Clean organization: every file is in its respective directory.
 | Path | Purpose |
 |------|--------|
 | `cloudflare/src/index.ts` | Thin Worker entry: health, auth gate, route dispatch, assets. |
+| `cloudflare/src/db.ts` | D1 helpers (incl. `ensureLearnedDynamicMetaTable` runtime DDL). |
 | `cloudflare/src/routes/` | Modular API: jobs, loop, knowledge, registries, interpretation. |
 | `cloudflare/src/videoAiApi.ts` | Video AI lab: plan/render; `engine=procedural` → `PROCEDURAL_RENDER_URL`. |
 | `cloudflare/migrations/` | D1 migrations: jobs, learning_runs, learned_*, static_*, narrative, video_ai_jobs, … |
@@ -183,7 +211,7 @@ Clean organization: every file is in its respective directory.
 
 ## 5. Roadmap
 
-See [docs/ROADMAP.md](ROADMAP.md) for the 7-phase plan toward industry-level video generation:
+See [docs/ROADMAP.md](ROADMAP.md) for the 7-phase plan toward industry-level (including photoreal) video generation:
 
 - **Phase 1** (Done): Gradient types, camera motion, shape overlays
 - **Phase 2**: Cinematography and scene structure
@@ -191,18 +219,18 @@ See [docs/ROADMAP.md](ROADMAP.md) for the 7-phase plan toward industry-level vid
 - **Phase 4**: Text and graphics
 - **Phase 5**: Narrative and genre
 - **Phase 6**: Sound
-- **Phase 7**: Higher realism
+- **Phase 7**: Higher realism / photoreal path on the same registries
 
 ---
 
 ## 6. Summary
 
-| Goal                        | How we do it                                                       |
-|-----------------------------|--------------------------------------------------------------------|
-| Base knowledge              | Palettes, motion, resolution, etc. — full vocabulary of video aspects. |
-| Extraction                  | Loop analyzes each output; knowledge grows over time.              |
-| Video from prompt           | User prompt → parameters from knowledge → one video file.          |
-| No external model           | Procedural engine: parser + renderer + FFmpeg only.                |
-| Interpret output            | `analyze_video()` → OutputAnalysis (color, motion, consistency).   |
-| Visual variety              | Gradient types, camera motion, shape overlays (Phase 1).           |
-| Learn from output           | Log runs → aggregate → suggestions → refine base knowledge.        |
+| Goal | How we do it |
+|------|--------------|
+| Exhaustive registries | Colors, sounds, narratives, interpretations — primitives first, then named discoveries. |
+| Non-gibberish names | Name-generator + name reserve; backfill replaces numeric/gibberish labels. |
+| Prompt-controlled values | Interpretation maps input → registry elements; creation uses those values. |
+| Video from prompt | User prompt → instruction → spec from registries → one video file. |
+| No external model (today) | Procedural engine: parser + renderer + FFmpeg only. |
+| Photoreal (destination) | Same registry-backed instruction path; higher-realism renderer later. |
+| Learn from output | Extract → `grow_all_from_video` (+ narrative / interpretation sync) → D1. |
