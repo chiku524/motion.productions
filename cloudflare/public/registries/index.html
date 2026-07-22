@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Registries — Motion</title>
-  <meta name="description" content="Browse Motion registries with color swatches and sound samples. Pure, Blended, Semantic, and Interpretation data.">
+  <title>Registry explorer — Motion</title>
+  <meta name="description" content="Browse every Motion registry value. Drill into color families, sounds, blends, narrative, and interpretations.">
   <link rel="canonical" href="https://motion.productions/registries/">
   <link rel="icon" type="image/svg+xml" href="/logo.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -19,7 +19,7 @@
         <img src="/logo.svg" alt="Motion" class="logo-icon" width="28" height="28">
         <span>Motion</span>
       </a>
-      <span class="tagline">Registry browser</span>
+      <span class="tagline">Registry explorer</span>
       <span class="header-spacer" aria-hidden="true"></span>
       <a href="/" class="header-link">Create video</a>
       <a href="/mini-scenes/" class="header-link">Mini-scenes</a>
@@ -27,32 +27,61 @@
     </header>
 
     <main class="main main-registries">
-      <section class="registries registries-page motion-fade-in-up" id="registries-section">
-        <div class="registries-header">
-          <div>
-            <h1 class="registries-title">Registries</h1>
-            <p class="registries-intro">All four registries with <strong>live samples</strong>: color swatches show what each color looks like; sound ▶ buttons play <strong>10 everyday origin noises</strong> (rumble, hum, rustle, thump, click, whoosh, drip, and more).</p>
-            <p class="registries-sub">Pure (Static) · Blended (Dynamic) · Semantic (Narrative) · Interpretation (Linguistics)</p>
+      <section class="explorer motion-fade-in-up" id="explorer">
+        <header class="explorer-hero">
+          <h1 class="explorer-title">Registries</h1>
+          <p class="explorer-intro">Find exact values across Pure, Blended, Semantic, and Interpretation. Origins sit at the top — pick a bracket, then drill into shades, mixes, or named discoveries.</p>
+          <p id="explorer-mission" class="explorer-mission" aria-live="polite">Findability: —</p>
+        </header>
+
+        <nav class="explorer-tabs" aria-label="Registry kind">
+          <button type="button" class="explorer-tab active" data-tab="colors">Colors</button>
+          <button type="button" class="explorer-tab" data-tab="sound">Sounds</button>
+          <button type="button" class="explorer-tab" data-tab="blended">Blended</button>
+          <button type="button" class="explorer-tab" data-tab="narrative">Semantic</button>
+          <button type="button" class="explorer-tab" data-tab="interpretation">Interpretation</button>
+          <button type="button" class="explorer-tab" data-tab="linguistic">Linguistic</button>
+        </nav>
+
+        <div class="explorer-toolbar">
+          <nav id="explorer-breadcrumb" class="explorer-breadcrumb" aria-label="Filter path"></nav>
+          <div class="explorer-search-wrap">
+            <label class="visually-hidden" for="explorer-search">Search</label>
+            <input type="search" id="explorer-search" class="explorer-search" placeholder="Search name, key, RGB…" autocomplete="off">
           </div>
-          <div class="registries-meta">
-            <span id="registries-precision" class="registries-precision">Precision: —</span>
-            <span id="registries-updated" class="registries-updated"></span>
-            <button type="button" id="registries-refresh" class="btn btn-secondary btn-sm">Refresh now</button>
-            <button type="button" id="registries-export" class="btn btn-secondary btn-sm">Export JSON</button>
+        </div>
+
+        <div id="explorer-facets" class="explorer-facets" hidden></div>
+        <div id="explorer-status" class="explorer-status">Loading…</div>
+        <div id="explorer-results" class="explorer-results"></div>
+        <div class="explorer-more-wrap">
+          <button type="button" id="explorer-more" class="btn btn-secondary" hidden>Load more</button>
+        </div>
+
+        <details class="explorer-ops" id="explorer-ops">
+          <summary>Ops — coverage, health, name repair, export</summary>
+          <div class="explorer-ops-body">
+            <div class="explorer-ops-meta">
+              <span id="registries-precision" class="registries-precision">Precision: —</span>
+              <span id="registries-updated" class="registries-updated"></span>
+              <button type="button" id="registries-refresh" class="btn btn-secondary btn-sm">Refresh ops</button>
+              <button type="button" id="registries-export" class="btn btn-secondary btn-sm">Export JSON</button>
+            </div>
+            <div id="registries-health" class="registries-health" hidden></div>
+            <div id="registries-coverage-progress" class="registries-coverage-progress" hidden></div>
+            <div class="explorer-repair">
+              <h3 class="explorer-facet-title">Name repair</h3>
+              <p class="explorer-muted">Uses <code>POST /api/registries/backfill-names</code>. Paste API secret (stored in this browser session only).</p>
+              <div class="explorer-repair-row">
+                <label class="visually-hidden" for="ops-api-secret">API secret</label>
+                <input type="password" id="ops-api-secret" class="explorer-search" placeholder="MOTION_API_SECRET" autocomplete="off">
+                <button type="button" id="ops-repair-dry" class="btn btn-secondary btn-sm">Dry run</button>
+                <button type="button" id="ops-repair-apply" class="btn btn-secondary btn-sm">Apply repair</button>
+              </div>
+              <pre id="ops-repair-result" class="explorer-instruction" hidden></pre>
+            </div>
           </div>
-        </div>
-        <div id="registries-health" class="registries-health" hidden></div>
-        <div id="registries-coverage-progress" class="registries-coverage-progress" hidden></div>
-        <div class="registries-tabs">
-          <button type="button" class="registries-tab active" data-tab="static">Pure (Static)</button>
-          <button type="button" class="registries-tab" data-tab="dynamic">Blended (Dynamic)</button>
-          <button type="button" class="registries-tab" data-tab="narrative">Semantic (Narrative)</button>
-          <button type="button" class="registries-tab" data-tab="interpretation">Interpretation</button>
-        </div>
-        <div id="registries-content" class="registries-content registries-content--page">
-          <div id="registries-loading" class="registries-loading">Loading registries…</div>
-          <div id="registries-tables" class="registries-tables" hidden></div>
-        </div>
+        </details>
       </section>
     </main>
 
@@ -64,3 +93,4 @@
   <script src="/registries/registries.js"></script>
 </body>
 </html>
+<!-- explorer-v4 -->
