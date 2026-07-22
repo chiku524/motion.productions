@@ -82,23 +82,59 @@ if (path === "/api/interpret/backfill-prompts" && request.method === "GET") {
     const cached = await env.MOTION_KV.get(backfillCacheKey);
     if (cached) return new Response(cached, { headers: { "Content-Type": "application/json", "X-Cache": "HIT" } });
   }
-  const rows = await db.prepare(
-    `SELECT DISTINCT j.prompt FROM jobs j
-     LEFT JOIN interpretations i ON i.prompt = j.prompt AND i.status = 'done'
-     WHERE j.prompt IS NOT NULL AND j.prompt != '' AND i.id IS NULL
-     ORDER BY j.created_at DESC LIMIT ?`
-  )
-    .bind(limit * 2)
-    .all<{ prompt: string }>();
-  const raw = (rows.results || []).map((r) => r.prompt);
-  const prompts = raw.filter((p) => !isGibberishPrompt(p, true)).slice(0, limit);
-  const backfillBody = JSON.stringify({ prompts });
-  if (env.MOTION_KV) {
-    try {
-      await env.MOTION_KV.put(backfillCacheKey, backfillBody, { expirationTtl: 120 });
-    } catch { /* ignore */ }
+  // Avoid jobs ⟕ interpretations DISTINCT join (full-scan → D1 CPU 7429 / ~36s 503 under loop load).
+  // Cheap path: recent jobs by created_at index, then IN-check against interpretations.
+  try {
+    const scan = Math.min(Math.max(limit * 4, 40), 200);
+    const recent = await db
+      .prepare(
+        "SELECT prompt FROM jobs WHERE prompt IS NOT NULL AND prompt != '' ORDER BY created_at DESC LIMIT ?",
+      )
+      .bind(scan)
+      .all<{ prompt: string }>();
+    const seen = new Set<string>();
+    const candidates: string[] = [];
+    for (const r of recent.results || []) {
+      const p = (r.prompt || "").trim();
+      if (!p || seen.has(p) || isGibberishPrompt(p, true)) continue;
+      seen.add(p);
+      candidates.push(p);
+    }
+    const done = new Set<string>();
+    const chunkSize = 40;
+    for (let i = 0; i < candidates.length; i += chunkSize) {
+      const chunk = candidates.slice(i, i + chunkSize);
+      if (!chunk.length) break;
+      const placeholders = chunk.map(() => "?").join(",");
+      const rows = await db
+        .prepare(
+          `SELECT prompt FROM interpretations WHERE status = 'done' AND prompt IN (${placeholders})`,
+        )
+        .bind(...chunk)
+        .all<{ prompt: string }>();
+      for (const r of rows.results || []) {
+        if (r.prompt) done.add(r.prompt);
+      }
+    }
+    const prompts = candidates.filter((p) => !done.has(p)).slice(0, limit);
+    const backfillBody = JSON.stringify({ prompts });
+    if (env.MOTION_KV) {
+      try {
+        await env.MOTION_KV.put(backfillCacheKey, backfillBody, { expirationTtl: 180 });
+      } catch { /* ignore */ }
+    }
+    return new Response(backfillBody, { headers: { "Content-Type": "application/json" } });
+  } catch (e) {
+    console.error("GET /api/interpret/backfill-prompts failed:", e);
+    // Negative-cache empty briefly so interpret retries do not keep pinning D1.
+    const emptyBody = JSON.stringify({ prompts: [], error: "temporarily_unavailable" });
+    if (env.MOTION_KV) {
+      try {
+        await env.MOTION_KV.put(backfillCacheKey, emptyBody, { expirationTtl: 60 });
+      } catch { /* ignore */ }
+    }
+    return json({ error: "Failed to load backfill prompts", details: String(e), prompts: [] }, 503);
   }
-  return new Response(backfillBody, { headers: { "Content-Type": "application/json" } });
 }
 
 // POST /api/interpretations/batch — store multiple completed interpretations (batch backfill)

@@ -17,14 +17,14 @@ import os
 import time
 from pathlib import Path
 
-from src.api_client import api_get, api_post, api_post_binary, api_request_with_retry
+from src.api_client import api_post, api_post_binary, api_request_with_retry
 from src.config import load_config
 from src.pipeline import generate_full_video
 from src.procedural import ProceduralVideoGenerator
 
 
 def fetch_pending_jobs(api_base: str) -> list[dict]:
-    out = api_get(api_base, "/api/jobs?status=pending&limit=5")
+    out = api_request_with_retry(api_base, "GET", "/api/jobs?status=pending&limit=5", max_retries=4)
     return out.get("jobs", [])
 
 
@@ -269,7 +269,15 @@ def main() -> None:
         if request_shutdown():
             print("Shutdown requested. Exiting.")
             return
-        jobs = fetch_pending_jobs(args.api_base)
+        try:
+            jobs = fetch_pending_jobs(args.api_base)
+        except Exception as e:
+            # Survive D1 503 storms without crashing the container into a restart poll loop.
+            print(f"WARNING: fetch pending jobs failed: {e}")
+            if args.once:
+                raise
+            time.sleep(max(args.interval, 20))
+            continue
         if not jobs:
             if args.once:
                 print("No pending jobs. Exiting.")

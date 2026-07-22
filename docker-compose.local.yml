@@ -23,6 +23,9 @@ x-python-worker: &python-worker
     MOTION_API_SECRET: ${MOTION_API_SECRET:-}
     HEALTH_PORT: "8080"
     PYTHONUNBUFFERED: "1"
+    # Gentle D1 writes: small chunks + pause between POSTs (shared by all workers)
+    DISCOVERIES_MAX_ITEMS: ${DISCOVERIES_MAX_ITEMS:-20}
+    DISCOVERIES_CHUNK_PAUSE_SECONDS: ${DISCOVERIES_CHUNK_PAUSE_SECONDS:-1.25}
   restart: unless-stopped
 
 services:
@@ -70,11 +73,13 @@ services:
       MOTION_API_SECRET: ${MOTION_API_SECRET:-}
       HEALTH_PORT: "8080"
       LOOP_EXTRACTION_FOCUS: frame
+      LOOP_STATIC_FOCUS: color
       LOOP_EXPLOIT_RATIO_OVERRIDE: "0"
       LOOP_WORKFLOW_TYPE: explorer
       LOOP_WORKER_OFFSET_SECONDS: "0"
       # Keep paused by default; only start after 500s stay rare for a stretch
       LOOP_DELAY_SECONDS: "90"
+      DISCOVERIES_MAX_ITEMS: "20"
       DISCOVERIES_CHUNK_PAUSE_SECONDS: "2.0"
     ports:
       - "8083:8080"
@@ -87,9 +92,13 @@ services:
       MOTION_API_SECRET: ${MOTION_API_SECRET:-}
       HEALTH_PORT: "8080"
       LOOP_EXTRACTION_FOCUS: frame
+      LOOP_STATIC_FOCUS: color
       LOOP_EXPLOIT_RATIO_OVERRIDE: "1"
       LOOP_WORKFLOW_TYPE: exploiter
-      LOOP_WORKER_OFFSET_SECONDS: "15"
+      LOOP_WORKER_OFFSET_SECONDS: "20"
+      LOOP_DELAY_SECONDS: "75"
+      DISCOVERIES_MAX_ITEMS: "20"
+      DISCOVERIES_CHUNK_PAUSE_SECONDS: "2.0"
     ports:
       - "8084:8080"
 
@@ -119,7 +128,8 @@ services:
       MOTION_API_SECRET: ${MOTION_API_SECRET:-}
       HEALTH_PORT: "8080"
       WORKER_START_SCRIPT: interpret_loop
-      INTERPRET_DELAY_SECONDS: "35"
+      # Longer gap: backfill used to pin D1 (~36s CPU) when the join path thrashed
+      INTERPRET_DELAY_SECONDS: "60"
     ports:
       - "8086:8080"
 
