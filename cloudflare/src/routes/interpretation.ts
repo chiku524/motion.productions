@@ -120,7 +120,7 @@ if (path === "/api/interpret/backfill-prompts" && request.method === "GET") {
     const backfillBody = JSON.stringify({ prompts });
     if (env.MOTION_KV) {
       try {
-        await env.MOTION_KV.put(backfillCacheKey, backfillBody, { expirationTtl: 180 });
+        await env.MOTION_KV.put(backfillCacheKey, backfillBody, { expirationTtl: 300 });
       } catch { /* ignore */ }
     }
     return new Response(backfillBody, { headers: { "Content-Type": "application/json" } });

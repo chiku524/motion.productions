@@ -7,10 +7,21 @@ We send max 200 items per request for efficiency (fewer round-trips).
 """
 from typing import Any
 
-# Match API DISCOVERIES_MAX_ITEMS. Keep small under Free/Paid D1 CPU pressure.
-DISCOVERIES_MAX_ITEMS = 25
+# Match API DISCOVERIES_MAX_ITEMS. Keep small for Cloudflare Free D1 CPU pressure.
+# Override via env DISCOVERIES_MAX_ITEMS / DISCOVERIES_CHUNK_PAUSE_SECONDS (Docker loops).
+DISCOVERIES_MAX_ITEMS = 15
 # Pause between chunks so concurrent loops do not stampede D1.
-DISCOVERIES_CHUNK_PAUSE_SECONDS = 0.75
+DISCOVERIES_CHUNK_PAUSE_SECONDS = 1.25
+
+
+def _max_items() -> int:
+    import os
+    raw = os.environ.get("DISCOVERIES_MAX_ITEMS", "")
+    try:
+        n = int(raw) if raw.strip() else DISCOVERIES_MAX_ITEMS
+    except ValueError:
+        n = DISCOVERIES_MAX_ITEMS
+    return max(5, min(n, 50))
 
 
 def _chunk_discoveries(discoveries: dict[str, Any]) -> list[dict[str, Any]]:
@@ -20,6 +31,7 @@ def _chunk_discoveries(discoveries: dict[str, Any]) -> list[dict[str, Any]]:
     blends, motion, lighting, composition, graphics, temporal, technical,
     audio_semantic, time, gradient, camera, transition, depth.
     """
+    max_items = _max_items()
     job_id = discoveries.pop("job_id", None)
     chunks: list[dict[str, Any]] = []
     current: dict[str, Any] = {}
@@ -43,7 +55,7 @@ def _chunk_discoveries(discoveries: dict[str, Any]) -> list[dict[str, Any]]:
     for aspect in narrative_aspects:
         items = narr.get(aspect) or []
         for item in items:
-            if count >= DISCOVERIES_MAX_ITEMS:
+            if count >= max_items:
                 flush()
             if "narrative" not in current:
                 current["narrative"] = {}
@@ -56,7 +68,7 @@ def _chunk_discoveries(discoveries: dict[str, Any]) -> list[dict[str, Any]]:
     for key in list_keys:
         items = discoveries.get(key) or []
         for item in items:
-            if count >= DISCOVERIES_MAX_ITEMS:
+            if count >= max_items:
                 flush()
             if key not in current:
                 current[key] = []

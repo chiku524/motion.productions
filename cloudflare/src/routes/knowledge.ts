@@ -2,14 +2,27 @@
  * Knowledge discoveries, for-creation, colors, name reserve API routes.
  */
 import type { Env } from "../env";
-import { getDb, ensureLearnedColorsDepthColumn, upsertLearnedDynamicMeta, bumpRegistryCounts } from "../db";
-import { json, err, uuid } from "../http";
+import {
+  getDb,
+  ensureLearnedColorsDepthColumn,
+  ensureStaticColorsFamilyColumns,
+  upsertLearnedDynamicMeta,
+  bumpRegistryCounts,
+} from "../db";
+import { json, err, uuid, corsHeaders } from "../http";
 import {
   resolveUniqueBlendName,
   titleCaseLabel,
   sanitizePureSoundKey,
   generateUniqueName,
 } from "../naming";
+import { invalidateRegistryReadCaches, readForCreationGeneration } from "../browseCache";
+import {
+  classifyColorFamily,
+  classifyColorShade,
+  COLOR_FAMILY_META,
+} from "../colorBrowse";
+import { acquireDiscoveryLease, releaseDiscoveryLease } from "../discoveryLease";
 
 export async function handleKnowledgeRoutes(
   request: Request,
@@ -47,9 +60,9 @@ if (path === "/api/knowledge/name/take" && request.method === "POST") {
 
 // POST /api/knowledge/discoveries — batch record discoveries (D1)
 // Supports: static_colors, static_sound (per-frame) + colors, blends, motion, etc. (dynamic/whole-video)
-// Reduced to 50 items to stay under D1 CPU limit under 6-worker concurrency.
+// Free-tier Core 4: keep per-request writes small (D1 CPU + 50 queries/request on Free).
 if (path === "/api/knowledge/discoveries" && request.method === "POST") {
-  const DISCOVERIES_MAX_ITEMS = 25;
+  const DISCOVERIES_MAX_ITEMS = 15;
   let body: {
     static_colors?: Array<{ key: string; r: number; g: number; b: number; brightness?: number; luminance?: number; contrast?: number; saturation?: number; chroma?: number; hue?: number; color_variance?: number; opacity?: number; depth_breakdown?: Record<string, unknown>; source_prompt?: string; name?: string }>;
     static_sound?: Array<{ key: string; amplitude?: number; weight?: number; strength_pct?: number; tone?: string; timbre?: string; depth_breakdown?: Record<string, unknown>; source_prompt?: string; name?: string }>;
@@ -115,7 +128,28 @@ if (path === "/api/knowledge/discoveries" && request.method === "POST") {
   let novelStaticSound = 0;
   let novelLearnedColors = 0;
 
+  const lease = await acquireDiscoveryLease(env);
+  if (!lease.ok) {
+    const retrySec = Math.ceil(lease.retry_after_ms / 1000);
+    return new Response(
+      JSON.stringify({
+        error: "Discovery writer busy",
+        details: "Another worker holds the discoveries write lease",
+        retry_after_ms: lease.retry_after_ms,
+      }),
+      {
+        status: 429,
+        headers: {
+          "Content-Type": "application/json",
+          "Retry-After": String(Math.max(1, retrySec)),
+          ...corsHeaders,
+        },
+      },
+    );
+  }
+
   try {
+  const familyColsOk = await ensureStaticColorsFamilyColumns(db);
   // Static registry: per-frame color entries
   for (const c of body.static_colors || []) {
     if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
@@ -127,9 +161,17 @@ if (path === "/api/knowledge/discoveries" && request.method === "POST") {
       if (!c.name || !c.name.trim()) {
         try { await db.prepare("INSERT OR IGNORE INTO name_reserve (name) VALUES (?)").bind(name).run(); } catch { /* ignore */ }
       }
-      await db.prepare(
-        "INSERT INTO static_colors (id, color_key, r, g, b, brightness, luminance, contrast, saturation, chroma, hue, color_variance, opacity, count, sources_json, name, depth_breakdown_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)"
-      ).bind(uuid(), c.key, c.r, c.g, c.b, c.brightness ?? null, c.luminance ?? c.brightness ?? null, c.contrast ?? null, c.saturation ?? null, c.chroma ?? c.saturation ?? null, c.hue ?? null, c.color_variance ?? null, c.opacity ?? null, c.source_prompt ? JSON.stringify([c.source_prompt.slice(0, 80)]) : null, name, c.depth_breakdown ? JSON.stringify(c.depth_breakdown) : null).run();
+      const family = classifyColorFamily(c.r, c.g, c.b);
+      const shade = classifyColorShade(c.r, c.g, c.b, family);
+      if (familyColsOk) {
+        await db.prepare(
+          "INSERT INTO static_colors (id, color_key, r, g, b, brightness, luminance, contrast, saturation, chroma, hue, color_variance, opacity, count, sources_json, name, depth_breakdown_json, family, shade) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)"
+        ).bind(uuid(), c.key, c.r, c.g, c.b, c.brightness ?? null, c.luminance ?? c.brightness ?? null, c.contrast ?? null, c.saturation ?? null, c.chroma ?? c.saturation ?? null, c.hue ?? null, c.color_variance ?? null, c.opacity ?? null, c.source_prompt ? JSON.stringify([c.source_prompt.slice(0, 80)]) : null, name, c.depth_breakdown ? JSON.stringify(c.depth_breakdown) : null, family, shade).run();
+      } else {
+        await db.prepare(
+          "INSERT INTO static_colors (id, color_key, r, g, b, brightness, luminance, contrast, saturation, chroma, hue, color_variance, opacity, count, sources_json, name, depth_breakdown_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)"
+        ).bind(uuid(), c.key, c.r, c.g, c.b, c.brightness ?? null, c.luminance ?? c.brightness ?? null, c.contrast ?? null, c.saturation ?? null, c.chroma ?? c.saturation ?? null, c.hue ?? null, c.color_variance ?? null, c.opacity ?? null, c.source_prompt ? JSON.stringify([c.source_prompt.slice(0, 80)]) : null, name, c.depth_breakdown ? JSON.stringify(c.depth_breakdown) : null).run();
+      }
       novelStaticColors++;
     }
     results.static_colors++;
@@ -463,7 +505,6 @@ if (path === "/api/knowledge/discoveries" && request.method === "POST") {
       // Ignore duplicate or missing table
     }
   }
-  // Do not use KV delete (free tier limit). Stats cache expires via TTL; GET recomputes when stale.
   if (novelStaticColors || novelStaticSound || novelLearnedColors) {
     await bumpRegistryCounts(env, {
       static_colors: novelStaticColors,
@@ -471,12 +512,23 @@ if (path === "/api/knowledge/discoveries" && request.method === "POST") {
       learned_colors: novelLearnedColors,
     });
   }
+  // Bust browse + for-creation caches whenever discoveries land (including count bumps / dynamic).
+  const anyRecorded = Object.values(results).some((n) => typeof n === "number" && n > 0) || !!jobId;
+  if (anyRecorded) {
+    try {
+      await invalidateRegistryReadCaches(env);
+    } catch {
+      /* ignore */
+    }
+  }
   const resp: { status: string; results: Record<string, number>; truncated?: boolean } = { status: "recorded", results };
   if (truncated) resp.truncated = true;
   return json(resp, 201);
   } catch (e) {
     console.error("POST /api/knowledge/discoveries failed:", e);
     return json({ error: "Failed to record discoveries", details: String(e) }, 500);
+  } finally {
+    await releaseDiscoveryLease(env, lease.holder);
   }
 }
 
@@ -494,7 +546,10 @@ if (path === "/api/knowledge/for-creation" && request.method === "GET") {
   const limit = Math.min(parseInt(new URL(request.url).searchParams.get("limit") || "40", 10), 200);
   const interpLimitParam = new URL(request.url).searchParams.get("interpretation_limit") || "40";
   const interpLimit = Math.min(parseInt(interpLimitParam, 10), 120);
-  const cacheKey = `knowledge:for-creation:${limit}:${interpLimit}`;
+  // Free-tier: bound static_colors ORDER BY count (large table → CPU 7429).
+  const colorScan = Math.min(Math.max(limit * 3, 60), 120);
+  const gen = await readForCreationGeneration(env);
+  const cacheKey = `knowledge:for-creation:${gen}:${limit}:${interpLimit}`;
   if (env.MOTION_KV) {
     const cached = await env.MOTION_KV.get(cacheKey);
     if (cached) return new Response(cached, { headers: { "Content-Type": "application/json", "X-Cache": "HIT" } });
@@ -509,9 +564,9 @@ if (path === "/api/knowledge/for-creation" && request.method === "GET") {
     db.prepare("SELECT output_json FROM learned_blends WHERE domain = 'camera' ORDER BY created_at DESC LIMIT ?").bind(limit),
     db.prepare("SELECT motion_type FROM learned_camera ORDER BY count DESC LIMIT ?").bind(limit),
     db.prepare("SELECT prompt, instruction_json FROM interpretations WHERE status = 'done' AND instruction_json IS NOT NULL ORDER BY updated_at DESC LIMIT ?").bind(interpLimit),
-    db.prepare("SELECT color_key, r, g, b, name, count, created_at FROM static_colors ORDER BY count DESC LIMIT ?").bind(limit),
-    db.prepare("SELECT sound_key, tone, timbre, amplitude, name, count, created_at FROM static_sound ORDER BY count DESC LIMIT ?").bind(limit),
-    db.prepare("SELECT aspect, entry_key, value, name, count FROM narrative_entries ORDER BY count DESC LIMIT ?").bind(limit),
+    db.prepare("SELECT color_key, r, g, b, name, count, created_at FROM static_colors ORDER BY count DESC LIMIT ?").bind(colorScan),
+    db.prepare("SELECT sound_key, tone, timbre, amplitude, name, count, created_at FROM static_sound ORDER BY count DESC LIMIT ?").bind(Math.min(colorScan, 200)),
+    db.prepare("SELECT aspect, entry_key, value, name, count FROM narrative_entries ORDER BY count DESC LIMIT ?").bind(Math.min(colorScan, 200)),
   ]);
   type ColorRow = { color_key: string; r: number; g: number; b: number; count: number; sources_json: string | null; name: string };
   type MotionRow = { profile_key: string; motion_level: number; motion_std: number; motion_trend: string; count: number; sources_json: string | null; name: string | null };
@@ -596,8 +651,40 @@ if (path === "/api/knowledge/for-creation" && request.method === "GET") {
     instruction: r.instruction_json ? (JSON.parse(r.instruction_json) as Record<string, unknown>) : {},
   }));
   const staticColorRows = (batchResults[8].results || []) as StaticColorRow[];
-  const static_colors: Record<string, { r: number; g: number; b: number; name?: string; count?: number; created_at?: string }> = {};
+  // Stratify by hue family so for-creation matches explorer browse diversity (not only top-count colors).
+  const byFamily = new Map<string, StaticColorRow[]>();
   for (const r of staticColorRows) {
+    const fam = classifyColorFamily(r.r, r.g, r.b);
+    const list = byFamily.get(fam) || [];
+    list.push(r);
+    byFamily.set(fam, list);
+  }
+  const stratified: StaticColorRow[] = [];
+  const familyOrder = COLOR_FAMILY_META.map((m) => m.id);
+  let guard = 0;
+  while (stratified.length < limit && guard < colorScan + 12) {
+    let addedRound = false;
+    for (const fam of familyOrder) {
+      const list = byFamily.get(fam);
+      if (!list || !list.length) continue;
+      stratified.push(list.shift()!);
+      addedRound = true;
+      if (stratified.length >= limit) break;
+    }
+    if (!addedRound) break;
+    guard++;
+  }
+  // Fill remainder by original popularity if families exhausted unevenly
+  if (stratified.length < limit) {
+    const used = new Set(stratified.map((r) => r.color_key));
+    for (const r of staticColorRows) {
+      if (used.has(r.color_key)) continue;
+      stratified.push(r);
+      if (stratified.length >= limit) break;
+    }
+  }
+  const static_colors: Record<string, { r: number; g: number; b: number; name?: string; count?: number; created_at?: string; family?: string }> = {};
+  for (const r of stratified) {
     static_colors[r.color_key] = {
       r: r.r,
       g: r.g,
@@ -605,6 +692,7 @@ if (path === "/api/knowledge/for-creation" && request.method === "GET") {
       name: r.name ?? undefined,
       count: r.count,
       created_at: r.created_at ?? undefined,
+      family: classifyColorFamily(r.r, r.g, r.b),
     };
   }
   const staticSoundRows = (batchResults[9].results || []) as StaticSoundRow[];
@@ -619,15 +707,34 @@ if (path === "/api/knowledge/for-creation" && request.method === "GET") {
   }));
   const narrativeRows = (batchResults[10].results || []) as NarrativeRow[];
   const narrative: Record<string, Array<{ key: string; value?: string; name?: string; count: number }>> = {};
+  // Cap per aspect so one hot aspect cannot crowd out others (explorer/creation alignment).
+  const perAspectCap = Math.max(4, Math.ceil(limit / 7));
   for (const r of narrativeRows) {
     const aspect = (r.aspect || "").trim() || "unknown";
     if (!narrative[aspect]) narrative[aspect] = [];
+    if (narrative[aspect].length >= perAspectCap) continue;
     narrative[aspect].push({
       key: r.entry_key,
       value: r.value ?? undefined,
       name: r.name ?? undefined,
       count: r.count,
     });
+  }
+  let learned_audio_semantic: Array<{ key: string; role: string; name: string; count: number }> = [];
+  try {
+    type AudioSemanticRow = { profile_key: string; role: string | null; name: string | null; count: number };
+    const asResult = await db
+      .prepare("SELECT profile_key, role, name, count FROM learned_audio_semantic ORDER BY count DESC LIMIT ?")
+      .bind(limit)
+      .all<AudioSemanticRow>();
+    learned_audio_semantic = (asResult.results || []).map((r) => ({
+      key: r.profile_key,
+      role: r.role || "ambient",
+      name: r.name || r.profile_key,
+      count: r.count,
+    }));
+  } catch {
+    learned_audio_semantic = [];
   }
   // Separate query so for-creation still works before migration 0021 is applied
   let learned_entities: Array<{
@@ -677,6 +784,7 @@ if (path === "/api/knowledge/for-creation" && request.method === "GET") {
     learned_colors: colors,
     learned_motion: motion,
     learned_audio,
+    learned_audio_semantic,
     learned_gradient,
     learned_camera,
     learned_entities,
@@ -691,7 +799,7 @@ if (path === "/api/knowledge/for-creation" && request.method === "GET") {
   const body = JSON.stringify(payload);
   if (env.MOTION_KV) {
     try {
-      await env.MOTION_KV.put(cacheKey, body, { expirationTtl: 180 });
+      await env.MOTION_KV.put(cacheKey, body, { expirationTtl: 300 });
     } catch { /* ignore KV write failure */ }
   }
   return new Response(body, { headers: { "Content-Type": "application/json" } });

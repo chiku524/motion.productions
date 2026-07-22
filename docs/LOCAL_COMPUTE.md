@@ -47,13 +47,38 @@ curl -s http://127.0.0.1:8081/          # webjobs
 curl -s http://127.0.0.1:8082/health    # procedural-render
 ```
 
-### Optional: learning loops
+### Learning loops (Cloudflare Free + D1)
+
+**Supported free path — Core 4** (explorer, balanced, interpret, sound). No exploiter; keeps D1 under the free CPU limit.
 
 ```bash
-docker compose -f docker-compose.local.yml --profile loops up -d --build
+docker compose -f docker-compose.local.yml --profile free up -d --build
+# Alias: --profile loops  (same Core 4)
 ```
 
-Ports: explorer `8083`, exploiter `8084`, balanced `8085`, interpret `8086`, sound `8087`.
+| Service | Host port | Role | Free delay |
+|---------|-----------|------|------------|
+| explorer | `8083` | Pure color (frame) | 120s |
+| balanced | `8085` | Window / blended + narrative | 90s |
+| interpret | `8086` | Interpretation + linguistic | 90s |
+| sound | `8087` | Pure sound | 75s |
+
+**Opt-in heavier load** (second color frame worker):
+
+```bash
+docker compose -f docker-compose.local.yml --profile loops-full up -d --build
+# Adds exploiter on 8084 — only when 500/503s stay rare for a stretch
+```
+
+**D1 write contract (avoid 7429 / discovery storms):**
+- Shared env: `DISCOVERIES_MAX_ITEMS` (default **15**), `DISCOVERIES_CHUNK_PAUSE_SECONDS` (default **2.0**).
+- Single-writer lease on `POST /api/knowledge/discoveries` → 429 + wait (not a crash).
+- Explorer: `LOOP_EXTRACTION_FOCUS=frame` + `LOOP_STATIC_FOCUS=color`. Sound owns pure sound; balanced uses `window`.
+- Stagger via `LOOP_WORKER_OFFSET_SECONDS` so workers do not POST discoveries in lockstep.
+- Public explorer findability: `GET /api/registries/mission`.
+- Fill missing sound origin brackets: `python scripts/sound_origin_sweep.py --api-base https://motion.productions`
+- Parity check (for-creation vs explorer families): `python scripts/check_for_creation_parity.py`
+- Shareable explorer URLs: `/registries/?tab=colors&family=blue&shade=light`
 
 ### Optional: Video AI Node (recipe / solid FFmpeg)
 
@@ -187,11 +212,12 @@ curl -s -X POST https://motion.productions/api/jobs \
 # webjobs / Fly webjobs should pick it up; poll GET /api/jobs/:id
 ```
 
-### Ops checklist
+### Ops checklist (free-tier)
 
-- [ ] Workers Paid + D1 Read Replication
-- [ ] `LOOP_EXTRACTION_FOCUS`: explorer/exploiter=`frame`, balanced=`window`
-- [ ] Stagger offsets already in tomls / Compose
+- [ ] Cloudflare Free Worker + D1 + KV + R2 (no Paid required for Core 4)
+- [ ] Learning loops via `--profile free` (explorer + balanced + interpret + sound)
+- [ ] `LOOP_EXTRACTION_FOCUS`: explorer=`frame`, balanced=`window`
+- [ ] Stagger offsets already in Compose; discoveries lease handles write contention
 - [ ] Public browser writes remain paused; workers use the secret
 
 ---
@@ -199,8 +225,9 @@ curl -s -X POST https://motion.productions/api/jobs \
 ## 3. Recommended path right now
 
 1. **Local Compose** for webjobs + procedural-render (fast iteration, no Fly bill while rebuilding).
-2. Deploy **Cloudflare Worker** with `MOTION_API_SECRET`.
-3. When ready for 24/7: recreate Fly apps with the script above; point `PROCEDURAL_RENDER_URL` / `VIDEO_AI_RENDER_URL` at Fly instead of the tunnel.
-4. Turn on learning loops (`--profile loops` or Fly explorer/exploiter/balanced) once D1 auth + Paid/replication are confirmed.
+2. Deploy **Cloudflare Worker** with `MOTION_API_SECRET` (Free plan is fine for Core 4).
+3. Turn on learning loops: `docker compose -f docker-compose.local.yml --profile free up -d --build`.
+4. Only add `--profile loops-full` (exploiter) when 500/503s stay rare.
+5. Optional later: recreate Fly apps; point `PROCEDURAL_RENDER_URL` / `VIDEO_AI_RENDER_URL` at Fly instead of a tunnel.
 
 See also: [DEPLOYMENT.md](DEPLOYMENT.md), [AUTOMATION.md](AUTOMATION.md), [video-ai/README.md](../video-ai/README.md).

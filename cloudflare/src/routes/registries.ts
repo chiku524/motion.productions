@@ -35,6 +35,8 @@ import {
   computeMotionDepth,
   RGB_COLOR_VOCAB,
 } from "../naming";
+import { handleRegistryBrowse } from "./registryBrowse";
+import { invalidateRegistryReadCaches } from "../browseCache";
 
 const SOUND_PRIMARIES_FOR_COVERAGE = [...SOUND_ORIGIN_PRIMARIES] as string[];
 
@@ -43,6 +45,9 @@ export async function handleRegistriesRoutes(
   env: Env,
   path: string,
 ): Promise<Response | null> {
+  const browseResp = await handleRegistryBrowse(request, env, path);
+  if (browseResp) return browseResp;
+
   // Coverage / health COUNTs must hit primary — replica COUNT on large static_colors hits 7429 / false zeros.
   const db =
     path === "/api/registries/coverage" || path === "/api/registries/health"
@@ -190,6 +195,13 @@ if (path === "/api/registries/backfill-names" && request.method === "POST") {
         }
       } catch {
         /* table may not exist */
+      }
+    }
+    if (!dryRun && updated > 0) {
+      try {
+        await invalidateRegistryReadCaches(env);
+      } catch {
+        /* ignore */
       }
     }
     return json({ updated, dry_run: dryRun, limit: maxRows });
@@ -630,7 +642,7 @@ if (path === "/api/registries/coverage" && request.method === "GET") {
     ((staticColorsCount > 0) || (staticSoundCount === 0 && staticColorsCount === 0));
   if (env.MOTION_KV && cacheSafe) {
     try {
-      await env.MOTION_KV.put(coverageCacheKey, coverageBody, { expirationTtl: 45 });
+      await env.MOTION_KV.put(coverageCacheKey, coverageBody, { expirationTtl: 120 });
     } catch { /* ignore */ }
   }
   return new Response(coverageBody, {

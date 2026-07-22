@@ -4,7 +4,13 @@
 #   cp .env.example .env          # set MOTION_API_SECRET
 #   docker compose -f docker-compose.local.yml up -d --build webjobs procedural-render
 #
-# Full learning loops:
+# Free-tier Core 4 loops (recommended on Cloudflare Free + D1):
+#   docker compose -f docker-compose.local.yml --profile free up -d --build
+#
+# Full loops including exploiter (heavier D1 write load):
+#   docker compose -f docker-compose.local.yml --profile loops-full up -d --build
+#
+# Legacy alias: --profile loops == Core 4 (same as free)
 #   docker compose -f docker-compose.local.yml --profile loops up -d --build
 #
 # Video AI Node FFmpeg (recipe engine):
@@ -23,9 +29,9 @@ x-python-worker: &python-worker
     MOTION_API_SECRET: ${MOTION_API_SECRET:-}
     HEALTH_PORT: "8080"
     PYTHONUNBUFFERED: "1"
-    # Gentle D1 writes: small chunks + pause between POSTs (shared by all workers)
-    DISCOVERIES_MAX_ITEMS: ${DISCOVERIES_MAX_ITEMS:-20}
-    DISCOVERIES_CHUNK_PAUSE_SECONDS: ${DISCOVERIES_CHUNK_PAUSE_SECONDS:-1.25}
+    # Free-tier D1: small chunks + pause between POSTs
+    DISCOVERIES_MAX_ITEMS: ${DISCOVERIES_MAX_ITEMS:-15}
+    DISCOVERIES_CHUNK_PAUSE_SECONDS: ${DISCOVERIES_CHUNK_PAUSE_SECONDS:-2.0}
   restart: unless-stopped
 
 services:
@@ -36,9 +42,12 @@ services:
       API_BASE: ${API_BASE:-https://motion.productions}
       MOTION_API_SECRET: ${MOTION_API_SECRET:-}
       HEALTH_PORT: "8080"
+      PYTHONUNBUFFERED: "1"
       WORKER_START_SCRIPT: generate_bridge
       BRIDGE_LEARN: "1"
       BRIDGE_INTERVAL_SECONDS: "20"
+      DISCOVERIES_MAX_ITEMS: ${DISCOVERIES_MAX_ITEMS:-15}
+      DISCOVERIES_CHUNK_PAUSE_SECONDS: ${DISCOVERIES_CHUNK_PAUSE_SECONDS:-2.0}
     ports:
       - "8081:8080"
     healthcheck:
@@ -53,6 +62,7 @@ services:
     <<: *python-worker
     environment:
       MOTION_API_SECRET: ${MOTION_API_SECRET:-}
+      PYTHONUNBUFFERED: "1"
       WORKER_START_SCRIPT: procedural_render
       PORT: "8080"
       HEALTH_PORT: "8080"
@@ -65,85 +75,93 @@ services:
       retries: 3
       start_period: 60s
 
+  # Core 4 (free): pure color exploration
   explorer:
     <<: *python-worker
-    profiles: ["loops"]
+    profiles: ["free", "loops", "loops-full"]
     environment:
       API_BASE: ${API_BASE:-https://motion.productions}
       MOTION_API_SECRET: ${MOTION_API_SECRET:-}
       HEALTH_PORT: "8080"
+      PYTHONUNBUFFERED: "1"
       LOOP_EXTRACTION_FOCUS: frame
       LOOP_STATIC_FOCUS: color
       LOOP_EXPLOIT_RATIO_OVERRIDE: "0"
       LOOP_WORKFLOW_TYPE: explorer
       LOOP_WORKER_OFFSET_SECONDS: "0"
-      # Keep paused by default; only start after 500s stay rare for a stretch
-      LOOP_DELAY_SECONDS: "90"
-      DISCOVERIES_MAX_ITEMS: "20"
+      LOOP_DELAY_SECONDS: "120"
+      DISCOVERIES_MAX_ITEMS: "15"
       DISCOVERIES_CHUNK_PAUSE_SECONDS: "2.0"
     ports:
       - "8083:8080"
 
+  # Opt-in only: second color frame worker (extra D1 write pressure)
   exploiter:
     <<: *python-worker
-    profiles: ["loops"]
+    profiles: ["loops-full"]
     environment:
       API_BASE: ${API_BASE:-https://motion.productions}
       MOTION_API_SECRET: ${MOTION_API_SECRET:-}
       HEALTH_PORT: "8080"
+      PYTHONUNBUFFERED: "1"
       LOOP_EXTRACTION_FOCUS: frame
       LOOP_STATIC_FOCUS: color
       LOOP_EXPLOIT_RATIO_OVERRIDE: "1"
       LOOP_WORKFLOW_TYPE: exploiter
-      LOOP_WORKER_OFFSET_SECONDS: "20"
-      LOOP_DELAY_SECONDS: "75"
-      DISCOVERIES_MAX_ITEMS: "20"
+      LOOP_WORKER_OFFSET_SECONDS: "25"
+      LOOP_DELAY_SECONDS: "120"
+      DISCOVERIES_MAX_ITEMS: "15"
       DISCOVERIES_CHUNK_PAUSE_SECONDS: "2.0"
     ports:
       - "8084:8080"
 
+  # Core 4 (free): window / blended + narrative
   balanced:
     <<: *python-worker
-    profiles: ["loops"]
+    profiles: ["free", "loops", "loops-full"]
     environment:
       API_BASE: ${API_BASE:-https://motion.productions}
       MOTION_API_SECRET: ${MOTION_API_SECRET:-}
       HEALTH_PORT: "8080"
+      PYTHONUNBUFFERED: "1"
       LOOP_EXTRACTION_FOCUS: window
       LOOP_WORKFLOW_TYPE: main
       LOOP_WORKER_OFFSET_SECONDS: "30"
-      # Free-tier safe: longer gaps so D1 stays calm with sound (+ optional interpret)
-      LOOP_DELAY_SECONDS: "55"
-      # Prefer 5s mini-scenes (API loop_config.duration_seconds is source of truth)
+      LOOP_DELAY_SECONDS: "90"
       LOOP_DURATION_SECONDS: "5"
-      DISCOVERIES_CHUNK_PAUSE_SECONDS: "1.5"
+      DISCOVERIES_MAX_ITEMS: "15"
+      DISCOVERIES_CHUNK_PAUSE_SECONDS: "2.0"
     ports:
       - "8085:8080"
 
+  # Core 4 (free): interpretation + linguistic
   interpret:
     <<: *python-worker
-    profiles: ["loops"]
+    profiles: ["free", "loops", "loops-full"]
     environment:
       API_BASE: ${API_BASE:-https://motion.productions}
       MOTION_API_SECRET: ${MOTION_API_SECRET:-}
       HEALTH_PORT: "8080"
+      PYTHONUNBUFFERED: "1"
       WORKER_START_SCRIPT: interpret_loop
-      # Longer gap: backfill used to pin D1 (~36s CPU) when the join path thrashed
-      INTERPRET_DELAY_SECONDS: "60"
+      INTERPRET_DELAY_SECONDS: "90"
     ports:
       - "8086:8080"
 
+  # Core 4 (free): pure sound
   sound:
     <<: *python-worker
-    profiles: ["loops"]
+    profiles: ["free", "loops", "loops-full"]
     environment:
       API_BASE: ${API_BASE:-https://motion.productions}
       MOTION_API_SECRET: ${MOTION_API_SECRET:-}
       HEALTH_PORT: "8080"
+      PYTHONUNBUFFERED: "1"
       WORKER_START_SCRIPT: sound_loop
-      SOUND_LOOP_DELAY_SECONDS: "50"
+      SOUND_LOOP_DELAY_SECONDS: "75"
       SOUND_LOOP_DURATION_SECONDS: "2.5"
-      DISCOVERIES_CHUNK_PAUSE_SECONDS: "1.5"
+      DISCOVERIES_MAX_ITEMS: "15"
+      DISCOVERIES_CHUNK_PAUSE_SECONDS: "2.0"
     ports:
       - "8087:8080"
 

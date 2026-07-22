@@ -61,6 +61,43 @@ export async function ensureLearnedDynamicMetaTable(db: D1Database): Promise<voi
 let learnedColorsDepthReady = false;
 let learnedColorsDepthAlterAttempted = false;
 
+let staticColorsFamilyReady = false;
+let staticColorsFamilyAlterAttempted = false;
+
+/** Returns true if static_colors.family / shade columns are usable. */
+export async function ensureStaticColorsFamilyColumns(db: D1Database): Promise<boolean> {
+  if (staticColorsFamilyReady) return true;
+  try {
+    await db.prepare("SELECT family, shade FROM static_colors LIMIT 1").first();
+    staticColorsFamilyReady = true;
+    return true;
+  } catch {
+    /* no columns yet */
+  }
+  if (!staticColorsFamilyAlterAttempted) {
+    staticColorsFamilyAlterAttempted = true;
+    for (const sql of [
+      "ALTER TABLE static_colors ADD COLUMN family TEXT",
+      "ALTER TABLE static_colors ADD COLUMN shade TEXT",
+    ]) {
+      try {
+        await db.prepare(sql).run();
+      } catch {
+        /* duplicate / 7429 */
+      }
+    }
+    // Index builds on ~28k-row static_colors burn D1 CPU (7429). Prefer migration 0022 offline;
+    // do not CREATE INDEX on the request path under loop load.
+  }
+  try {
+    await db.prepare("SELECT family, shade FROM static_colors LIMIT 1").first();
+    staticColorsFamilyReady = true;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Returns true if learned_colors.depth_breakdown_json can be queried (column exists). */
 export async function ensureLearnedColorsDepthColumn(db: D1Database): Promise<boolean> {
   if (learnedColorsDepthReady) return true;

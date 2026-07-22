@@ -134,14 +134,25 @@ def api_request(
                         method, path, attempt + 1, delay,
                     )
                 elif status == 429:
+                    delay = backoff_seconds + attempt * 2.0
+                    # Prefer lease body retry_after_ms (discoveries write lease ~25s)
+                    if err_body:
+                        try:
+                            parsed = json.loads(err_body)
+                            ms = parsed.get("retry_after_ms")
+                            if isinstance(ms, (int, float)) and ms > 0:
+                                delay = max(5.0, float(ms) / 1000.0)
+                        except (json.JSONDecodeError, TypeError, ValueError):
+                            pass
                     if e.response and "Retry-After" in e.response.headers:
                         try:
-                            delay = float(e.response.headers["Retry-After"])
+                            header_delay = float(e.response.headers["Retry-After"])
+                            # Retry-After is seconds; use it when larger than body-derived delay
+                            delay = max(delay, header_delay, 5.0)
                         except (ValueError, TypeError):
-                            pass
-                    # Exponential backoff for 429: 3s, 5s, 8s, 12s...
+                            delay = max(delay, 5.0)
                     else:
-                        delay = backoff_seconds + attempt * 2.0
+                        delay = max(delay, 5.0)
                     logger.warning("API %s %s → %s (attempt %s), retrying in %.1fs", method, path, status, attempt + 1, delay)
                 else:
                     logger.warning("API %s %s → %s (attempt %s), retrying in %.1fs", method, path, status, attempt + 1, delay)

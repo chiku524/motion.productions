@@ -40,15 +40,15 @@ npx wrangler secret put VIDEO_AI_RENDER_SECRET
 npx wrangler secret put PROCEDURAL_RENDER_URL   # e.g. https://motion-procedural-render.fly.dev
 ```
 
-## Ops checklist (Paid plan + D1 + focus)
+## Ops checklist (free-tier Core 4 + D1)
 
-- [ ] Cloudflare **Workers Paid** (higher D1 queries/request; needed under multi-worker load)
-- [ ] D1 **Read Replication** enabled on `motion-productions-db`
-- [ ] `MOTION_API_SECRET` set on Worker + all Fly apps
-- [ ] Verify `LOOP_EXTRACTION_FOCUS`: Explorer/Exploiter=`frame`, Balanced=`window`
-- [ ] Deploy **webjobs** (`fly.loop-webjobs.toml`) so pending jobs are fulfilled
+- [ ] Cloudflare **Free** Worker + D1 + KV + R2 (Paid/replication optional later)
+- [ ] Local loops: `docker compose -f docker-compose.local.yml --profile free up -d`
+- [ ] `MOTION_API_SECRET` set on Worker + Docker `.env`
+- [ ] Verify `LOOP_EXTRACTION_FOCUS`: Explorer=`frame`, Balanced=`window`
+- [ ] Deploy **webjobs** so pending jobs are fulfilled
 - [ ] Deploy **procedural-render** if using Video AI `engine=procedural`
-- [ ] GitHub secret `FLY_API_TOKEN` for `.github/workflows/fly-deploy.yml`
+- [ ] Optional: `--profile loops-full` only when D1 503s stay rare
 
 ## Cloudflare Worker (motion.productions)
 
@@ -664,61 +664,52 @@ If logs show **429 Too Many Requests**, **503 Service Unavailable**, or **500 In
 
 **Likely causes:**
 
-1. **D1 query limit (50/Worker invocation on Free plan):** Workers Paid raises this to 1,000/request. The codebase uses larger batch limits (200 discoveries, 100 linguistic, 50 interpretations) optimized for Workers Paid.
-2. **D1 overload:** D1 is single-threaded per DB. With many workers + webapp, concurrent requests queue; when overloaded, D1 returns errors.
-3. **Read timeouts:** `GET /api/knowledge/for-creation` runs 15+ sequential D1 queries. Client timeout is 45s.
+1. **D1 query limit (50/Worker invocation on Free plan):** Keep discovery chunks ≤15 items so each POST stays under the Free query cap.
+2. **D1 CPU time (7429):** Heavy `ORDER BY count` / joins / concurrent writes. Free path uses KV-first reads + a discoveries write lease.
+3. **Too many writers:** Running exploiter + Core 4 at once often storms Free D1.
 
-**What to do:**
+**What to do (free, primary):**
 
-- **Cloudflare Workers Paid ($5/mo):** Increases D1 to 1,000 queries/request. Recommended for production. See §8.4.
-- **Reduce load:** Run fewer worker services or increase loop delay if limits are tight.
-- **Cloudflare logs:** Dashboard → Workers → Logs to see actual D1 errors.
+1. Run **Core 4 only:** `docker compose -f docker-compose.local.yml --profile free up -d`
+2. Treat **429 Discovery writer busy** as normal — clients wait `retry_after_ms` (lease), then retry.
+3. If 503/7429 persist: stop sound temporarily or raise delays further.
+4. **Cloudflare logs:** Dashboard → Workers → Logs to see which endpoints fail most.
 
-### 8.4 Optimized setup (extra workers + Workers Paid)
+Paid Workers / D1 Read Replication can help later but are **not required** for the free Core 4 path.
 
-For the most efficient workflow and fastest registry completion:
+### 8.4 Free-tier Core 4 (default)
 
 | Component | Cost | What to do |
 |-----------|------|------------|
-| **Cloudflare Workers Paid** | ~$5/mo + usage | Upgrade at [dash.cloudflare.com](https://dash.cloudflare.com) → Workers & Pages → Workers Paid. Unlocks 1,000 D1 queries/request (vs 50 on Free). Essential for stability. |
-| **More worker capacity** | Varies by host | Scale your container host so you can run 6 workers: Explorer, Exploiter, Balanced, Balanced-2, Interpretation, Sound. A second Balanced doubles dynamic/narrative throughput. |
-| **Buffer** | ~$5 | Covers D1/KV overages, usage spikes. |
+| **Cloudflare Free** | $0 | Worker + D1 + KV + R2. Core 4 loops + small discovery chunks. |
+| **Local Docker** | $0 (your CPU) | `--profile free`: explorer, balanced, interpret, sound. |
+| **Opt-in exploiter** | $0 but heavier | `--profile loops-full` only when 503s stay rare. |
 
-**Add 6th worker (Balanced-2):**
+**Batch / cache (free):** Discoveries **15**/request, chunk pause **2.0s**. KV TTLs: coverage **120s**, for-creation **300s**, browse **300s**, backfill-prompts **300s**, learning/stats **120s**.
 
-1. Create a new worker service from the same repo and Dockerfile.
-2. **Env vars:** `API_BASE`, `LOOP_EXTRACTION_FOCUS=window`, `LOOP_WORKFLOW_TYPE=main` (same as Balanced). Do **not** set `LOOP_EXPLOIT_RATIO_OVERRIDE`.
-3. Both Balanced workers read exploit ratio from the UI and run per-window extraction. 2× Balanced = 2× dynamic/narrative discovery rate.
+### 8.5 D1 stability on Free (avoid wasted worker compute)
 
-**Alternative:** Add 2nd Explorer for 2× static (color/sound) throughput instead of Balanced-2. Choose based on which registry (static vs dynamic) you want to grow faster.
+D1 is single-threaded and has a CPU time limit per operation. Too many concurrent writers cause `D1_ERROR: D1 DB exceeded its CPU time limit`. Failed requests waste container CPU (retries) and lose discoveries.
 
-**Batch limits (Workers Paid):** Discoveries 50/request (reduced for D1 CPU stability), linguistic 100/request, interpretations 50/request. Fewer HTTP round-trips = more efficient. KV TTLs: learning/stats 120s, for-creation 180s, loop/progress 120s, backfill-prompts 120s.
+**Enforced free-tier defaults:**
 
-### 8.5 D1 stability & cost-saving (avoid wasted worker compute)
+- **Core 4 workers** (no exploiter by default).
+- **Discoveries max 15**/request + write lease (429 when busy).
+- **KV-first coverage / for-creation / browse**; avoid `COUNT(*)` on `static_colors` unless `?fresh=1`.
 
-D1 is single-threaded and has a CPU time limit per operation. With 6 workers, too many concurrent requests cause `D1_ERROR: D1 DB exceeded its CPU time limit`. Failed requests waste container CPU (retries) and lost discoveries (video work not persisted).
+**Workflow improvements:**
 
-**Enforced minimums (in code):**
-
-- **Pace (delay between runs):** Min 3 seconds. Webapp and API enforce this. With 6 workers, lower delays = more D1 overload.
-- **Batch size:** 100 discoveries/request (reduced for D1 CPU stability).
-
-**Workflow improvements (continuous progress):**
-
-- **LOOP_WORKER_OFFSET_SECONDS:** Per-worker startup stagger (e.g. Explorer=0, Exploiter=5, Balanced=10). Prevents all workers from hitting D1 at once. Set per service in the host’s environment.
-- **D1-aware retry:** On `D1_ERROR` or CPU time limit, the API client uses longer backoff (10s, 15s, 20s…) before retry instead of 2s, giving D1 time to reset.
-- **Extended jitter:** 0–8s jitter on D1-heavy endpoints (knowledge/for-creation, discoveries, learning/stats) spreads concurrent requests.
-- **Discovery recording retry:** If discovery run recording fails with 5xx, the loop retries once after 12s so progress is still recorded.
-
-**D1 Read Replication (recommended):** Enable in Cloudflare Dashboard → **D1** → your database → **Settings** → **Read Replication** → Enable. The Worker uses the Sessions API (`withSession("first-unconstrained")`) to spread reads across replicas; writes still go to the primary. This reduces CPU load on the primary and helps avoid the CPU time limit.
+- **LOOP_WORKER_OFFSET_SECONDS:** Stagger startup so workers do not POST discoveries in lockstep.
+- **D1-aware retry:** On `D1_ERROR` / CPU limit, longer backoff (10s, 15s, 20s…).
+- **429 lease retry:** Honor `retry_after_ms` / `Retry-After` (floor 5s) for discoveries.
+- **Extended jitter:** 0–8s on D1-heavy endpoints.
 
 **If errors persist:**
 
-1. **Enable Read Replication** (above) if not already on.
-2. **Set LOOP_WORKER_OFFSET_SECONDS** per service (Explorer=0, Exploiter=5, Balanced=10, Balanced-2=15) to stagger startup.
-3. **Increase Pace:** Set 5–10s in the webapp loop controls. Fewer requests/min = more stable.
-4. **Run 4 workers:** Disable Balanced-2 and Sound temporarily. Explorer, Exploiter, Balanced, Interpretation still give strong coverage. Re-enable when D1 errors drop.
-5. **Check Cloudflare logs:** Workers → Logs to see which endpoints fail most (for-creation, discoveries, loop/progress).
+1. Confirm `--profile free` (exploiter stopped).
+2. Increase delays (explorer 120s+, balanced 90s+, sound 75s+).
+3. Check logs for backfill/discoveries/for-creation — not jobs alone.
+4. Optional later: Workers Paid + D1 Read Replication if you want denser concurrency.
 
 ---
 
