@@ -53,7 +53,12 @@ def _pick_audio_params(knowledge: dict) -> tuple[str, str, str]:
 
 
 def _pick_target_primitive(api_base: str) -> str | None:
-    """Prefer SOUND_ORIGIN_PRIMITIVES missing from coverage (rustle/click/whoosh first)."""
+    """Prefer missing sound origins from mission, then coverage gaps."""
+    from src.knowledge.mission_targets import pick_target_sound_origin
+
+    targeted = pick_target_sound_origin(api_base)
+    if targeted:
+        return targeted
     from src.knowledge.blend_depth import SOUND_ORIGIN_PRIMITIVES
 
     missing: list[str] = []

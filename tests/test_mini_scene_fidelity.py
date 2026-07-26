@@ -206,7 +206,13 @@ class TestMiniSceneFidelity(unittest.TestCase):
         self.assertTrue(len(prompt) > 10)
         lower = prompt.lower()
         self.assertTrue(
-            any(w in lower for w in ("ball", "orb", "block", "box", "arrow", "person", "character", "figure")),
+            any(
+                w in lower
+                for w in (
+                    "ball", "orb", "block", "box", "arrow", "person", "character", "figure",
+                    "tree", "pine", "oak", "fish", "wave", "building", "tower", "cloud",
+                )
+            ),
             f"unexpected entity phrasing: {prompt}",
         )
         # When the only candidate is avoided, return None (deterministic path)

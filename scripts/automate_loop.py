@@ -92,6 +92,7 @@ def pick_prompt(
     from src.automation.prompt_gen import (
         generate_mini_scene_prompt,
         generate_targeted_blended_prompt,
+        generate_targeted_color_family_prompt,
         generate_targeted_entity_prompt,
         generate_targeted_narrative_prompt,
         mutate_liked_prompt,
@@ -101,6 +102,17 @@ def pick_prompt(
     bad = set(state.get("bad_prompts", []) or [])
     recent = set(state.get("recent_prompts", [])[-150:])
     interpretation_prompts = (knowledge or {}).get("interpretation_prompts", [])
+    api_base_for_mission = (os.environ.get("API_BASE") or "").rstrip("/")
+    mission_cache = state.get("_mission_cache")
+    mission_age = float(state.get("_mission_cache_at") or 0)
+    if time.time() - mission_age > 90:
+        try:
+            from src.knowledge.mission_targets import fetch_mission
+            mission_cache = fetch_mission(api_base_for_mission)
+            state["_mission_cache"] = mission_cache
+            state["_mission_cache_at"] = time.time()
+        except Exception:
+            mission_cache = state.get("_mission_cache")
 
     narr = (coverage or {}).get("narrative") or {}
     p_cov = float((narr.get("plots") or {}).get("coverage_pct") or 100)
@@ -112,13 +124,34 @@ def pick_prompt(
     entity_pct = float((coverage or {}).get("learned_entities_coverage_pct") or 0)
     thin_plots_style = ps_min < 85
     thin_narrative = narr_min < 90 or g_cov < 90
-    thin_color = color_pct < 8
+    # Color is the bottleneck until explorer findability rises — keep threshold generous
+    thin_color = color_pct < 12
+    critical_color = color_pct < 5
     thin_entities = entity_pct < 40
     # Mission: 5s mini-scenes that sound like real user asks — dominate when registries are dense
     dense_enough = narr_min >= 90 and color_pct >= 50
     mini_rate = 0.55 if dense_enough else 0.28
-    if thin_entities:
+    if thin_entities and not critical_color:
         mini_rate = max(mini_rate, 0.48)
+    if critical_color:
+        # Starve mini-scenes until hue families have a foothold
+        mini_rate = min(mini_rate, 0.12)
+
+    findability = float((mission_cache or {}).get("findability_pct") or 100)
+    thin_families = findability < 85 or thin_color
+    static_focus = (os.environ.get("LOOP_STATIC_FOCUS") or "both").strip().lower()
+
+    # When color coverage is tiny, bias to underfilled hue families BEFORE mini-scenes/exploit
+    color_target_rate = 0.72 if critical_color else (0.48 if thin_color else 0.28)
+    if static_focus in ("color", "both") and thin_families and secure_random() < color_target_rate:
+        color_prompt = generate_targeted_color_family_prompt(
+            api_base=api_base_for_mission,
+            mission=mission_cache if isinstance(mission_cache, dict) else None,
+            avoid=recent | bad,
+        )
+        if color_prompt:
+            logger.info("Targeted color-family prompt: %s", color_prompt[:60] + ("..." if len(color_prompt) > 60 else ""))
+            return (color_prompt, False, {"source": "targeted_color_family"})
 
     # Prefer everyday mini-scenes before exploit/registry jargon
     if secure_random() < mini_rate:
@@ -129,6 +162,8 @@ def pick_prompt(
 
     # Soften exploit when dense; still prefer human-liked good prompts strongly
     effective_exploit = exploit_ratio * (0.55 if dense_enough else 1.0)
+    if critical_color:
+        effective_exploit *= 0.35
     if secure_random() < effective_exploit and good:
         # Prefer short, natural good prompts over instructive registry phrasing
         natural = [
@@ -157,8 +192,8 @@ def pick_prompt(
                     return (variant, True, {"source": "exploit_good_variant", "parent": chosen[:80]})
             return (chosen, True, {"source": "exploit_good"})
 
-    # Fill thin entity space with targeted entity mini-scenes
-    if thin_entities and secure_random() < 0.35:
+    # Fill thin entity space with targeted entity mini-scenes (scenic props when thin)
+    if thin_entities and secure_random() < (0.22 if critical_color else 0.35):
         targeted_ent = generate_targeted_entity_prompt(knowledge, coverage=coverage, avoid=recent | bad)
         if targeted_ent:
             logger.info("Targeted entity prompt: %s", targeted_ent[:60] + ("..." if len(targeted_ent) > 60 else ""))

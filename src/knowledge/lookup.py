@@ -70,6 +70,7 @@ def get_knowledge_for_creation(
             knowledge["learned_colors"] = data.get("learned_colors", {})
             knowledge["learned_motion"] = data.get("learned_motion", [])
             knowledge["learned_audio"] = data.get("learned_audio", [])
+            knowledge["learned_audio_semantic"] = data.get("learned_audio_semantic", [])
             knowledge["learned_gradient"] = data.get("learned_gradient", [])
             knowledge["learned_camera"] = data.get("learned_camera", [])
             knowledge["learned_entities"] = data.get("learned_entities", [])
@@ -87,6 +88,7 @@ def get_knowledge_for_creation(
             knowledge["learned_colors"] = {}
             knowledge["learned_motion"] = []
             knowledge["learned_audio"] = []
+            knowledge["learned_audio_semantic"] = []
             knowledge["learned_gradient"] = []
             knowledge["learned_camera"] = []
             knowledge["learned_entities"] = []
@@ -118,6 +120,10 @@ def get_knowledge_for_creation(
             knowledge["learned_motion"] = []
     if "learned_audio" not in knowledge:
         knowledge["learned_audio"] = []
+    if "learned_audio_semantic" not in knowledge:
+        knowledge["learned_audio_semantic"] = []
+    if "static_colors" not in knowledge:
+        knowledge["static_colors"] = {}
     if "learned_gradient" not in knowledge:
         knowledge["learned_gradient"] = []
     if "learned_camera" not in knowledge:

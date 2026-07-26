@@ -494,6 +494,45 @@ def generate_targeted_blended_prompt(
     return prompt
 
 
+def generate_targeted_color_family_prompt(
+    *,
+    family: str | None = None,
+    api_base: str = "",
+    mission: dict[str, Any] | None = None,
+    avoid: set[str] | None = None,
+) -> str | None:
+    """
+    Bias prompts toward underfilled hue families (registry explorer mission).
+    Everyday phrasing so creation still reads like a user ask.
+    """
+    from ..knowledge.mission_targets import (
+        color_family_prompt_bits,
+        pick_target_color_family,
+        underfilled_color_families,
+    )
+
+    avoid = avoid or set()
+    target = family or pick_target_color_family(api_base, mission)
+    if not target:
+        under = underfilled_color_families(mission, max_n=3)
+        target = secure_choice(under) if under else "blue"
+    # Prefer light/deep shades randomly to widen shade brackets
+    shade = secure_choice(["deep", "mid", "light", "muted"])
+    subject, cue = color_family_prompt_bits(target, shade)
+    templates = [
+        f"a {cue} {subject} scene at dusk",
+        f"{cue} {subject} tones across a quiet landscape",
+        f"soft {subject} light, {cue} atmosphere",
+        f"a {cue} {subject} palette over still water",
+        f"close-up textures in {cue} {subject}",
+    ]
+    for _ in range(8):
+        prompt = secure_choice(templates)
+        if prompt and prompt not in avoid and not _is_near_duplicate(prompt, avoid):
+            return prompt
+    return None
+
+
 def generate_targeted_entity_prompt(
     knowledge: dict[str, Any] | None = None,
     *,
@@ -513,21 +552,34 @@ def generate_targeted_entity_prompt(
     ]
     seen_kinds = {str(e.get("kind") or "").lower() for e in learned}
     seen_traj = {str(e.get("trajectory") or "").lower() for e in learned}
-    kinds = ["circle", "rect", "arrow", "character"]
+    # Prefer scenic props when under-represented (photoreal-ready object coverage)
+    kinds = ["circle", "rect", "arrow", "character", "tree", "fish", "wave", "building", "cloud"]
     trajs = ["left", "right", "up", "down", "toward", "away"]
-    rare_kinds = [k for k in kinds if k not in seen_kinds] or kinds
+    counts = {k: 0 for k in kinds}
+    for e in learned:
+        k = str(e.get("kind") or "").lower()
+        if k in counts:
+            counts[k] += 1
+    # Bias to rarest kinds (including zero)
+    ranked = sorted(kinds, key=lambda k: (counts[k], k not in seen_kinds))
+    rare_kinds = ranked[:5] or kinds
     rare_trajs = [t for t in trajs if t not in seen_traj] or trajs
     kind = secure_choice(rare_kinds)
     traj = secure_choice(rare_trajs)
-    bounce = kind in ("circle", "rect") and secure_random() < 0.55
+    bounce = kind in ("circle", "rect", "fish") and secure_random() < 0.55
     labels = {
         "circle": secure_choice(["ball", "orb", "sphere"]),
         "rect": secure_choice(["block", "box"]),
         "arrow": "arrow",
         "character": secure_choice(["person", "character", "figure"]),
+        "tree": secure_choice(["tree", "pine", "oak"]),
+        "fish": "fish",
+        "wave": secure_choice(["wave", "ocean wave"]),
+        "building": secure_choice(["building", "tower", "skyscraper"]),
+        "cloud": secure_choice(["cloud", "drifting cloud"]),
     }
     label = labels.get(kind, "shape")
-    color = secure_choice(["red", "blue", "green", "neon", "warm", "cool"])
+    color = secure_choice(["red", "blue", "green", "yellow", "amber", "teal", "neon", "warm", "cool"])
     setting = secure_choice([
         "at night",
         "in a neon city",
@@ -538,6 +590,7 @@ def generate_targeted_entity_prompt(
         "in a desert",
         "underwater",
         "in a studio",
+        "at golden hour",
         "",
     ])
     music = secure_choice([
@@ -552,6 +605,11 @@ def generate_targeted_entity_prompt(
         expr = secure_choice(["happy", "calm", "playful", "shy", ""])
         prompt = f"a {expr + ' ' if expr else ''}{label} walking {traj}{setting_bit} with {music}".strip()
         prompt = " ".join(prompt.split())
+    elif kind in ("tree", "building", "cloud", "wave"):
+        verb = "swaying" if kind in ("tree", "building") else ("drifting" if kind == "cloud" else "rolling")
+        prompt = f"{label}s {verb} {traj}{setting_bit} with {music}"
+    elif kind == "fish":
+        prompt = f"a {color} fish {'jumping' if bounce else 'swimming'} {traj}{setting_bit} with {music}"
     elif bounce:
         prompt = f"a {color} {label} bouncing {traj}{setting_bit} with {music}"
     else:

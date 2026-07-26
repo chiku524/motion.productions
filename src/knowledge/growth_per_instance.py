@@ -639,12 +639,14 @@ def grow_static_sound_from_audio_segments(
     prompt: str = "",
     config: dict[str, Any] | None = None,
     collect_novel_for_sync: bool = False,
+    force_novel: bool = False,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """
     Grow the pure-sound mesh (static_sound registry) from per-frame segments.
     Origin/primitive values are already in the mesh; each segment = one instant of noise,
     expressed as a blend of primitives (depth_breakdown). New discoveries are recorded
     in the registry; mesh is synced to the API and used next run. Returns: (added counts, novel payloads).
+    When force_novel=True, always collect API payloads (e.g. sound origin sweep / D1 reseed).
     """
     added: dict[str, Any] = {"static_sound": 0}
     novel_list: list[dict[str, Any]] = []
@@ -652,7 +654,11 @@ def grow_static_sound_from_audio_segments(
     out_novel = novel_list if collect_novel_for_sync else None
     for sound in audio_segments:
         if ensure_static_sound_in_registry(
-            sound, source_prompt=prompt, config=config, out_novel=out_novel
+            sound,
+            source_prompt=prompt,
+            config=config,
+            out_novel=out_novel,
+            force_novel=force_novel,
         ):
             added["static_sound"] += 1
     return added, novel_list
