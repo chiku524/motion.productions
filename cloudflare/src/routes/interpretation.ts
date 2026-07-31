@@ -248,9 +248,14 @@ if (path === "/api/interpretations" && request.method === "POST") {
   }
   const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
   if (!prompt) return err("prompt is required");
-  const source = typeof body.source === "string" && /^(web|worker|loop|backfill|generate)$/.test(body.source) ? body.source : "worker";
-  // Gibberish check: skip for source "loop" so every video run is recorded (interpretation registry grows from main workers)
-  if (source !== "loop" && isGibberishPrompt(prompt, true)) return err("prompt appears to be gibberish; interpretation registry requires meaningful prompts");
+  const source =
+    typeof body.source === "string" && /^(web|worker|loop|backfill|generate|bridge)$/.test(body.source)
+      ? body.source
+      : "worker";
+  // Skip gibberish for completed video-run sources so every render is recorded in the registry
+  if (!/^(loop|bridge|web)$/.test(source) && isGibberishPrompt(prompt, true)) {
+    return err("prompt appears to be gibberish; interpretation registry requires meaningful prompts");
+  }
   const instruction = body.instruction && typeof body.instruction === "object" ? body.instruction : null;
   if (!instruction) return err("instruction is required");
   const id = uuid();

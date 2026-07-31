@@ -29,8 +29,8 @@ x-python-worker: &python-worker
     MOTION_API_SECRET: ${MOTION_API_SECRET:-}
     HEALTH_PORT: "8080"
     PYTHONUNBUFFERED: "1"
-    # Free-tier D1: small chunks + pause between POSTs
-    DISCOVERIES_MAX_ITEMS: ${DISCOVERIES_MAX_ITEMS:-15}
+    # Free-tier D1: small weighted chunks + pause between POSTs (blends cost ~3 queries each)
+    DISCOVERIES_MAX_ITEMS: ${DISCOVERIES_MAX_ITEMS:-8}
     DISCOVERIES_CHUNK_PAUSE_SECONDS: ${DISCOVERIES_CHUNK_PAUSE_SECONDS:-2.0}
   restart: unless-stopped
 
@@ -46,7 +46,7 @@ services:
       WORKER_START_SCRIPT: generate_bridge
       BRIDGE_LEARN: "1"
       BRIDGE_INTERVAL_SECONDS: "20"
-      DISCOVERIES_MAX_ITEMS: ${DISCOVERIES_MAX_ITEMS:-15}
+      DISCOVERIES_MAX_ITEMS: ${DISCOVERIES_MAX_ITEMS:-8}
       DISCOVERIES_CHUNK_PAUSE_SECONDS: ${DISCOVERIES_CHUNK_PAUSE_SECONDS:-2.0}
     ports:
       - "8081:8080"
@@ -90,7 +90,7 @@ services:
       LOOP_WORKFLOW_TYPE: explorer
       LOOP_WORKER_OFFSET_SECONDS: "0"
       LOOP_DELAY_SECONDS: "120"
-      DISCOVERIES_MAX_ITEMS: "15"
+      DISCOVERIES_MAX_ITEMS: "8"
       DISCOVERIES_CHUNK_PAUSE_SECONDS: "2.0"
     ports:
       - "8083:8080"
@@ -110,7 +110,7 @@ services:
       LOOP_WORKFLOW_TYPE: exploiter
       LOOP_WORKER_OFFSET_SECONDS: "25"
       LOOP_DELAY_SECONDS: "120"
-      DISCOVERIES_MAX_ITEMS: "15"
+      DISCOVERIES_MAX_ITEMS: "8"
       DISCOVERIES_CHUNK_PAUSE_SECONDS: "2.0"
     ports:
       - "8084:8080"
@@ -129,7 +129,7 @@ services:
       LOOP_WORKER_OFFSET_SECONDS: "30"
       LOOP_DELAY_SECONDS: "90"
       LOOP_DURATION_SECONDS: "5"
-      DISCOVERIES_MAX_ITEMS: "15"
+      DISCOVERIES_MAX_ITEMS: "8"
       DISCOVERIES_CHUNK_PAUSE_SECONDS: "2.0"
     ports:
       - "8085:8080"
@@ -160,7 +160,7 @@ services:
       WORKER_START_SCRIPT: sound_loop
       SOUND_LOOP_DELAY_SECONDS: "75"
       SOUND_LOOP_DURATION_SECONDS: "2.5"
-      DISCOVERIES_MAX_ITEMS: "15"
+      DISCOVERIES_MAX_ITEMS: "8"
       DISCOVERIES_CHUNK_PAUSE_SECONDS: "2.0"
     ports:
       - "8087:8080"

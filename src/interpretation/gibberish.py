@@ -25,6 +25,12 @@ _KNOWN_WORDS: set[str] = {
     "ambient", "music", "sfx", "balanced", "slight", "bilateral", "centered",
     # Slang / dialect
     "lit", "chill", "vibing", "vibes", "lowkey", "glowy", "mellow",
+    # Common creation / scene vocabulary (avoid false positives on long English words)
+    "photorealistic", "underwater", "reflecting", "walking", "bouncing", "drifting",
+    "pulse", "pulsing", "forest", "harbor", "lanterns", "person", "character", "scene",
+    "create", "render", "give", "show", "make", "something", "want", "white", "black",
+    "teal", "slate", "violet", "orange", "yellow", "house", "techno", "beat", "vocals",
+    "camera", "quick", "impact", "shadowy", "clean", "roll",
 }
 
 # Regex: gibberish patterns (long consonant clusters, repeated syllables, etc.)
@@ -73,15 +79,20 @@ def is_gibberish_prompt(prompt: str, *, strict: bool = False) -> bool:
     if len(text) < 3:
         return False  # Very short prompts pass
     text_lower = text.lower()
+    words = re.findall(r"[a-z]{3,}", text_lower)
+    if not words:
+        return False
 
-    if _has_gibberish_pattern(text_lower):
+    # Ignore known words before consonant-cluster check (avoids "abstract" false positive)
+    unknown_words = [w for w in words if w not in _KNOWN_WORDS]
+    if unknown_words and _has_gibberish_pattern(" ".join(unknown_words)):
         return True
+
     ratio = _word_known_ratio(text_lower)
     avg_len = _avg_word_length(text_lower)
-    words = re.findall(r"[a-z]{3,}", text_lower)
 
-    # Long unknown words (e.g. "lixakafereka", "liworazagura") strongly suggest gibberish
-    long_unknown = [w for w in words if len(w) >= 10 and w not in _KNOWN_WORDS]
+    # Long unknown only counts as gibberish when the word itself looks invented
+    long_unknown = [w for w in unknown_words if len(w) >= 10 and _has_gibberish_pattern(w)]
     if long_unknown:
         return True
 

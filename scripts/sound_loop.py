@@ -177,6 +177,33 @@ def run() -> None:
                 collect_novel_for_sync=bool(api_base),
             )
             count = added.get("static_sound", 0)
+            # When decoded audio yields no novel keys, still grow from spec (same as video path)
+            if count == 0:
+                from types import SimpleNamespace
+                from src.knowledge.growth_per_instance import (
+                    derive_static_sound_from_spec,
+                    ensure_static_sound_in_registry,
+                )
+                prefer: list[str] = []
+                if target_primitive:
+                    prefer = [target_primitive]
+                spec = SimpleNamespace(
+                    audio_mood=mood,
+                    audio_tempo=tempo,
+                    audio_presence=presence,
+                )
+                out_novel: list = []
+                spec_sound = derive_static_sound_from_spec(spec, prefer_primitives=prefer or None)
+                if spec_sound and ensure_static_sound_in_registry(
+                    spec_sound,
+                    source_prompt=source_prompt,
+                    config=config,
+                    out_novel=out_novel if api_base else None,
+                ):
+                    count = 1
+                    added["static_sound"] = 1
+                    if out_novel:
+                        novel_list = list(novel_list or []) + out_novel
             if api_base and novel_list:
                 try:
                     post_static_discoveries(
@@ -191,10 +218,14 @@ def run() -> None:
             if count:
                 print(
                     f"[{cycle}] sound discovery: +{count} "
-                    f"(mood={mood}, tempo={tempo}, presence={presence}, primitive={target_primitive})"
+                    f"(mood={mood}, tempo={tempo}, presence={presence}, primitive={target_primitive}, "
+                    f"segments={len(segments)})"
                 )
             else:
-                print(f"[{cycle}] no new sounds this cycle")
+                print(
+                    f"[{cycle}] no new sounds this cycle "
+                    f"(segments={len(segments)}, mood={mood}, primitive={target_primitive})"
+                )
 
             try:
                 wav_path.unlink(missing_ok=True)

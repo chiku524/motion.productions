@@ -94,7 +94,12 @@ export const KNOWN_WORDS = new Set([
   "subtle", "bold", "muted", "vibrant", "intense", "explainer", "tutorial", "explain", "gradual",
   "symmetric", "silence", "ambient", "music", "sfx", "balanced", "slight", "bilateral", "centered",
   "lit", "chill", "vibing", "vibes", "lowkey", "glowy", "mellow",
+  "photorealistic", "underwater", "reflecting", "walking", "bouncing", "drifting", "pulse", "pulsing",
+  "forest", "harbor", "lanterns", "person", "character", "scene", "create", "render", "give", "show",
+  "make", "something", "want", "white", "black", "teal", "slate", "violet", "orange", "yellow",
+  "house", "techno", "beat", "vocals", "camera", "quick", "impact", "shadowy", "clean", "roll",
 ]);
+
 export const GIBBERISH_RE = /(?:[bcdfghjklmnpqrstvwxz]{4,}|([a-z]{2})\1{2,}|[qxjz]{2,})/i;
 
 // RGB → semantic color vocabulary (mirrors Python blend_names.py)
@@ -196,12 +201,15 @@ export function isGibberishPrompt(prompt: string, strict = false): boolean {
   const text = prompt.trim();
   if (text.length < 3) return false;
   const lower = text.toLowerCase();
-  if (GIBBERISH_RE.test(lower)) return true;
   const words = lower.match(/[a-z]{3,}/g) || [];
   if (!words.length) return false;
-  const known = words.filter((w) => KNOWN_WORDS.has(w)).length;
+  // Ignore known words before consonant-cluster check (avoids "abstract" / "bstr" false positive)
+  const unknownWords = words.filter((w) => !KNOWN_WORDS.has(w));
+  if (unknownWords.length && GIBBERISH_RE.test(unknownWords.join(" "))) return true;
+  const known = words.length - unknownWords.length;
   const ratio = known / words.length;
-  const longUnknown = words.filter((w) => w.length >= 10 && !KNOWN_WORDS.has(w));
+  // Long unknown only counts as gibberish when the word itself looks invented
+  const longUnknown = unknownWords.filter((w) => w.length >= 10 && GIBBERISH_RE.test(w));
   if (longUnknown.length > 0) return true;
   const avgLen = words.reduce((s, w) => s + w.length, 0) / words.length;
   if (strict) {

@@ -2,16 +2,18 @@
 Remote sync: POST discoveries to the Cloudflare API (D1/KV).
 When api_base is set, growth persists to D1 instead of local JSON.
 
-Batching: Workers Paid allows 1000 queries/request; ~3 per item.
-We send max 200 items per request for efficiency (fewer round-trips).
+Cloudflare Free D1 allows ~50 queries/request. Blends cost ~3 queries each
+(name uniqueness checks), so we keep a small weighted budget per POST.
 """
 from typing import Any
 
 # Match API DISCOVERIES_MAX_ITEMS. Keep small for Cloudflare Free D1 CPU pressure.
 # Override via env DISCOVERIES_MAX_ITEMS / DISCOVERIES_CHUNK_PAUSE_SECONDS (Docker loops).
-DISCOVERIES_MAX_ITEMS = 15
+DISCOVERIES_MAX_ITEMS = 8
 # Pause between chunks so concurrent loops do not stampede D1.
-DISCOVERIES_CHUNK_PAUSE_SECONDS = 1.25
+DISCOVERIES_CHUNK_PAUSE_SECONDS = 2.0
+# Blends run resolveUniqueBlendName (~3 D1 queries); weight them higher in the budget.
+_BLEND_ITEM_WEIGHT = 3
 
 
 def _max_items() -> int:
@@ -21,12 +23,19 @@ def _max_items() -> int:
         n = int(raw) if raw.strip() else DISCOVERIES_MAX_ITEMS
     except ValueError:
         n = DISCOVERIES_MAX_ITEMS
-    return max(5, min(n, 50))
+    return max(3, min(n, 50))
+
+
+def _item_weight(category: str) -> int:
+    """Budget cost of one item toward DISCOVERIES_MAX_ITEMS."""
+    if category == "blends":
+        return _BLEND_ITEM_WEIGHT
+    return 1
 
 
 def _chunk_discoveries(discoveries: dict[str, Any]) -> list[dict[str, Any]]:
     """
-    Split discoveries into chunks of at most DISCOVERIES_MAX_ITEMS items each.
+    Split discoveries into chunks of at most DISCOVERIES_MAX_ITEMS weighted budget.
     Order matches API processing: static_colors, static_sound, narrative, colors,
     blends, motion, lighting, composition, graphics, temporal, technical,
     audio_semantic, time, gradient, camera, transition, depth.
@@ -50,13 +59,17 @@ def _chunk_discoveries(discoveries: dict[str, Any]) -> list[dict[str, Any]]:
         current = {}
         count = 0
 
+    def ensure_room(weight: int) -> None:
+        nonlocal count
+        if count > 0 and count + weight > max_items:
+            flush()
+
     # Narrative: dict of aspect -> list
     narr = discoveries.get("narrative") or {}
     for aspect in narrative_aspects:
         items = narr.get(aspect) or []
         for item in items:
-            if count >= max_items:
-                flush()
+            ensure_room(1)
             if "narrative" not in current:
                 current["narrative"] = {}
             if aspect not in current["narrative"]:
@@ -64,16 +77,16 @@ def _chunk_discoveries(discoveries: dict[str, Any]) -> list[dict[str, Any]]:
             current["narrative"][aspect].append(item)
             count += 1
 
-    # List categories
+    # List categories (blends weigh more so Free D1 stays under ~50 queries/request)
     for key in list_keys:
         items = discoveries.get(key) or []
+        w = _item_weight(key)
         for item in items:
-            if count >= max_items:
-                flush()
+            ensure_room(w)
             if key not in current:
                 current[key] = []
             current[key].append(item)
-            count += 1
+            count += w
 
     if current:
         chunks.append(current)

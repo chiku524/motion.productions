@@ -165,8 +165,15 @@ def api_request(
         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
             last_exc = e
             if attempt < max_retries:
-                logger.warning("API %s %s connection/timeout (attempt %s), retrying in %.1fs", method, path, attempt + 1, backoff_seconds)
-                time.sleep(backoff_seconds)
+                delay = backoff_seconds
+                # Discoveries timeouts usually mean D1/Worker overload — back off like D1 errors
+                if method == "POST" and "/api/knowledge/discoveries" in path:
+                    delay = D1_BACKOFF_BASE_SECONDS + attempt * D1_BACKOFF_INCREMENT
+                logger.warning(
+                    "API %s %s connection/timeout (attempt %s), retrying in %.1fs",
+                    method, path, attempt + 1, delay,
+                )
+                time.sleep(delay)
                 continue
             raise APIError(f"API {method} {path} failed: {e}", path=path) from e
     if last_exc:

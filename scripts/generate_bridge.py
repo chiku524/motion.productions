@@ -140,7 +140,8 @@ def process_job(job: dict, api_base: str, config: dict, learn: bool) -> bool:
                 )
                 print("  [interpretation] recorded", flush=True)
             except Exception as e:
-                print(f"  [interpretation] failed: {e}", flush=True)
+                detail = getattr(e, "body", None) or ""
+                print(f"  [interpretation] failed: {e}" + (f" — {detail[:200]}" if detail else ""), flush=True)
             try:
                 from src.interpretation.linguistic import extract_linguistic_mappings
                 from src.interpretation.linguistic_client import post_linguistic_growth

@@ -694,7 +694,7 @@ D1 is single-threaded and has a CPU time limit per operation. Too many concurren
 **Enforced free-tier defaults:**
 
 - **Core 4 workers** (no exploiter by default).
-- **Discoveries max 15**/request + write lease (429 when busy).
+- **Discoveries max 8**/request (blends weighted higher on the client) + write lease (429 when busy).
 - **KV-first coverage / for-creation / browse**; avoid `COUNT(*)` on `static_colors` unless `?fresh=1`.
 
 **Workflow improvements:**
