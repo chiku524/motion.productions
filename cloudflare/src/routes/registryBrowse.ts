@@ -55,11 +55,9 @@ async function loadClassifiedColors(env: Env): Promise<ClassifiedColor[]> {
     try {
       const cached = await kv.get(BROWSE_COLORS_CACHE_KEY, "json");
       if (Array.isArray(cached) && cached.length) {
-        const target = Math.min(SCAN_CAP, registryTotal || SCAN_CAP);
-        // Refresh when cache is undersized vs known registry (stale partial scans).
-        if (cached.length >= target || (registryTotal <= 0 && cached.length >= 100)) {
-          return cached as ClassifiedColor[];
-        }
+        const target = registryTotal > 0 ? Math.min(SCAN_CAP, registryTotal) : SCAN_CAP;
+        // Only trust a full sample (or the whole registry when smaller than the cap).
+        if (cached.length >= target) return cached as ClassifiedColor[];
       }
     } catch {
       /* ignore */
@@ -277,10 +275,8 @@ async function loadSoundRows(env: Env): Promise<SoundRow[]> {
     try {
       const cached = await kv.get(BROWSE_SOUND_CACHE_KEY, "json");
       if (Array.isArray(cached) && cached.length) {
-        const target = Math.min(SCAN_CAP, registryTotal || SCAN_CAP);
-        if (cached.length >= target || (registryTotal <= 0 && cached.length >= 50)) {
-          return cached as SoundRow[];
-        }
+        const target = registryTotal > 0 ? Math.min(SCAN_CAP, registryTotal) : SCAN_CAP;
+        if (cached.length >= target) return cached as SoundRow[];
       }
     } catch {
       /* ignore */
