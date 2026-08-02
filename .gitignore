@@ -47,3 +47,7 @@ cloudflare/node_modules/
 
 # JSON registry exports (ephemeral snapshots; keep schema doc)
 json registry exports/*.json
+
+# Ad hoc CLI scratch output at repo root (color sweeps, coverage snapshots, etc.)
+/*.log
+/cov*.json

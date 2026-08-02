@@ -227,9 +227,9 @@ Aligned with REGISTRY_FOUNDATION and WORKFLOWS_AND_REGISTRIES: Pure = single fra
 | `is_good_outcome()` | Quality thresholds (brightness_std, motion_level). | Fixed constants. | Good prompts list. | ✅ |
 | `generate_procedural_prompt()` | Subject + modifier(s) from pools; avoid recent. | Random combo; unique. | Exploration. | ✅ |
 | `generate_bridge.py` (--learn) | Job → generate → upload → extract → grow_all_from_video / per-instance helpers + narrative → post_*_discoveries, grow_and_sync_to_api. | Same family as loop. | ✅ |
-| `generate.py` | One-off generate → analyze_video → log_run → grow_from_analysis. | Uses legacy grow_from_analysis (one per video). | 🔶 Legacy path; does not run per-frame/per-window growth. | ⚠️ |
+| `generate.py` (--learn) | One-off generate → log_run → **`grow_all_from_video(extraction_focus="all")`** + `grow_narrative_from_spec`. | Fixed in `dbff14d` — no longer uses legacy grow_from_analysis. | Local growth only (no post_*_discoveries; matches its no-API-key local-CLI contract). | ✅ |
 
-**Summary:** automate_loop and generate_bridge use the full growth pipeline via **`grow_all_from_video`** (static + dynamic + narrative sync). generate.py uses legacy growth only. ⚠️ generate.py could call `grow_all_from_video` + `grow_narrative_from_spec` when learning is desired.
+**Summary:** automate_loop, generate_bridge, and generate.py all use the full growth pipeline via **`grow_all_from_video`** (static + dynamic + narrative). No remaining caller relies on legacy single-summary growth for the primary loop.
 
 ---
 
@@ -271,9 +271,8 @@ Aligned with REGISTRY_FOUNDATION and WORKFLOWS_AND_REGISTRIES: Pure = single fra
 
 | Gap | Recommendation |
 |-----|-----------------|
-| **generate.py** | When learning is desired, call grow_from_video(path, …), grow_dynamic_from_video(path, …), grow_narrative_from_spec(spec, …) and post_*_discoveries so one-off runs also feed all three registries. |
 | **get_knowledge_for_creation** | Currently loads learned_colors, learned_motion, learned_audio from API or load_registry("learned_colors", …). Ensure API /api/knowledge/for-creation returns data in the shape creation expects (e.g. learned_colors as dict keyed by color_key with r, g, b, name). Already aligned if API returns same shape. |
-| **Legacy grow_from_extract / grow_from_analysis** | Used by generate.py and possibly elsewhere. For consistency with “all three registries” and “every instance,” prefer driving from grow_from_video + grow_dynamic_from_video + grow_narrative_from_spec where the full pipeline is available. |
+| **Legacy grow_from_extract / grow_from_analysis** | No longer used by the primary loop (generate.py switched to grow_all_from_video + grow_narrative_from_spec in `dbff14d`). Functions remain in `growth.py` for any external caller; safe to remove once confirmed unused. |
 
 ---
 
@@ -291,6 +290,6 @@ Aligned with REGISTRY_FOUNDATION and WORKFLOWS_AND_REGISTRIES: Pure = single fra
 | Names | generate_sensible_name, _invent_word, name_reserve | ✅ | ✅ |
 | Lookup / sync | get_knowledge_for_creation, post_*_discoveries | ✅ | ✅ |
 | Loop | automate_loop, generate_bridge (--learn) | ✅ | ✅ |
-| Legacy | extract_from_video, grow_from_extract, add_learned_*, generate.py | 🔶 | ⚠️ optional update |
+| Legacy | extract_from_video, grow_from_extract, add_learned_* | 🔶 | Optional cleanup |
 
-**Conclusion:** The codebase is **100% precise** and **successful within the workflow** for the intended path: interpretation → creation → render → extract → grow (static, dynamic, narrative) → sync. All three registries evolve; creation uses static + origins; names are sensible. Legacy paths (single-registry, one-summary-per-video) remain and can be updated (e.g. generate.py) to use the full growth pipeline when desired.
+**Conclusion:** The codebase is **100% precise** and **successful within the workflow** for the intended path: interpretation → creation → render → extract → grow (static, dynamic, narrative) → sync. All three registries evolve; creation uses static + origins; names are sensible. Every current entry point (automate_loop, generate_bridge, generate.py) drives the full growth pipeline; only the unused legacy single-registry helpers remain as optional cleanup.

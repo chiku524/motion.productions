@@ -205,19 +205,19 @@ def extract_narrative_from_spec(
     shot = getattr(spec, "shot_type", None) or "medium"
     if shot:
         out["scene_type"].append(str(shot).strip())
-    palette_name = getattr(spec, "palette_name", None)
-    if palette_name and str(palette_name).strip():
-        out["themes"].append(str(palette_name).strip())
-    palette_hints = getattr(src, "palette_hints", []) or []
-    for h in palette_hints:
-        if h and str(h).strip() and str(h).strip().lower() not in {x.strip().lower() for x in out["themes"]}:
-            out["themes"].append(str(h).strip())
+    # NOTE: palette_name/palette_hints (e.g. "magenta", "warm_sunset") used to be pushed into
+    # "themes" as a fallback so the aspect always had something new to record. That is a
+    # category-bleed bug: themes = "what the video is about" (subject/idea/motif), not a color
+    # or palette name — colors belong in the static registry. Do not add color/palette values
+    # here; rely on the prompt theme_keywords scan below (and instruction.theme above) instead.
     if prompt:
         words = [w.lower() for w in prompt.split() if len(w) >= 2]
         setting_keywords = {"forest", "city", "night", "day", "outdoor", "indoor", "sea", "ocean", "dusk", "dawn", "golden", "abstract", "desert", "mountain", "street", "room", "sky", "water", "snow", "beach", "studio"}
         genre_keywords = {"documentary", "drama", "horror", "comedy", "sci-fi", "fantasy", "abstract", "music", "vlog", "art", "cinematic", "minimal", "experimental"}
         mood_keywords = {"calm", "tense", "peaceful", "chaotic", "moody", "uplifting", "dark", "bright", "melancholic", "energetic", "chill", "dramatic", "soft", "intense", "dreamy", "harsh"}
-        theme_keywords = {"nature", "urban", "love", "conflict", "transformation", "journey", "light", "shadow", "motion", "stillness", "color", "minimalism", "geometry"}
+        # "urban" intentionally excluded — it is already a settings primitive (place); keeping
+        # it here duplicated theme/setting entries for the same prompt (category bleed).
+        theme_keywords = {"nature", "love", "conflict", "transformation", "journey", "light", "shadow", "motion", "stillness", "minimalism", "geometry"}
         for w in words:
             if w in setting_keywords and w not in [x.lower() for x in out["settings"]]:
                 out["settings"].append(w)

@@ -19,7 +19,7 @@ export const NARRATIVE_ORIGIN_SIZES: Record<string, number> = {
   "style": 11,
   "plots": 4,
   "settings": 25,
-  "themes": 25,
+  "themes": 17,
   "scene_type": 17
 };
 

@@ -9,6 +9,7 @@ import {
   writeRegistryCounts,
   ensureLearnedDynamicMetaTable,
   ensureLearnedColorsDepthColumn,
+  getTrueRegistryTotals,
 } from "../db";
 import { json, err, normalizeOpacityToPercent } from "../http";
 import { COLOR_PRIMARIES_FOR_API, COLOR_PRIMITIVE_NAMES } from "../colorPrimaries.generated";
@@ -97,7 +98,7 @@ if (path === "/api/registries/backfill-names" && request.method === "POST") {
       try {
         const rows = await db.prepare(
           `SELECT id, name, r, g, b FROM ${table} WHERE name GLOB 'dsc_*' OR name GLOB 'Novel*' OR name GLOB 'color_*'
-           OR name GLOB '*[0-9][0-9]*' OR LENGTH(TRIM(name)) > 9 LIMIT ?`
+           OR name GLOB '*[0-9][0-9]*' OR LENGTH(TRIM(name)) > 8 LIMIT ?`
         ).bind(maxRows).all<{ id: string; name: string; r: number; g: number; b: number }>();
         for (const r of rows.results || []) {
           const row = r as { id: string; name: string | null; r: number; g: number; b: number };
@@ -128,7 +129,7 @@ if (path === "/api/registries/backfill-names" && request.method === "POST") {
            OR name GLOB 'dsc_*' OR name GLOB 'Novel*'
            OR name GLOB 'theme_*' OR name GLOB 'plot_*' OR name GLOB 'setting_*'
            OR name GLOB 'scene_*' OR name GLOB 'genre_*' OR name GLOB 'mood_*' OR name GLOB 'style_*'
-           OR name GLOB '*[0-9][0-9]*' OR LENGTH(TRIM(name)) > 9
+           OR name GLOB '*[0-9][0-9]*' OR LENGTH(TRIM(name)) > 8
            OR (LENGTH(TRIM(entry_key)) >= 3 AND INSTR(LOWER(TRIM(COALESCE(name, ''))), LOWER(TRIM(entry_key))) = 0)
            LIMIT ?`
         ).bind(maxRows).all<{ id: string; aspect: string; entry_key: string; value: string | null; name: string | null }>();
@@ -174,9 +175,11 @@ if (path === "/api/registries/backfill-names" && request.method === "POST") {
     for (const { table, idCol, nameCol } of otherTables) {
       try {
         // Include dsc_*, Novel*, and long names (9+ chars) that may be gibberish
+        // Length threshold (>8) matches isGibberishName's own cutoff (length <= 8 is never
+        // gibberish) so this candidate set and /api/registries/health's diagnosis agree exactly.
         const rows = await db.prepare(
           `SELECT ${idCol}, ${nameCol} FROM ${table} WHERE ${nameCol} GLOB 'dsc_*' OR ${nameCol} GLOB 'Novel*'
-           OR ${nameCol} GLOB '*[0-9][0-9]*' OR LENGTH(TRIM(${nameCol})) > 9 LIMIT ?`
+           OR ${nameCol} GLOB '*[0-9][0-9]*' OR LENGTH(TRIM(${nameCol})) > 8 LIMIT ?`
         ).bind(maxRows).all<{ id: string; name: string }>();
         for (const r of rows.results || []) {
           const row = r as { id: string; name: string | null };
@@ -784,6 +787,10 @@ if (path === "/api/registries" && request.method === "GET") {
     } catch { /* not JSON */ }
     return key.length > 60 ? key.slice(0, 57) + "…" : key;
   };
+  // True row counts (COUNT(*), not the length of a LIMIT-bound sample). Cached in KV
+  // (see getTrueRegistryTotals) so this is a single cheap GET on the common path; only
+  // a cache miss or explicit ?fresh=1 touches D1, and only via the primary DB.
+  const trueTotals = await getTrueRegistryTotals(env, getPrimaryDb(env), { fresh: regUrl.searchParams.get("fresh") === "1" });
   // Section-scoped early returns: avoid full multi-table D1 build for tab loads.
   if (section === "static") {
     const staticColorsOnly = await db.prepare(
@@ -874,7 +881,10 @@ if (path === "/api/registries" && request.method === "GET") {
       offset: regOffset,
       section: "static",
       truncated: colors.length >= regLimit || sound.length >= regLimit,
-      totals: { static_colors: colors.length, static_sound: sound.length },
+      totals: {
+        static_colors: trueTotals?.static_colors ?? colors.length,
+        static_sound: trueTotals?.static_sound ?? sound.length,
+      },
       static: { colors, sound },
     });
   }
@@ -891,7 +901,7 @@ if (path === "/api/registries" && request.method === "GET") {
         const value = r.value || r.entry_key;
         return { entry_key: r.entry_key, value, name: narrativeDisplayName(r.entry_key, value, r.name), count: r.count };
       });
-      narrativeTotals[aspect] = narrativeEarly[aspect].length;
+      narrativeTotals[aspect] = trueTotals?.narrative?.[aspect] ?? narrativeEarly[aspect].length;
     }
     return json({
       limit: regLimit,
@@ -927,7 +937,10 @@ if (path === "/api/registries" && request.method === "GET") {
       offset: regOffset,
       section,
       truncated: interpretationEarly.length >= Math.min(regLimit, 100) || linguisticEarly.length >= Math.min(regLimit, 200),
-      totals: { interpretation: interpretationEarly.length, linguistic: linguisticEarly.length },
+      totals: {
+        interpretation: trueTotals?.interpretation ?? interpretationEarly.length,
+        linguistic: trueTotals?.linguistic ?? linguisticEarly.length,
+      },
       interpretation: interpretationEarly,
       linguistic: linguisticEarly,
     });
@@ -1458,7 +1471,9 @@ if (path === "/api/registries" && request.method === "GET") {
     const val = dynamicPayload[key];
     if (Array.isArray(val)) {
       const paged = pageSlice(val);
-      dynamicTotals[key as string] = paged.total;
+      // pageSlice.total is the length of a query already bound by LIMIT regLimit — only a
+      // true count when the table has fewer than regLimit rows. Prefer the real COUNT(*).
+      dynamicTotals[key as string] = trueTotals?.dynamic?.[key as string] ?? paged.total;
       dynamicPaged[key] = paged.items;
     }
   }
@@ -1467,7 +1482,7 @@ if (path === "/api/registries" && request.method === "GET") {
   for (const [aspect, rows] of Object.entries(narrative || {})) {
     const list = Array.isArray(rows) ? rows : [];
     const paged = pageSlice(list);
-    narrativeTotals[aspect] = paged.total;
+    narrativeTotals[aspect] = trueTotals?.narrative?.[aspect] ?? paged.total;
     narrativePaged[aspect] = paged.items;
   }
   const includeStatic = section === "all" || section === "static";
@@ -1488,13 +1503,14 @@ if (path === "/api/registries" && request.method === "GET") {
       Object.values(dynamicTotals).some((t) => t > regOffset + regLimit) ||
       Object.values(narrativeTotals).some((t) => t > regOffset + regLimit),
     totals: {
-      static_colors: staticColorsPage.total,
-      static_sound: staticSoundPage.total,
-      interpretation: interpretationPage.total,
-      linguistic: linguisticPage.total,
+      static_colors: trueTotals?.static_colors ?? staticColorsPage.total,
+      static_sound: trueTotals?.static_sound ?? staticSoundPage.total,
+      interpretation: trueTotals?.interpretation ?? interpretationPage.total,
+      linguistic: trueTotals?.linguistic ?? linguisticPage.total,
       dynamic: dynamicTotals,
       narrative: narrativeTotals,
     },
+    totals_source: trueTotals ? "count" : "sample",
     ...(includeMeta
       ? { static_primitives: staticPrimitives, dynamic_canonical: dynamicCanonical }
       : {}),

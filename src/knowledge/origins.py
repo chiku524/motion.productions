@@ -157,11 +157,15 @@ NARRATIVE_ORIGINS = {
         "indoor", "neutral", "golden_hour", "noir", "documentary", "moody",
         "neon", "desert", "mountain", "beach", "space", "underwater",
     ],
+    # Themes = what the video is about (subject/idea/motif) — story concepts only.
+    # Do NOT add settings (city, forest, ocean, night, urban), lighting/color-grade
+    # presets (neon, warm_sunset, mono), or palette names (fire) — those belong to
+    # the settings origin list above or the static (color) registry, never here.
+    # See docs/REGISTRY_FOUNDATION.md and the narrative category-bleed fix.
     "themes": [
         "general", "transformation", "conflict", "journey", "identity",
         "connection", "loss", "hope", "nature", "love", "war", "time",
-        "light", "motion", "default", "neon", "night", "fire", "ocean",
-        "dreamy", "warm_sunset", "mono", "forest", "urban", "shadow",
+        "light", "motion", "default", "dreamy", "shadow",
     ],
     "scene_type": [
         "establishing", "closeup", "wide", "medium", "dialogue", "action",

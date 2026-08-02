@@ -209,3 +209,104 @@ export async function bumpRegistryCounts(
   };
   await writeRegistryCounts(env, next);
 }
+
+/**
+ * True row counts (COUNT(*), not a query-limited sample length) for every registry
+ * surfaced by /api/registries. The explorer previously reported `array.length` from a
+ * `LIMIT ?`-bound page query as "total", which silently capped every dashboard number
+ * at the request's `limit` (e.g. showed "100" forever once a table passed 100 rows).
+ *
+ * Cached in KV for TRUE_TOTALS_TTL_SECONDS so normal requests pay one cheap KV GET
+ * instead of ~20 COUNT(*) queries; only a cache miss (or `fresh: true`) hits D1, and
+ * always via the primary DB per the coverage/health precedent (replica COUNT on large
+ * tables can return false zeros or hit CPU limit 7429).
+ */
+const TRUE_REGISTRY_TOTALS_KV_KEY = "registries:true_totals:v1";
+const TRUE_REGISTRY_TOTALS_TTL_SECONDS = 600;
+
+export type TrueRegistryTotals = {
+  static_colors: number;
+  static_sound: number;
+  interpretation: number;
+  linguistic: number;
+  dynamic: Record<string, number>;
+  narrative: Record<string, number>;
+  computed_at: string;
+};
+
+/** dynamic-section key -> backing D1 table (mirrors dynamicPayload keys in routes/registries.ts). */
+const DYNAMIC_TOTAL_TABLES: Record<string, string> = {
+  colors: "learned_colors",
+  motion: "learned_motion",
+  gradient: "learned_gradient",
+  camera: "learned_camera",
+  sound: "learned_audio_semantic",
+  lighting: "learned_lighting",
+  composition: "learned_composition",
+  graphics: "learned_graphics",
+  temporal: "learned_temporal",
+  technical: "learned_technical",
+  blends: "learned_blends",
+  entities: "learned_entities",
+};
+
+const NARRATIVE_TOTAL_ASPECTS = ["genre", "mood", "themes", "plots", "settings", "style", "scene_type"];
+
+export async function getTrueRegistryTotals(
+  env: Env,
+  primaryDb: D1Database,
+  opts: { fresh?: boolean } = {},
+): Promise<TrueRegistryTotals | null> {
+  if (!opts.fresh && env.MOTION_KV) {
+    try {
+      const cached = await env.MOTION_KV.get(TRUE_REGISTRY_TOTALS_KV_KEY);
+      if (cached) return JSON.parse(cached) as TrueRegistryTotals;
+    } catch {
+      /* rebuild below */
+    }
+  }
+  const count = async (sql: string, bind?: string): Promise<number> => {
+    try {
+      const stmt = bind !== undefined ? primaryDb.prepare(sql).bind(bind) : primaryDb.prepare(sql);
+      const row = await stmt.first<{ c: number }>();
+      return row?.c ?? 0;
+    } catch {
+      return 0;
+    }
+  };
+  const [static_colors, static_sound, interpretation, linguistic] = await Promise.all([
+    count("SELECT COUNT(*) as c FROM static_colors"),
+    count("SELECT COUNT(*) as c FROM static_sound"),
+    count("SELECT COUNT(*) as c FROM interpretations WHERE status = 'done' AND instruction_json IS NOT NULL"),
+    count("SELECT COUNT(*) as c FROM linguistic_registry"),
+  ]);
+  const dynamicEntries = await Promise.all(
+    Object.entries(DYNAMIC_TOTAL_TABLES).map(
+      async ([key, table]) => [key, await count(`SELECT COUNT(*) as c FROM ${table}`)] as const,
+    ),
+  );
+  const narrativeEntries = await Promise.all(
+    NARRATIVE_TOTAL_ASPECTS.map(
+      async (aspect) => [aspect, await count("SELECT COUNT(*) as c FROM narrative_entries WHERE aspect = ?", aspect)] as const,
+    ),
+  );
+  const result: TrueRegistryTotals = {
+    static_colors,
+    static_sound,
+    interpretation,
+    linguistic,
+    dynamic: Object.fromEntries(dynamicEntries),
+    narrative: Object.fromEntries(narrativeEntries),
+    computed_at: new Date().toISOString(),
+  };
+  if (env.MOTION_KV) {
+    try {
+      await env.MOTION_KV.put(TRUE_REGISTRY_TOTALS_KV_KEY, JSON.stringify(result), {
+        expirationTtl: TRUE_REGISTRY_TOTALS_TTL_SECONDS,
+      });
+    } catch {
+      /* ignore */
+    }
+  }
+  return result;
+}
