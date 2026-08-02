@@ -2,7 +2,7 @@
  * GET /api/registries/browse — public facet + paginated explorer for all registries.
  */
 import type { Env } from "../env";
-import { getDb, getPrimaryDb, ensureStaticColorsFamilyColumns } from "../db";
+import { getDb, getPrimaryDb, ensureStaticColorsFamilyColumns, readRegistryCounts } from "../db";
 import { json, err } from "../http";
 import {
   COLOR_FAMILY_META,
@@ -22,6 +22,7 @@ import {
 import { SOUND_ORIGIN_PRIMARIES } from "../naming";
 
 // Free-tier D1: keep ORDER BY count scans small; serve from KV when warm.
+// Explorer UI shows registry_total (true COUNT/KV) separately from this sample.
 const SCAN_CAP = 800;
 const CACHE_TTL_SEC = 300;
 
@@ -49,10 +50,17 @@ function pageItems<T>(items: T[], offset: number, limit: number) {
 
 async function loadClassifiedColors(env: Env): Promise<ClassifiedColor[]> {
   const kv = env.MOTION_KV;
+  const registryTotal = (await readRegistryCounts(env))?.static_colors ?? 0;
   if (kv) {
     try {
       const cached = await kv.get(BROWSE_COLORS_CACHE_KEY, "json");
-      if (Array.isArray(cached) && cached.length) return cached as ClassifiedColor[];
+      if (Array.isArray(cached) && cached.length) {
+        const target = Math.min(SCAN_CAP, registryTotal || SCAN_CAP);
+        // Refresh when cache is undersized vs known registry (stale partial scans).
+        if (cached.length >= target || (registryTotal <= 0 && cached.length >= 100)) {
+          return cached as ClassifiedColor[];
+        }
+      }
     } catch {
       /* ignore */
     }
@@ -199,6 +207,7 @@ async function browseStaticColors(request: Request, env: Env): Promise<Response>
 
   const facets = buildColorFacets(all, family);
   const page = pageItems(filtered, offset, limit);
+  const registryTotal = (await readRegistryCounts(env))?.static_colors ?? all.length;
   return json({
     kind: "static_colors",
     facets,
@@ -215,6 +224,8 @@ async function browseStaticColors(request: Request, env: Env): Promise<Response>
       depth_breakdown: c.depth_breakdown,
     })),
     total: page.total,
+    registry_total: registryTotal,
+    sample_cap: SCAN_CAP,
     offset,
     limit,
     truncated: page.truncated,
@@ -261,10 +272,16 @@ function parseSoundOrigins(depthJson: string | null): { depth_breakdown: Record<
 
 async function loadSoundRows(env: Env): Promise<SoundRow[]> {
   const kv = env.MOTION_KV;
+  const registryTotal = (await readRegistryCounts(env))?.static_sound ?? 0;
   if (kv) {
     try {
       const cached = await kv.get(BROWSE_SOUND_CACHE_KEY, "json");
-      if (Array.isArray(cached) && cached.length) return cached as SoundRow[];
+      if (Array.isArray(cached) && cached.length) {
+        const target = Math.min(SCAN_CAP, registryTotal || SCAN_CAP);
+        if (cached.length >= target || (registryTotal <= 0 && cached.length >= 50)) {
+          return cached as SoundRow[];
+        }
+      }
     } catch {
       /* ignore */
     }
@@ -342,12 +359,15 @@ async function browseStaticSound(request: Request, env: Env): Promise<Response> 
     );
   }
   const page = pageItems(filtered, offset, limit);
+  const registryTotal = (await readRegistryCounts(env))?.static_sound ?? all.length;
   return json({
     kind: "static_sound",
     facets: { families, shades: [], primitives: [] },
     filters: { family, q: q || null },
     items: page.items,
     total: page.total,
+    registry_total: registryTotal,
+    sample_cap: SCAN_CAP,
     offset,
     limit,
     truncated: page.truncated,
@@ -459,6 +479,13 @@ async function browseDynamic(request: Request, env: Env, kind: string): Promise<
   }
 
   const page = pageItems(all, offset, limit);
+  let registryTotal = all.length;
+  try {
+    const c = await db.prepare(`SELECT COUNT(*) AS n FROM ${meta.table}`).first<{ n: number }>();
+    registryTotal = Number(c?.n || all.length);
+  } catch {
+    /* keep sample size */
+  }
   return json({
     kind: aspect,
     facets: {
@@ -466,7 +493,7 @@ async function browseDynamic(request: Request, env: Env, kind: string): Promise<
         {
           id: aspect,
           label: aspect.replace(/^learned_/, "").replace(/_/g, " "),
-          count: all.length,
+          count: registryTotal,
         },
       ],
       shades: [],
@@ -475,9 +502,11 @@ async function browseDynamic(request: Request, env: Env, kind: string): Promise<
     filters: { aspect, q: q || null },
     items: page.items,
     total: page.total,
+    registry_total: registryTotal,
+    sample_cap: SCAN_CAP,
     offset,
     limit,
-    truncated: page.truncated,
+    truncated: page.truncated || registryTotal > all.length,
     scanned: all.length,
   });
 }

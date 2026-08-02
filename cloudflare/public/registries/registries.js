@@ -27,7 +27,7 @@
     opsResult: document.getElementById('ops-repair-result'),
   };
 
-  /** @type {{ tab: string, family: string|null, shade: string|null, primitives: string[], aspect: string|null, q: string, offset: number, items: any[], total: number, truncated: boolean, facets: any }} */
+  /** @type {{ tab: string, family: string|null, shade: string|null, primitives: string[], aspect: string|null, q: string, offset: number, items: any[], total: number, registry_total: number, scanned: number, truncated: boolean, facets: any }} */
   const state = {
     tab: 'colors',
     family: null,
@@ -38,6 +38,8 @@
     offset: 0,
     items: [],
     total: 0,
+    registry_total: 0,
+    scanned: 0,
     truncated: false,
     facets: null,
   };
@@ -122,6 +124,8 @@
       const data = await res.json();
       state.facets = data.facets || {};
       state.total = data.total || 0;
+      state.registry_total = Number(data.registry_total || 0);
+      state.scanned = Number(data.scanned || state.total || 0);
       state.truncated = !!data.truncated;
       state.offset = offset + (data.items || []).length;
       if (append) state.items = state.items.concat(data.items || []);
@@ -365,6 +369,20 @@
     }).join('')}</div>`;
   }
 
+  function formatCount(n) {
+    return Number(n || 0).toLocaleString();
+  }
+
+  function valuesInViewLabel() {
+    const sample = state.total;
+    const reg = state.registry_total;
+    if (reg > sample && sample > 0) {
+      return `${formatCount(reg)} in registry (browsing top ${formatCount(sample)} by frequency).`;
+    }
+    if (reg > 0 && sample === 0) return `${formatCount(reg)} in registry.`;
+    return sample ? `${formatCount(sample)} values in view.` : '';
+  }
+
   function renderResults() {
     if (!els.results) return;
     const browsingLeaves =
@@ -378,13 +396,13 @@
 
     // At bracket-only level, still show a short preview of matches when family selected without shade (colors)
     if (state.tab === 'colors' && state.family && !state.shade && !state.q) {
-      els.results.innerHTML = `<p class="explorer-hint">Pick a shade to browse ${state.total} color${state.total === 1 ? '' : 's'} in <strong>${escapeHtml(state.family)}</strong>.</p>`;
+      els.results.innerHTML = `<p class="explorer-hint">Pick a shade to browse ${formatCount(state.total)} color${state.total === 1 ? '' : 's'} in <strong>${escapeHtml(state.family)}</strong>${state.registry_total > state.scanned ? ` (from top ${formatCount(state.scanned)} sample of ${formatCount(state.registry_total)})` : ''}.</p>`;
       if (els.more) els.more.hidden = true;
       return;
     }
 
     if (showFamilyBrackets() && !state.q) {
-      els.results.innerHTML = `<p class="explorer-hint">Select a bracket above to drill in. ${state.total ? `${state.total} values in view.` : ''}</p>`;
+      els.results.innerHTML = `<p class="explorer-hint">Select a bracket above to drill in. ${valuesInViewLabel()}</p>`;
       if (els.more) els.more.hidden = true;
       return;
     }
@@ -395,8 +413,11 @@
     else if (state.tab === 'interpretation') html = renderGenericList('No interpretations yet.');
     else html = renderGenericList('No entries match.');
 
+    const shownOf = state.registry_total > state.total
+      ? `${formatCount(state.items.length)} of ${formatCount(state.total)} in sample · ${formatCount(state.registry_total)} in registry`
+      : `${formatCount(state.items.length)} of ${formatCount(state.total)}`;
     const countLabel = browsingLeaves
-      ? `<p class="explorer-count">Showing ${state.items.length} of ${state.total}</p>`
+      ? `<p class="explorer-count">Showing ${shownOf}</p>`
       : '';
     els.results.innerHTML = countLabel + html;
 
