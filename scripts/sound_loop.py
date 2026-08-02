@@ -177,31 +177,34 @@ def run() -> None:
                 collect_novel_for_sync=bool(api_base),
             )
             count = added.get("static_sound", 0)
-            # When decoded audio yields no novel keys, still grow from spec (same as video path)
+            # When decoded audio yields no novel keys, still grow from spec (same as video path).
+            # Try a few amplitude jitters so we do not stall on a saturated local mesh.
             if count == 0:
                 from types import SimpleNamespace
                 from src.knowledge.growth_per_instance import (
                     derive_static_sound_from_spec,
                     ensure_static_sound_in_registry,
                 )
-                prefer: list[str] = []
-                if target_primitive:
-                    prefer = [target_primitive]
+                prefer: list[str] = [target_primitive] if target_primitive else []
                 spec = SimpleNamespace(
                     audio_mood=mood,
                     audio_tempo=tempo,
                     audio_presence=presence,
                 )
                 out_novel: list = []
-                spec_sound = derive_static_sound_from_spec(spec, prefer_primitives=prefer or None)
-                if spec_sound and ensure_static_sound_in_registry(
-                    spec_sound,
-                    source_prompt=source_prompt,
-                    config=config,
-                    out_novel=out_novel if api_base else None,
-                ):
-                    count = 1
-                    added["static_sound"] = 1
+                for _ in range(5):
+                    spec_sound = derive_static_sound_from_spec(spec, prefer_primitives=prefer or None)
+                    if spec_sound and ensure_static_sound_in_registry(
+                        spec_sound,
+                        source_prompt=source_prompt,
+                        config=config,
+                        out_novel=out_novel if api_base else None,
+                    ):
+                        count += 1
+                        if len(out_novel) >= 3:
+                            break
+                if count:
+                    added["static_sound"] = count
                     if out_novel:
                         novel_list = list(novel_list or []) + out_novel
             if api_base and novel_list:

@@ -2,7 +2,7 @@
  * Loop state/config/status/progress/diagnostics + metrics API routes.
  */
 import type { Env } from "../env";
-import { getDb } from "../db";
+import { getDb, readRegistryCounts } from "../db";
 import { json, err, corsHeaders } from "../http";
 import { COLOR_PRIMARIES_FOR_API } from "../colorPrimaries.generated";
 import {
@@ -303,10 +303,21 @@ if (path === "/api/loop/progress" && request.method === "GET") {
     primitive_color_catalog_size?: number;
   } | null = null;
   try {
-    const sc = await db.prepare("SELECT COUNT(*) as c FROM static_colors").first<{ c: number }>();
-    const staticCount = sc?.c ?? 0;
+    // Prefer KV counts — SELECT COUNT(*) on ~28k static_colors often fails/under-counts on Free D1 (CPU 7429).
+    const kvCounts = await readRegistryCounts(env);
+    let staticCount = kvCounts?.static_colors ?? 0;
+    if (!staticCount) {
+      try {
+        const sc = await db.prepare("SELECT COUNT(*) as c FROM static_colors").first<{ c: number }>();
+        staticCount = sc?.c ?? 0;
+      } catch {
+        staticCount = 0;
+      }
+    }
     const staticCells = STATIC_COLOR_ESTIMATED_CELLS;
-    const staticPct = staticCells > 0 ? Math.round((100 * staticCount) / staticCells * 100) / 100 : 0;
+    const staticPct = staticCells > 0
+      ? Math.min(100, Math.round((100 * staticCount) / staticCells * 100) / 100)
+      : 0;
     const narrativeSizes = NARRATIVE_ORIGIN_SIZES;
     const aspects = Object.keys(narrativeSizes);
     let minNarrativePct = 100;

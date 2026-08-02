@@ -71,7 +71,7 @@ docker compose -f docker-compose.local.yml --profile loops-full up -d --build
 ```
 
 **D1 write contract (avoid 7429 / discovery storms):**
-- Shared env: `DISCOVERIES_MAX_ITEMS` (default **8**), `DISCOVERIES_CHUNK_PAUSE_SECONDS` (default **2.0**). Blends count as weight 3 toward the budget so Free D1 stays under ~50 queries/request.
+- Shared env: `DISCOVERIES_MAX_ITEMS` (default **8**), `DISCOVERIES_CHUNK_PAUSE_SECONDS` (default **3.5**). Blends count as weight 3 toward the budget so Free D1 stays under ~50 queries/request. Empty `job_id`-only discovery posts skip the write lease.
 - Single-writer lease on `POST /api/knowledge/discoveries` → 429 + wait (not a crash).
 - Explorer: `LOOP_EXTRACTION_FOCUS=frame` + `LOOP_STATIC_FOCUS=color`. Sound owns pure sound; balanced uses `window`.
 - Stagger via `LOOP_WORKER_OFFSET_SECONDS` so workers do not POST discoveries in lockstep.

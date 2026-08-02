@@ -87,6 +87,8 @@ def derive_static_sound_from_spec(
     tempo = getattr(spec, "audio_tempo", None) or "medium"
     presence = getattr(spec, "audio_presence", None) or "ambient"
     weight = 0.3 if presence == "silence" else (0.7 if presence == "full" else 0.5)
+    # Jitter onto the 0.01 amp grid so saturated local meshes still find novel keys
+    weight = round(max(0.02, min(0.95, weight + random.uniform(-0.12, 0.18))), 2)
     tone = normalize_tone_to_primitive(str(mood))
     if random.random() < 0.25:
         tone = random.choice(("mid", "neutral", "low", "high"))

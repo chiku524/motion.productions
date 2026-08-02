@@ -5,8 +5,9 @@
 import type { Env } from "./env";
 
 const LEASE_KEY = "discoveries:write_lease";
-// Cover slow Free-tier discovery writes (blend name checks + inserts) without overlapping writers.
-const LEASE_MS = 60_000;
+// One chunk write usually finishes in a few seconds; keep short so Core-4 workers
+// do not block each other for a full minute after our multi-chunk split.
+const LEASE_MS = 20_000;
 
 export type LeaseResult =
   | { ok: true; holder: string }
@@ -26,7 +27,7 @@ export async function acquireDiscoveryLease(env: Env): Promise<LeaseResult> {
       }
     }
     const exp = Date.now() + LEASE_MS;
-    await kv.put(LEASE_KEY, JSON.stringify({ holder, exp }), { expirationTtl: 90 });
+    await kv.put(LEASE_KEY, JSON.stringify({ holder, exp }), { expirationTtl: 45 });
     // Re-read to detect lost race (best-effort)
     const confirm = await kv.get(LEASE_KEY);
     if (confirm) {

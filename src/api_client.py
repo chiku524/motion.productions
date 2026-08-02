@@ -135,20 +135,20 @@ def api_request(
                     )
                 elif status == 429:
                     delay = backoff_seconds + attempt * 2.0
-                    # Prefer lease body retry_after_ms (discoveries write lease ~25s)
+                    # Prefer lease body retry_after_ms (discoveries write lease)
                     if err_body:
                         try:
                             parsed = json.loads(err_body)
                             ms = parsed.get("retry_after_ms")
                             if isinstance(ms, (int, float)) and ms > 0:
-                                delay = max(5.0, float(ms) / 1000.0)
+                                # Cap wait so a stuck/long lease does not freeze the loop for minutes
+                                delay = max(5.0, min(float(ms) / 1000.0, 25.0))
                         except (json.JSONDecodeError, TypeError, ValueError):
                             pass
                     if e.response and "Retry-After" in e.response.headers:
                         try:
                             header_delay = float(e.response.headers["Retry-After"])
-                            # Retry-After is seconds; use it when larger than body-derived delay
-                            delay = max(delay, header_delay, 5.0)
+                            delay = max(delay, min(header_delay, 25.0), 5.0)
                         except (ValueError, TypeError):
                             delay = max(delay, 5.0)
                     else:

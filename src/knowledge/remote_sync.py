@@ -10,8 +10,8 @@ from typing import Any
 # Match API DISCOVERIES_MAX_ITEMS. Keep small for Cloudflare Free D1 CPU pressure.
 # Override via env DISCOVERIES_MAX_ITEMS / DISCOVERIES_CHUNK_PAUSE_SECONDS (Docker loops).
 DISCOVERIES_MAX_ITEMS = 8
-# Pause between chunks so concurrent loops do not stampede D1.
-DISCOVERIES_CHUNK_PAUSE_SECONDS = 2.0
+# Pause between chunks so concurrent loops do not stampede D1 / write lease.
+DISCOVERIES_CHUNK_PAUSE_SECONDS = 3.5
 # Blends run resolveUniqueBlendName (~3 D1 queries); weight them higher in the budget.
 _BLEND_ITEM_WEIGHT = 3
 
@@ -158,9 +158,9 @@ def post_discoveries(
         )
         print(f"  discoveries chunk {i + 1}/{total} ({n_items} items: {', '.join(keys)})", flush=True)
         # Worker may take a while under load; use 90s to reduce read timeouts.
-        # D1-heavy: extra retries with longer backoff on D1_ERROR (api_client handles that)
+        # Extra retries: write-lease 429s are common under Core-4 multi-chunk posts.
         resp = api_request_with_retry(
-            api_base, "POST", "/api/knowledge/discoveries", data=chunk, timeout=90, max_retries=5
+            api_base, "POST", "/api/knowledge/discoveries", data=chunk, timeout=90, max_retries=8
         )
         merged["truncated"] = merged.get("truncated", False) or resp.get("truncated", False)
         res = resp.get("results", {})

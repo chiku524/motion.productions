@@ -130,6 +130,28 @@ if (path === "/api/knowledge/discoveries" && request.method === "POST") {
   let novelStaticSound = 0;
   let novelLearnedColors = 0;
 
+  const jobIdEarly = typeof body.job_id === "string" ? body.job_id.trim() : "";
+  const narrativeHasItems = Object.values(body.narrative || {}).some((arr) => Array.isArray(arr) && arr.length > 0);
+  const listHasItems = [
+    body.static_colors, body.static_sound, body.colors, body.blends, body.motion, body.lighting,
+    body.composition, body.graphics, body.temporal, body.technical, body.audio_semantic,
+    body.time, body.gradient, body.camera, body.transition, body.depth, body.entities,
+  ].some((arr) => Array.isArray(arr) && arr.length > 0);
+
+  // Diagnostics-only posts (job_id, no items) must not take the write lease — they were
+  // stampeding Core-4 workers and causing 429s that dropped real color/sound syncs.
+  if (!listHasItems && !narrativeHasItems) {
+    if (jobIdEarly) {
+      try {
+        await db.prepare("INSERT INTO discovery_runs (id, job_id) VALUES (?, ?)")
+          .bind(uuid(), jobIdEarly).run();
+      } catch {
+        /* duplicate or missing table */
+      }
+    }
+    return json({ status: "recorded", results }, 201);
+  }
+
   const lease = await acquireDiscoveryLease(env);
   if (!lease.ok) {
     const retrySec = Math.ceil(lease.retry_after_ms / 1000);
