@@ -211,31 +211,22 @@
       </section>
 
       <section class="registries motion-fade-in-up" id="registries-section">
-        <div class="registries-header">
-          <div>
-            <h2 class="registries-title">Registries</h2>
-            <p class="registries-intro">All 4 registries: <strong>Pure</strong> (Static) · <strong>Blended</strong> (Dynamic) · <strong>Semantic</strong> (Narrative) · <strong>Interpretation (Linguistics)</strong>. <a href="/registries/" class="registries-browser-link">Open registry browser</a> for color swatches and sound samples.</p>
-            <p class="registries-sub">Use this to monitor that workflows are growing and learning (target: 95%+ of runs with learning).</p>
-          </div>
-          <div class="registries-meta">
-            <span id="registries-precision" class="registries-precision">Precision: —</span>
-            <span id="registries-updated" class="registries-updated"></span>
-            <button type="button" id="registries-refresh" class="btn btn-secondary btn-sm">Refresh now</button>
-            <button type="button" id="registries-export" class="btn btn-secondary btn-sm">Export JSON</button>
-            <button type="button" id="registries-diagnostics" class="btn btn-secondary btn-sm">Diagnostics</button>
-          </div>
-          <div id="registries-diagnostics-panel" class="registries-diagnostics-panel" hidden></div>
+        <div class="registries-teaser">
+          <h2 class="registries-teaser-title">Registries</h2>
+          <p class="registries-teaser-text">Browse every Pure, Blended, Semantic, and Interpretation value. Drill color families (blue → teal → light), play sounds, and filter by name.</p>
+          <a href="/registries/" class="registries-teaser-link">Open registry explorer →</a>
         </div>
-        <div class="registries-tabs">
-          <button type="button" class="registries-tab active" data-tab="static">Pure (Static)</button>
-          <button type="button" class="registries-tab" data-tab="dynamic">Blended (Dynamic)</button>
-          <button type="button" class="registries-tab" data-tab="narrative">Semantic (Narrative)</button>
-          <button type="button" class="registries-tab" data-tab="interpretation">Interpretation (Linguistics)</button>
+        <div class="registries-meta" style="margin-top:0.85rem">
+          <span id="registries-precision" class="registries-precision">Precision: —</span>
+          <button type="button" id="registries-diagnostics" class="btn btn-secondary btn-sm">Diagnostics</button>
         </div>
-        <div id="registries-content" class="registries-content">
-          <div id="registries-loading" class="registries-loading">Loading registries…</div>
-          <div id="registries-tables" class="registries-tables" hidden></div>
-        </div>
+        <div id="registries-diagnostics-panel" class="registries-diagnostics-panel" hidden></div>
+        <!-- Keep ids for app.js no-ops / diagnostics-only path -->
+        <div id="registries-loading" class="registries-loading" hidden></div>
+        <div id="registries-tables" class="registries-tables" hidden></div>
+        <span id="registries-updated" class="registries-updated" hidden></span>
+        <button type="button" id="registries-refresh" hidden></button>
+        <button type="button" id="registries-export" hidden></button>
       </section>
       </aside>
 

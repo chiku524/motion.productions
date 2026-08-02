@@ -644,8 +644,28 @@ function renderRegistries(data) {
   });
 }
 
+async function loadRegistriesPrecisionOnly() {
+  if (!registriesPrecision) return;
+  try {
+    const progRes = await fetch(`${API_BASE}/api/loop/progress?last=20`);
+    const progText = await progRes.text();
+    if (progText.trimStart().startsWith('<')) return;
+    const prog = JSON.parse(progText);
+    const pct = typeof prog.precision_pct === 'number' ? prog.precision_pct : 0;
+    const target = typeof prog.target_pct === 'number' ? prog.target_pct : 95;
+    registriesPrecision.textContent = `Precision: ${pct}% (target ${target}%)`;
+    registriesPrecision.className = 'registries-precision ' + (pct >= target ? 'on-target' : 'below-target');
+  } catch {
+    registriesPrecision.textContent = 'Precision: —';
+  }
+}
+
 async function loadRegistries() {
-  if (!registriesContent) return;
+  // Homepage teaser mode: no full registry tables — precision only.
+  if (!registriesContent) {
+    await loadRegistriesPrecisionOnly();
+    return;
+  }
   const btnText = registriesRefresh ? registriesRefresh.textContent : '';
   if (registriesRefresh) {
     registriesRefresh.disabled = true;
