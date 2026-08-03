@@ -392,6 +392,8 @@ def build_spec_from_instruction(
                 direction=direction,
                 personality=layer.personality or "neutral",
             )
+    # composition_balance is applied at render time (see renderer._render_layers_rgba)
+    # so keyframe trajectories stay in local space and framing stays consistent.
     scene_layers = graph.to_dict_list() if graph.layers else None
     if scene_layers and shape == "none":
         shape = "circle"  # ensure overlay path exists as fallback

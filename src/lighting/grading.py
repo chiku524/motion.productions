@@ -91,3 +91,52 @@ def get_lighting_model(preset: str) -> tuple[float, float, float, float]:
     """Return (key, fill, rim, ambient) for a preset."""
     preset = (preset or "neutral").lower().replace(" ", "_")
     return LIGHTING_MODEL_DEFAULTS.get(preset, LIGHTING_MODEL_DEFAULTS["neutral"])
+
+
+def apply_spatial_layer_lighting(
+    color_rgb: tuple[float, float, float] | list[float],
+    mask: "np.ndarray",
+    xx: "np.ndarray",
+    yy: "np.ndarray",
+    cx: float,
+    cy: float,
+    radius: float,
+    lighting_model: tuple[float, float, float, float],
+) -> "np.ndarray":
+    """
+    Shade a flat layer color with fake normals + key/fill/rim/ambient.
+
+    mask: HxW alpha (0-1). Returns HxWx3 float lit color in the same units as color_rgb (typically 0-255).
+    Key from upper-left; fill softens the opposite side; rim brightens soft silhouette edges.
+    """
+    import numpy as np
+
+    key, fill, rim, ambient = lighting_model
+    r = max(1e-6, float(radius))
+    # Fake surface normal from offset relative to layer center (outward on a sphere)
+    nx = (xx - cx) / r
+    ny = (yy - cy) / r
+    # Key light direction (from upper-left toward subject)
+    kx, ky = -0.55, -0.72
+    # Facing key: how much the outward normal points toward the light
+    ndot_key = np.clip(-(nx * kx + ny * ky), 0.0, 1.0)
+    # Fill from opposite softer direction
+    fx, fy = 0.45, 0.35
+    ndot_fill = np.clip(-(nx * fx + ny * fy), 0.0, 1.0)
+    # Rim: soft edge of the mask (silhouette)
+    m = np.asarray(mask, dtype=np.float32)
+    # Finite-difference edge magnitude
+    gy, gx = np.gradient(m)
+    edge = np.clip(np.sqrt(gx * gx + gy * gy) * 4.0, 0.0, 1.0)
+
+    light = (
+        float(ambient) * 0.55
+        + float(key) * ndot_key
+        + float(fill) * ndot_fill * 0.55
+        + float(rim) * edge * 0.85
+    )
+    # Keep midtones readable; avoid crushing to black
+    light = np.clip(light, 0.25, 1.85)
+    cr, cg, cb = float(color_rgb[0]), float(color_rgb[1]), float(color_rgb[2])
+    lit = np.stack([cr * light, cg * light, cb * light], axis=-1)
+    return lit

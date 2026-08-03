@@ -421,6 +421,33 @@ def sfx_events_from_scene_graph(
     return deduped
 
 
+def composition_balance_offset(balance: str | None) -> tuple[float, float]:
+    """
+    Normalized (dx, dy) bias for composition_balance.
+    Positive x = right, positive y = down (screen space).
+    """
+    b = (balance or "balanced").strip().lower().replace(" ", "_")
+    return {
+        "left_heavy": (-0.14, 0.0),
+        "right_heavy": (0.14, 0.0),
+        "top_heavy": (0.0, -0.12),
+        "bottom_heavy": (0.0, 0.12),
+        "balanced": (0.0, 0.0),
+    }.get(b, (0.0, 0.0))
+
+
+def apply_composition_balance_to_graph(graph: SceneGraph, balance: str | None) -> SceneGraph:
+    """Shift all layer keyframes by composition_balance so framing matches interpretation."""
+    dx, dy = composition_balance_offset(balance)
+    if abs(dx) < 1e-9 and abs(dy) < 1e-9:
+        return graph
+    for layer in graph.layers:
+        for kf in layer.keyframes:
+            kf.x = max(0.05, min(0.95, float(kf.x) + dx))
+            kf.y = max(0.05, min(0.95, float(kf.y) + dy))
+    return graph
+
+
 def walk_cycle_keyframes(
     *,
     duration: float,

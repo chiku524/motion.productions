@@ -113,10 +113,12 @@ Video generation software that can utilize any aspect within the movie industry 
 
 | Task | Description | Status |
 |------|-------------|--------|
-| 7.1 | 2.5D / depth: parallax, layered depth | Done |
-| 7.2 | Asset libraries: textures, shapes, icons | Done |
+| 7.1 | 2.5D / depth: parallax, layered depth | Done — true multi-plane compositing when `depth_parallax` (z-grouped layers + atmospheric plates); legacy UV warp only as fallback |
+| 7.2 | Asset libraries: textures, shapes, icons | Done — `get_asset_texture` wired into backgrounds/layers via setting→texture map |
 | 7.3 | 3D primitives or external model integration | Done (foundation); full photoreal renderer still the destination |
 | 7.4 | Photoreal path that consumes the same interpreted instruction + registries | Pending |
+
+**Also wired (Aug 2026 Tier A):** `composition_balance` now offsets layer framing; lighting `key/fill/rim/ambient` shades layers via fake normals (global LUT grade still applies after).
 
 **Success criteria:** More realistic or asset-driven visuals when enabled; photoreal path uses the same prompt → registries → render contract.
 

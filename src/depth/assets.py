@@ -1,5 +1,6 @@
 """
 Asset libraries: procedural textures, shapes. Phase 7.
+Wired into the procedural renderer for background/layer material modulation.
 """
 from typing import TYPE_CHECKING
 
@@ -14,6 +15,33 @@ _ASSET_REGISTRY: dict[str, str] = {
     "wave": "wave",
 }
 
+# Setting → default surface texture (mission: settings remain discoverable primitives)
+SETTING_TO_TEXTURE: dict[str, str] = {
+    "forest": "noise",
+    "nature": "noise",
+    "mountain": "noise",
+    "desert": "noise",
+    "city": "grid",
+    "urban": "grid",
+    "neon": "grid",
+    "studio": "grid",
+    "interior": "grid",
+    "ocean": "wave",
+    "beach": "wave",
+    "underwater": "wave",
+    "rain": "wave",
+    "abstract": "dots",
+    "space": "dots",
+    "night": "dots",
+}
+
+
+def texture_for_setting(setting: str | None) -> str | None:
+    """Resolve a procedural texture name from a setting keyword, or None."""
+    if not setting:
+        return None
+    return SETTING_TO_TEXTURE.get(str(setting).strip().lower())
+
 
 def get_asset_texture(
     name: str,
@@ -22,7 +50,7 @@ def get_asset_texture(
     *,
     seed: int = 0,
 ) -> "np.ndarray | None":
-    """Generate a procedural texture by name."""
+    """Generate a procedural texture by name (HxWx3 uint8)."""
     import numpy as np
 
     name = (name or "").lower()

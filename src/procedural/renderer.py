@@ -20,10 +20,18 @@ except ImportError:
         return 1.0, 0.1, 0.0
 
 try:
-    from ..lighting.grading import apply_lighting_preset
+    from ..lighting.grading import apply_lighting_preset, apply_spatial_layer_lighting, get_lighting_model
 except ImportError:
     def apply_lighting_preset(fr: "np.ndarray", _: str):
         return fr
+
+    def get_lighting_model(_: str):
+        return (1.0, 0.5, 0.2, 0.3)
+
+    def apply_spatial_layer_lighting(color_rgb, mask, xx, yy, cx, cy, radius, lighting_model):
+        cr, cg, cb = float(color_rgb[0]), float(color_rgb[1]), float(color_rgb[2])
+        ones = np.ones_like(mask, dtype=np.float32)
+        return np.stack([cr * ones, cg * ones, cb * ones], axis=-1)
 
 
 def _apply_camera_transform(
@@ -167,21 +175,93 @@ def _render_pure_per_frame(
     b = np.clip(b + (n - 0.5) * amp, 0, 255)
     return r, g, b
 
+def _sample_texture_mod(
+    texture: "np.ndarray | None",
+    xx: "np.ndarray",
+    yy: "np.ndarray",
+) -> "np.ndarray | None":
+    """Sample HxWx3 uint8 texture at normalized xx,yy → HxW float 0-1 luminance mod."""
+    if texture is None:
+        return None
+    h, w = texture.shape[:2]
+    xi = np.clip((xx * (w - 1)).astype(np.int32), 0, w - 1)
+    yi = np.clip((yy * (h - 1)).astype(np.int32), 0, h - 1)
+    tex = texture[yi, xi].astype(np.float32) / 255.0
+    return 0.299 * tex[:, :, 0] + 0.587 * tex[:, :, 1] + 0.114 * tex[:, :, 2]
 
-def _composite_scene_layers(
-    frame: "np.ndarray",
+
+def _blend_shaded_layer(
+    out_rgb: "np.ndarray",
+    out_a: "np.ndarray",
+    mask: "np.ndarray",
+    color_rgb: tuple[float, float, float],
+    xx: "np.ndarray",
+    yy: "np.ndarray",
+    cx: float,
+    cy: float,
+    radius: float,
+    lighting_model: tuple[float, float, float, float],
+    texture_mod: "np.ndarray | None",
+    opacity: float,
+) -> tuple["np.ndarray", "np.ndarray"]:
+    """Porter-Duff over: shade flat color with spatial lights, optional texture, onto RGBA."""
+    a = np.clip(mask * opacity, 0.0, 1.0)
+    if float(np.max(a)) < 0.02:
+        return out_rgb, out_a
+    lit = apply_spatial_layer_lighting(color_rgb, a, xx, yy, cx, cy, radius, lighting_model)
+    if texture_mod is not None:
+        lit = lit * (0.78 + 0.22 * texture_mod)[..., None]
+    a3 = a[..., None]
+    out_rgb = out_rgb * (1.0 - a3) + lit * a3
+    out_a = out_a * (1.0 - a) + a
+    return out_rgb, out_a
+
+
+def _partition_layers_by_depth(layers: list[dict]) -> list[tuple[list[dict], float]]:
+    """Group layers into back / mid / front planes with depth tags for parallax."""
+    back: list[dict] = []
+    mid: list[dict] = []
+    front: list[dict] = []
+    for layer in layers:
+        if not isinstance(layer, dict):
+            continue
+        z = int(layer.get("z", 1))
+        if z <= 0:
+            back.append(layer)
+        elif z >= 2:
+            front.append(layer)
+        else:
+            mid.append(layer)
+    return [(back, 0.28), (mid, 0.58), (front, 0.92)]
+
+
+def _render_layers_rgba(
     layers: list[dict],
     t: float,
     width: int,
     height: int,
-) -> "np.ndarray":
-    """Composite keyframed stylized layers onto an RGB float frame."""
-    from ..creation.scene_graph import sample_layer_at
+    *,
+    composition_balance: str = "balanced",
+    lighting_preset: str = "neutral",
+    texture: "np.ndarray | None" = None,
+) -> tuple["np.ndarray", "np.ndarray"]:
+    """
+    Render stylized layers onto a transparent canvas.
+    Returns (rgb float 0-255 HxWx3, alpha float 0-1 HxW).
+    """
+    from ..creation.scene_graph import composition_balance_offset, sample_layer_at
 
-    out = frame.astype(np.float32)
+    out_rgb = np.zeros((height, width, 3), dtype=np.float32)
+    out_a = np.zeros((height, width), dtype=np.float32)
+    if not layers:
+        return out_rgb, out_a
+
     yy, xx = np.mgrid[0:height, 0:width].astype(np.float32)
     xx = xx / max(1, width - 1)
     yy = yy / max(1, height - 1)
+    dx, dy = composition_balance_offset(composition_balance)
+    lighting_model = get_lighting_model(lighting_preset)
+    texture_mod = _sample_texture_mod(texture, xx, yy)
 
     sorted_layers = sorted(layers, key=lambda L: int(L.get("z", 1) if isinstance(L, dict) else 1))
     for layer in sorted_layers:
@@ -189,7 +269,8 @@ def _composite_scene_layers(
             continue
         pose = sample_layer_at(layer, t)
         kind = pose.get("kind") or layer.get("kind") or "circle"
-        cx, cy = float(pose["x"]), float(pose["y"])
+        cx = max(0.02, min(0.98, float(pose["x"]) + dx))
+        cy = max(0.02, min(0.98, float(pose["y"]) + dy))
         scale = max(0.15, float(pose["scale"]))
         opacity = max(0.0, min(1.0, float(pose["opacity"]))) * 0.85
         if opacity < 0.02:
@@ -198,53 +279,52 @@ def _composite_scene_layers(
         cr, cg, cb = float(color[0]), float(color[1]), float(color[2])
         radius = 0.12 * scale
         rot = float(pose.get("rot") or 0.0)
-        # Rotate sample coords around layer center when rot is set (spin/flourish gags)
         if abs(rot) > 1e-4:
             cos_r, sin_r = float(np.cos(rot)), float(np.sin(rot))
-            dx = xx - cx
-            dy = yy - cy
-            xx_l = cx + dx * cos_r - dy * sin_r
-            yy_l = cy + dx * sin_r + dy * cos_r
+            dxr = xx - cx
+            dyr = yy - cy
+            xx_l = cx + dxr * cos_r - dyr * sin_r
+            yy_l = cy + dxr * sin_r + dyr * cos_r
         else:
             xx_l, yy_l = xx, yy
 
         if kind == "rect":
             half = radius * 1.1
             mask = ((np.abs(xx_l - cx) < half) & (np.abs(yy_l - cy) < half)).astype(np.float32)
-            # Soft edge
             edge = np.clip(1.0 - np.maximum(np.abs(xx_l - cx) / half, np.abs(yy_l - cy) / half), 0, 1)
-            alpha = (mask * edge * opacity)[..., None]
+            mask = mask * edge
+            out_rgb, out_a = _blend_shaded_layer(
+                out_rgb, out_a, mask, (cr, cg, cb), xx_l, yy_l, cx, cy, radius,
+                lighting_model, texture_mod, opacity,
+            )
         elif kind == "arrow":
-            # Simple chevron pointing along +x (or -x if moving left historically)
-            dx = xx_l - cx
-            dy = yy_l - cy
-            body = (np.abs(dy) < radius * 0.25) & (dx > -radius) & (dx < radius * 0.4)
-            head = (dx > radius * 0.2) & (dx < radius) & (np.abs(dy) < (radius - dx) * 0.9)
+            dxv = xx_l - cx
+            dyv = yy_l - cy
+            body = (np.abs(dyv) < radius * 0.25) & (dxv > -radius) & (dxv < radius * 0.4)
+            head = (dxv > radius * 0.2) & (dxv < radius) & (np.abs(dyv) < (radius - dxv) * 0.9)
             mask = (body | head).astype(np.float32)
-            alpha = (mask * opacity)[..., None]
+            out_rgb, out_a = _blend_shaded_layer(
+                out_rgb, out_a, mask, (cr, cg, cb), xx_l, yy_l, cx, cy, radius,
+                lighting_model, texture_mod, opacity,
+            )
         elif kind == "character":
-            # Head + body (two circles/rects) with expression face marks
             head_r = radius * 0.45
             body_r = radius * 0.7
             head_cy = cy - radius * 0.55
             head_m = (np.sqrt((xx_l - cx) ** 2 + (yy_l - head_cy) ** 2) < head_r).astype(np.float32)
             body_m = ((np.abs(xx_l - cx) < body_r * 0.55) & (np.abs(yy_l - (cy + radius * 0.15)) < body_r)).astype(np.float32)
             mask = np.clip(head_m + body_m, 0, 1)
-            # Eyes
             eye_y = head_cy - head_r * 0.15
             eye_dx = head_r * 0.35
             eye_r = head_r * 0.12
             gag = str(layer.get("gag") or "none").lower()
-            # Phase F wink: briefly close one eye mid-window
             wink = gag == "wink" and (int(t * 8) % 8 == 3)
             left_eye_r = eye_r * (0.25 if wink else 1.0)
             left_eye = (np.sqrt((xx_l - (cx - eye_dx)) ** 2 + (yy_l - eye_y) ** 2) < left_eye_r).astype(np.float32)
             right_eye = (np.sqrt((xx_l - (cx + eye_dx)) ** 2 + (yy_l - eye_y) ** 2) < eye_r).astype(np.float32)
             expression = str(layer.get("expression") or "neutral").lower()
             mouth_y = head_cy + head_r * 0.35
-            mouth = np.zeros_like(mask)
             if expression == "happy":
-                # Upward curve (smile): thin arc below eyes
                 mouth = (
                     (np.abs(yy_l - (mouth_y - 0.01 * np.cos((xx_l - cx) / max(1e-6, head_r * 0.5) * 3.14))) < head_r * 0.08)
                     & (np.abs(xx_l - cx) < head_r * 0.45)
@@ -256,7 +336,6 @@ def _composite_scene_layers(
                     & (np.abs(xx_l - cx) < head_r * 0.4)
                 ).astype(np.float32)
             elif expression == "angry":
-                # Flat frown + slightly lower brows via thicker eyes
                 mouth = ((np.abs(yy_l - mouth_y) < head_r * 0.06) & (np.abs(xx_l - cx) < head_r * 0.35)).astype(np.float32)
                 left_eye = (np.sqrt((xx_l - (cx - eye_dx)) ** 2 + (yy_l - (eye_y + head_r * 0.05)) ** 2) < eye_r * 1.15).astype(np.float32)
                 right_eye = (np.sqrt((xx_l - (cx + eye_dx)) ** 2 + (yy_l - (eye_y + head_r * 0.05)) ** 2) < eye_r * 1.15).astype(np.float32)
@@ -268,19 +347,19 @@ def _composite_scene_layers(
                 mouth = ((np.abs(yy_l - mouth_y) < head_r * 0.05) & (np.abs(xx_l - cx) < head_r * 0.3)).astype(np.float32)
             else:
                 mouth = ((np.abs(yy_l - mouth_y) < head_r * 0.05) & (np.abs(xx_l - cx) < head_r * 0.28)).astype(np.float32)
-            # Darken face features on the character color
             face = np.clip(left_eye + right_eye + mouth, 0, 1)
             mask = np.clip(mask + face * 0.35, 0, 1)
-            alpha = (mask * opacity)[..., None]
-            # Slightly darker features
-            feature_alpha = (face * opacity * 0.55)[..., None]
-            color_arr = np.array([cr, cg, cb], dtype=np.float32).reshape(1, 1, 3)
-            dark = color_arr * 0.35
-            out = out * (1.0 - alpha) + color_arr * alpha
-            out = out * (1.0 - feature_alpha) + dark * feature_alpha
-            continue
+            out_rgb, out_a = _blend_shaded_layer(
+                out_rgb, out_a, mask, (cr, cg, cb), xx_l, yy_l, cx, cy, radius,
+                lighting_model, texture_mod, opacity,
+            )
+            feat_a = face * opacity * 0.55
+            dark = (cr * 0.35, cg * 0.35, cb * 0.35)
+            out_rgb, out_a = _blend_shaded_layer(
+                out_rgb, out_a, feat_a, dark, xx_l, yy_l, cx, cy, radius * 0.5,
+                lighting_model, None, 1.0,
+            )
         elif kind == "tree":
-            # Trunk + canopy (stylized)
             trunk_w, trunk_h = radius * 0.22, radius * 0.85
             trunk = (
                 (np.abs(xx_l - cx) < trunk_w * 0.5)
@@ -289,15 +368,15 @@ def _composite_scene_layers(
             ).astype(np.float32)
             canopy_cy = cy - radius * 0.35
             canopy = (np.sqrt((xx_l - cx) ** 2 + (yy_l - canopy_cy) ** 2) < radius * 0.7).astype(np.float32)
-            mask = np.clip(trunk * 0.7 + canopy, 0, 1)
-            alpha = (mask * opacity)[..., None]
-            color_arr = np.array([cr, cg, cb], dtype=np.float32).reshape(1, 1, 3)
-            trunk_c = np.array([90, 55, 30], dtype=np.float32).reshape(1, 1, 3)
-            out = out * (1.0 - (canopy * opacity)[..., None]) + color_arr * (canopy * opacity)[..., None]
-            out = out * (1.0 - (trunk * opacity * 0.9)[..., None]) + trunk_c * (trunk * opacity * 0.9)[..., None]
-            continue
+            out_rgb, out_a = _blend_shaded_layer(
+                out_rgb, out_a, canopy, (cr, cg, cb), xx_l, yy_l, cx, canopy_cy, radius * 0.7,
+                lighting_model, texture_mod, opacity,
+            )
+            out_rgb, out_a = _blend_shaded_layer(
+                out_rgb, out_a, trunk, (90.0, 55.0, 30.0), xx_l, yy_l, cx, cy, radius * 0.4,
+                lighting_model, texture_mod, opacity * 0.9,
+            )
         elif kind == "fish":
-            # Oval body + triangle tail
             body = (
                 ((xx_l - cx) / max(1e-6, radius * 0.9)) ** 2
                 + ((yy_l - cy) / max(1e-6, radius * 0.45)) ** 2
@@ -308,23 +387,26 @@ def _composite_scene_layers(
                 & (np.abs(yy_l - cy) < (cx - radius * 0.4 - xx_l) * 0.9)
             )
             mask = (body | tail).astype(np.float32)
+            out_rgb, out_a = _blend_shaded_layer(
+                out_rgb, out_a, mask, (cr, cg, cb), xx_l, yy_l, cx, cy, radius,
+                lighting_model, texture_mod, opacity,
+            )
             eye = (np.sqrt((xx_l - (cx + radius * 0.35)) ** 2 + (yy_l - (cy - radius * 0.08)) ** 2) < radius * 0.1).astype(np.float32)
-            alpha = (mask * opacity)[..., None]
-            color_arr = np.array([cr, cg, cb], dtype=np.float32).reshape(1, 1, 3)
-            out = out * (1.0 - alpha) + color_arr * alpha
-            eye_a = (eye * opacity * 0.7)[..., None]
-            out = out * (1.0 - eye_a) + np.array([20, 20, 30], dtype=np.float32) * eye_a
-            continue
+            out_rgb, out_a = _blend_shaded_layer(
+                out_rgb, out_a, eye, (20.0, 20.0, 30.0), xx_l, yy_l, cx, cy, radius * 0.2,
+                lighting_model, None, opacity * 0.7,
+            )
         elif kind == "wave":
-            # Soft sine band near cy
             band = np.abs(yy_l - (cy + 0.03 * np.sin(xx_l * 18.0 + t * 3.0))) < radius * 0.35
             fade = np.clip(1.0 - np.abs(xx_l - cx) / max(1e-6, radius * 2.2), 0, 1)
-            mask = (band.astype(np.float32) * fade)
-            alpha = (mask * opacity * 0.75)[..., None]
+            mask = band.astype(np.float32) * fade
+            out_rgb, out_a = _blend_shaded_layer(
+                out_rgb, out_a, mask, (cr, cg, cb), xx_l, yy_l, cx, cy, radius,
+                lighting_model, texture_mod, opacity * 0.75,
+            )
         elif kind == "building":
             half_w, half_h = radius * 0.55, radius * 1.2
             body = ((np.abs(xx_l - cx) < half_w) & (np.abs(yy_l - cy) < half_h)).astype(np.float32)
-            # Window grid
             wx = np.floor((xx_l - (cx - half_w)) / max(1e-6, half_w * 0.35))
             wy = np.floor((yy_l - (cy - half_h)) / max(1e-6, half_h * 0.22))
             windows = (
@@ -333,30 +415,77 @@ def _composite_scene_layers(
                 & (np.abs(xx_l - cx) < half_w * 0.85)
                 & (np.abs(yy_l - cy) < half_h * 0.85)
             ).astype(np.float32)
-            mask = body
-            alpha = (mask * opacity)[..., None]
-            color_arr = np.array([cr, cg, cb], dtype=np.float32).reshape(1, 1, 3)
-            out = out * (1.0 - alpha) + color_arr * alpha
-            win_a = (windows * opacity * 0.45)[..., None]
-            out = out * (1.0 - win_a) + np.array([220, 200, 90], dtype=np.float32) * win_a
-            continue
+            out_rgb, out_a = _blend_shaded_layer(
+                out_rgb, out_a, body, (cr, cg, cb), xx_l, yy_l, cx, cy, radius,
+                lighting_model, texture_mod, opacity,
+            )
+            out_rgb, out_a = _blend_shaded_layer(
+                out_rgb, out_a, windows, (220.0, 200.0, 90.0), xx_l, yy_l, cx, cy, radius * 0.5,
+                lighting_model, None, opacity * 0.45,
+            )
         elif kind == "cloud":
-            # Three overlapping soft circles
             c1 = np.sqrt((xx_l - (cx - radius * 0.45)) ** 2 + (yy_l - cy) ** 2) < radius * 0.55
             c2 = np.sqrt((xx_l - cx) ** 2 + (yy_l - (cy - radius * 0.15)) ** 2) < radius * 0.65
             c3 = np.sqrt((xx_l - (cx + radius * 0.4)) ** 2 + (yy_l - cy) ** 2) < radius * 0.5
             mask = (c1 | c2 | c3).astype(np.float32)
-            alpha = (mask * opacity * 0.7)[..., None]
+            out_rgb, out_a = _blend_shaded_layer(
+                out_rgb, out_a, mask, (cr, cg, cb), xx_l, yy_l, cx, cy, radius,
+                lighting_model, texture_mod, opacity * 0.7,
+            )
         else:
-            # circle
             dist = np.sqrt((xx_l - cx) ** 2 + (yy_l - cy) ** 2)
             mask = np.clip(1.0 - dist / max(1e-6, radius), 0, 1) ** 1.5
-            alpha = (mask * opacity)[..., None]
+            out_rgb, out_a = _blend_shaded_layer(
+                out_rgb, out_a, mask, (cr, cg, cb), xx_l, yy_l, cx, cy, radius,
+                lighting_model, texture_mod, opacity,
+            )
 
-        color_arr = np.array([cr, cg, cb], dtype=np.float32).reshape(1, 1, 3)
-        out = out * (1.0 - alpha) + color_arr * alpha
+    return np.clip(out_rgb, 0, 255), np.clip(out_a, 0, 1)
 
+
+def _composite_scene_layers(
+    frame: "np.ndarray",
+    layers: list[dict],
+    t: float,
+    width: int,
+    height: int,
+    *,
+    composition_balance: str = "balanced",
+    lighting_preset: str = "neutral",
+    texture: "np.ndarray | None" = None,
+) -> "np.ndarray":
+    """Composite keyframed stylized layers onto an RGB float frame (over)."""
+    fg_rgb, fg_a = _render_layers_rgba(
+        layers, t, width, height,
+        composition_balance=composition_balance,
+        lighting_preset=lighting_preset,
+        texture=texture,
+    )
+    a = fg_a[..., None]
+    out = frame.astype(np.float32) * (1.0 - a) + fg_rgb * a
     return np.clip(out, 0, 255)
+
+
+def _apply_background_texture(
+    r: "np.ndarray",
+    g: "np.ndarray",
+    b: "np.ndarray",
+    xx: "np.ndarray",
+    yy: "np.ndarray",
+    texture: "np.ndarray | None",
+    intensity: float,
+) -> tuple["np.ndarray", "np.ndarray", "np.ndarray"]:
+    """Soft-multiply procedural texture onto background RGB (camera-warped UVs)."""
+    mod = _sample_texture_mod(texture, xx, yy)
+    if mod is None:
+        return r, g, b
+    amp = 0.18 * max(0.3, min(1.0, intensity))
+    factor = 1.0 - amp + amp * (0.55 + 0.9 * mod)
+    return (
+        np.clip(r * factor, 0, 255),
+        np.clip(g * factor, 0, 255),
+        np.clip(b * factor, 0, 255),
+    )
 
 
 def render_frame(
@@ -372,6 +501,8 @@ def render_frame(
     Generate one RGB frame (H, W, 3) uint8 from our procedural algorithms.
     Supports vertical, radial, angled, horizontal gradients and camera motion (zoom, pan, rotate).
     When creation_mode is pure_per_frame, uses randomly placed pure colors (§7) for emergent blends.
+    When depth_parallax is set, composites true depth planes (atmosphere + z-grouped layers)
+    instead of a single UV warp.
     """
     creation_mode = getattr(spec, "creation_mode", "blended") or "blended"
     pure_colors = getattr(spec, "pure_colors", None) or []
@@ -384,7 +515,6 @@ def render_frame(
     directionality = getattr(spec, "motion_directionality", "none") or "none"
     smoothness = getattr(spec, "motion_smoothness", "smooth") or "smooth"
     intensity = max(0.1, min(1.0, spec.intensity))
-    # Phase 5: tension curve modulates intensity when duration known
     if duration_seconds and duration_seconds > 0:
         try:
             from ..narrative.story import get_tension_at
@@ -396,13 +526,23 @@ def render_frame(
             pass
     gradient_type = getattr(spec, "gradient_type", "vertical") or "vertical"
     camera_motion = getattr(spec, "camera_motion", "static") or "static"
+    lighting_preset = getattr(spec, "lighting_preset", "neutral") or "neutral"
+    composition_balance = getattr(spec, "composition_balance", "balanced") or "balanced"
+    setting = getattr(spec, "setting", None)
 
-    # Grid of coordinates 0..1
+    texture = None
+    try:
+        from ..depth.assets import get_asset_texture, texture_for_setting
+        tex_name = texture_for_setting(setting)
+        if tex_name:
+            texture = get_asset_texture(tex_name, width, height, seed=seed)
+    except ImportError:
+        texture = None
+
     y = np.linspace(0, 1, height, dtype=np.float32)
     x = np.linspace(0, 1, width, dtype=np.float32)
     xx, yy = np.meshgrid(x, y)
 
-    # Shot type affects base zoom
     shot_type = getattr(spec, "shot_type", "medium") or "medium"
     shot_zoom, _, handheld = get_shot_params(shot_type)
     zoom, pan_x, pan_y, rotate = get_camera_params(camera_motion, t)
@@ -416,7 +556,6 @@ def render_frame(
     if creation_mode == "pure_per_frame" and pure_colors:
         r, g, b = _render_pure_per_frame(xx, yy, pure_colors, t, seed, intensity)
     else:
-        # Compute gradient value per pixel (blended mode)
         v = _gradient_value(
             xx, yy, gradient_type, motion_val,
             directionality=directionality,
@@ -438,7 +577,6 @@ def render_frame(
         g = g0 * (1 - frac) + g1 * frac
         b = b0 * (1 - frac) + b1 * frac
 
-        # Add noise texture (our algorithm — vectorized)
         n = np.sin(xx * 12.9898 + yy * 78.233 + (seed + t * 100) * 43758.5453) * 43758.5453
         n = n - np.floor(n)
         amp = 20 * intensity
@@ -446,28 +584,58 @@ def render_frame(
         g = np.clip(g + (n - 0.5) * amp, 0, 255)
         b = np.clip(b + (n - 0.5) * amp, 0, 255)
 
-        # Setting backdrop primitives: horizon / ground / sky bands (discoverable themes)
-        setting = getattr(spec, "setting", None)
         if setting:
             r, g, b = _apply_setting_backdrop(r, g, b, yy, str(setting), intensity)
 
-    # Shape overlay (soft circle or rect) — legacy single overlay
+    r, g, b = _apply_background_texture(r, g, b, xx, yy, texture, intensity)
+    background = np.stack([r, g, b], axis=-1).astype(np.float32)
+
     shape_overlay = getattr(spec, "shape_overlay", "none") or "none"
     overlay_palette = pure_colors if (creation_mode == "pure_per_frame" and pure_colors) else palette
     scene_layers = getattr(spec, "scene_layers", None) or []
-    if scene_layers:
-        frame = np.stack([r, g, b], axis=-1).astype(np.float32)
-        frame = _composite_scene_layers(frame, scene_layers, t, width, height)
-        r, g, b = frame[:, :, 0], frame[:, :, 1], frame[:, :, 2]
+    depth_parallax = bool(getattr(spec, "depth_parallax", False))
+
+    if scene_layers and depth_parallax:
+        from ..depth.parallax import composite_depth_planes
+        from ..depth.layers import create_depth_layers
+
+        mid = palette[len(palette) // 2] if palette else (120, 130, 140)
+        base_rgb = (int(mid[0]), int(mid[1]), int(mid[2]))
+        planes: list[tuple[np.ndarray, np.ndarray, float]] = []
+        for img, depth in create_depth_layers(width, height, num_layers=2, seed=seed, base_rgb=base_rgb):
+            haze_a = np.full((height, width), 0.10 * (1.15 - float(depth)), dtype=np.float32)
+            planes.append((img.astype(np.float32), haze_a, float(depth) * 0.35))
+        for group, depth in _partition_layers_by_depth(scene_layers):
+            if not group:
+                continue
+            fg_rgb, fg_a = _render_layers_rgba(
+                group, t, width, height,
+                composition_balance=composition_balance,
+                lighting_preset=lighting_preset,
+                texture=texture,
+            )
+            planes.append((fg_rgb, fg_a, depth))
+        frame = composite_depth_planes(background, planes, t, motion_scale=0.06)
+    elif scene_layers:
+        frame = _composite_scene_layers(
+            background, scene_layers, t, width, height,
+            composition_balance=composition_balance,
+            lighting_preset=lighting_preset,
+            texture=texture,
+        )
     elif shape_overlay in ("circle", "rect") and overlay_palette:
-        mid = len(overlay_palette) // 2
-        cr, cg, cb = overlay_palette[mid][0], overlay_palette[mid][1], overlay_palette[mid][2]
+        frame = background.copy()
+        mid_i = len(overlay_palette) // 2
+        cr = float(overlay_palette[mid_i][0])
+        cg = float(overlay_palette[mid_i][1])
+        cb = float(overlay_palette[mid_i][2])
         cx, cy = 0.5, 0.5
-        # Drift overlay with directionality
         from .motion import directionality_offsets
+        from ..creation.scene_graph import composition_balance_offset
         odx, ody = directionality_offsets(directionality, motion_val, smoothness=smoothness)
-        cx = (cx + odx) % 1.0
-        cy = (cy + ody) % 1.0
+        cdx, cdy = composition_balance_offset(composition_balance)
+        cx = (cx + odx + cdx) % 1.0
+        cy = (cy + ody + cdy) % 1.0
         if shape_overlay == "circle":
             dist = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2) * 2
             alpha = np.clip(1 - dist, 0, 1) ** 2 * 0.15
@@ -477,17 +645,17 @@ def render_frame(
             my = np.maximum(np.abs(yy - cy) - (0.5 - edge), 0)
             dist = np.sqrt(mx * mx + my * my) * 4
             alpha = np.clip(1 - dist, 0, 1) ** 2 * 0.2
-        r = np.clip(r * (1 - alpha) + cr * alpha, 0, 255)
-        g = np.clip(g * (1 - alpha) + cg * alpha, 0, 255)
-        b = np.clip(b * (1 - alpha) + cb * alpha, 0, 255)
+        lit = apply_spatial_layer_lighting(
+            (cr, cg, cb), alpha, xx, yy, cx, cy, 0.25, get_lighting_model(lighting_preset),
+        )
+        a3 = alpha[..., None]
+        frame = frame * (1.0 - a3) + lit * a3
+    else:
+        frame = background
 
-    frame = np.stack([r, g, b], axis=-1).astype(np.uint8)
-
-    # Lighting / color grading (Phase 3)
-    lighting_preset = getattr(spec, "lighting_preset", "neutral") or "neutral"
+    frame = np.clip(frame, 0, 255).astype(np.uint8)
     frame = apply_lighting_preset(frame, lighting_preset)
 
-    # Text overlay (Phase 4)
     text_overlay = getattr(spec, "text_overlay", None)
     if text_overlay:
         try:
@@ -499,9 +667,7 @@ def render_frame(
         except ImportError:
             pass
 
-    # Depth parallax (Phase 7) - after text so base is fully composed
-    depth_parallax = getattr(spec, "depth_parallax", False)
-    if depth_parallax:
+    if depth_parallax and not scene_layers:
         try:
             from ..depth.parallax import apply_parallax
             frame = apply_parallax(frame, t, depth_layers=3, motion_scale=0.05)
