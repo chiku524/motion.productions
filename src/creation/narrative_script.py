@@ -92,7 +92,11 @@ def build_mini_scene_script(
     }
     actions = action_map.get(action, ["left", action if action else "bounce", "right"])
     sections = ["intro", "drop", "break"]
-    sfx_sets = [["whoosh"], ["bounce"] if "bounce" in actions or action == "bounce" else ["click"], []]
+    if action == "walk":
+        # Keep walk SFX light — whoosh/click would auto-map to spin/double_take gags
+        sfx_sets = [[], ["click"], []]
+    else:
+        sfx_sets = [["whoosh"], ["bounce"] if "bounce" in actions or action == "bounce" else ["click"], []]
     beats: list[ScriptBeat] = []
     for i, (w, name, text, act, section, sfx) in enumerate(
         zip(weights, names, texts, actions, sections, sfx_sets)
@@ -196,9 +200,13 @@ def script_to_entities_and_sfx(
     for i, beat in enumerate(script.beats):
         traj = beat.entity_action or "left"
         bounce = traj == "bounce" or "bounce" in beat.sfx
+        is_walk = traj == "walk"
         gag = None
         if bounce:
             gag = "squash"
+        elif is_walk:
+            # Walk bob comes from walk_cycle_keyframes — don't overwrite with spin/double_take
+            gag = None
         elif traj == "toward":
             gag = "flourish"
         elif "whoosh" in beat.sfx:

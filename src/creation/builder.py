@@ -348,6 +348,11 @@ def build_spec_from_instruction(
                 freeform_applied = True
 
     # Short mini-scenes: if we have a single bouncing/walking entity, expand to a 3-beat arc
+    # Skip when the prompt already set an entertainment gag (spin/flourish/…) — keep it intact
+    _PROMPT_GAGS = frozenset(("spin", "flourish", "double_take", "wink"))
+    seed_gag = ""
+    if entities and isinstance(entities[0], dict):
+        seed_gag = str(entities[0].get("gag") or "").lower()
     if (
         not freeform_applied
         and entities
@@ -356,6 +361,7 @@ def build_spec_from_instruction(
         and isinstance(entities[0], dict)
         and (entities[0].get("bounce") or entities[0].get("kind") == "character")
         and not getattr(instruction, "educational_template", None)
+        and seed_gag not in _PROMPT_GAGS
     ):
         from .narrative_script import build_mini_scene_script, script_beats_to_dicts
         action = "walk" if entities[0].get("kind") == "character" else "bounce"

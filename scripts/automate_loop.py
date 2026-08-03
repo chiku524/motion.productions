@@ -140,10 +140,28 @@ def pick_prompt(
     findability = float((mission_cache or {}).get("findability_pct") or 100)
     thin_families = findability < 85 or thin_color
     static_focus = (os.environ.get("LOOP_STATIC_FOCUS") or "both").strip().lower()
+    extraction_focus = (os.environ.get("LOOP_EXTRACTION_FOCUS") or "frame").strip().lower()
+    workflow_type = (os.environ.get("LOOP_WORKFLOW_TYPE") or "").strip().lower()
+    # Balanced / window worker owns narrative fidelity — don't let color targeting starve it
+    prefer_fidelity = (
+        extraction_focus == "window"
+        or workflow_type in ("main", "balanced")
+        or static_focus in ("none", "off", "narrative")
+    )
+    if prefer_fidelity:
+        mini_rate = max(mini_rate, 0.55)
+        if critical_color:
+            mini_rate = max(mini_rate, 0.48)
 
     # When color coverage is tiny, bias to underfilled hue families BEFORE mini-scenes/exploit
+    # (explorer / color-focus workers only — balanced skips this)
     color_target_rate = 0.72 if critical_color else (0.48 if thin_color else 0.28)
-    if static_focus in ("color", "both") and thin_families and secure_random() < color_target_rate:
+    if (
+        not prefer_fidelity
+        and static_focus in ("color", "both")
+        and thin_families
+        and secure_random() < color_target_rate
+    ):
         color_prompt = generate_targeted_color_family_prompt(
             api_base=api_base_for_mission,
             mission=mission_cache if isinstance(mission_cache, dict) else None,
@@ -155,7 +173,7 @@ def pick_prompt(
 
     # Prefer everyday mini-scenes before exploit/registry jargon
     if secure_random() < mini_rate:
-        mini = generate_mini_scene_prompt(avoid=recent | bad)
+        mini = generate_mini_scene_prompt(avoid=recent | bad, fidelity_bias=prefer_fidelity)
         if mini:
             logger.info("Mini-scene prompt: %s", mini[:70] + ("..." if len(mini) > 70 else ""))
             return (mini, False, {"source": "mini_scene"})
@@ -242,8 +260,9 @@ def pick_prompt(
             bucket = _interpretation_bucket(chosen)
             return (chosen["prompt"], False, {"source": "interpretation", "interpretation_bucket": bucket})
     # Second chance at mini-scenes before generic procedural
-    if secure_random() < (0.55 if dense_enough else 0.35):
-        mini = generate_mini_scene_prompt(avoid=recent | bad)
+    second_mini = 0.62 if prefer_fidelity else (0.55 if dense_enough else 0.35)
+    if secure_random() < second_mini:
+        mini = generate_mini_scene_prompt(avoid=recent | bad, fidelity_bias=prefer_fidelity)
         if mini:
             logger.info("Mini-scene prompt: %s", mini[:70] + ("..." if len(mini) > 70 else ""))
             return (mini, False, {"source": "mini_scene"})

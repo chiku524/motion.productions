@@ -29,9 +29,14 @@ x-python-worker: &python-worker
     MOTION_API_SECRET: ${MOTION_API_SECRET:-}
     HEALTH_PORT: "8080"
     PYTHONUNBUFFERED: "1"
+    PYTHONDONTWRITEBYTECODE: "1"
     # Free-tier D1: small weighted chunks + pause between POSTs (blends cost ~3 queries each)
     DISCOVERIES_MAX_ITEMS: ${DISCOVERIES_MAX_ITEMS:-8}
     DISCOVERIES_CHUNK_PAUSE_SECONDS: ${DISCOVERIES_CHUNK_PAUSE_SECONDS:-3.5}
+  volumes:
+    # Live-edit Python without rebuild (deps / Dockerfile changes still need --build)
+    - ./src:/app/src
+    - ./scripts:/app/scripts
   restart: unless-stopped
 
 services:
@@ -126,6 +131,7 @@ services:
       PYTHONUNBUFFERED: "1"
       LOOP_EXTRACTION_FOCUS: window
       LOOP_WORKFLOW_TYPE: main
+      LOOP_STATIC_FOCUS: "none"
       LOOP_WORKER_OFFSET_SECONDS: "30"
       LOOP_DELAY_SECONDS: "90"
       LOOP_DURATION_SECONDS: "5"

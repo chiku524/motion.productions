@@ -352,7 +352,16 @@ def build_scene_graph_from_instruction(
             z = int(ent.get("z", 0))
         elif t_start is not None and t_end is not None:
             local_dur = max(0.35, float(t_end) - float(t_start))
-            local_kfs = _trajectory_path(traj, duration=local_dur, bounce=bounce, gag=gag, pacing=pacing)
+            # Character walks get bob cycles in their time window (not slide+gag)
+            if kind == "character" and gag in ("none", "squash", "wink", ""):
+                direction = "right" if traj == "right" else "left"
+                local_kfs = walk_cycle_keyframes(
+                    duration=local_dur,
+                    direction=direction,
+                    personality=str(ent.get("personality") or "neutral"),
+                )
+            else:
+                local_kfs = _trajectory_path(traj, duration=local_dur, bounce=bounce, gag=gag, pacing=pacing)
             kfs = _offset_keyframes(local_kfs, float(t_start), float(t_end))
             z = i + 1
         else:

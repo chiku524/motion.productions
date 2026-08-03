@@ -174,6 +174,50 @@ class TestFidelityPass(unittest.TestCase):
         self.assertAlmostEqual(weighted[1], 400.0, places=0)
         self.assertAlmostEqual(weighted[2], 1000.0, places=0)
 
+    def test_walk_mini_scene_keeps_bob_not_spin(self):
+        from src.creation.narrative_script import build_mini_scene_script, script_to_entities_and_sfx
+
+        narr = build_mini_scene_script(total_duration=5.0, action="walk", topic="walk")
+        ents, _sfx = script_to_entities_and_sfx(narr, entity_kind="circle")
+        walk_ents = [e for e in ents if e.get("kind") == "character" or e.get("trajectory") in ("left", "right", "walk")]
+        self.assertTrue(ents)
+        # Walk beats must not auto-assign spin/double_take
+        for e in ents:
+            self.assertNotIn(e.get("gag"), ("spin", "double_take", "flourish"))
+
+        instruction = interpret_user_prompt("a person walking left with calm ambient music")
+        instruction.duration_seconds = 5.0
+        instruction.entities = [{
+            "id": "c0",
+            "kind": "character",
+            "trajectory": "left",
+            "expression": "calm",
+            "personality": "playful",
+        }]
+        spec = build_spec_from_instruction(instruction, knowledge={})
+        chars = [L for L in (spec.scene_layers or []) if L.get("kind") == "character"]
+        self.assertTrue(chars)
+        # Walk cycles produce many bobbing keyframes (not a 2-point slide)
+        for L in chars:
+            self.assertGreater(len(L.get("keyframes") or []), 3)
+
+    def test_melancholy_maps_to_dark_mood(self):
+        from src.procedural.data.keywords import KEYWORD_TO_AUDIO_MOOD, KEYWORD_TO_SETTING
+
+        self.assertEqual(KEYWORD_TO_AUDIO_MOOD.get("melancholy"), "dark")
+        self.assertEqual(KEYWORD_TO_SETTING.get("drizzle"), "rain")
+        self.assertEqual(KEYWORD_TO_SETTING.get("storm"), "rain")
+
+    def test_mini_scene_fidelity_bias_prefers_buckets(self):
+        from src.automation.prompt_gen import _classify_mini_scene, generate_mini_scene_prompt
+
+        self.assertEqual(_classify_mini_scene("explain gravity with a bouncing ball"), "educational")
+        self.assertEqual(_classify_mini_scene("a person walking in the rain"), "weather")
+        self.assertEqual(_classify_mini_scene("ball enters then bounces then exits"), "multibeat")
+        # Biased draws should succeed
+        p = generate_mini_scene_prompt(fidelity_bias=True)
+        self.assertTrue(p)
+
 
 if __name__ == "__main__":
     unittest.main()

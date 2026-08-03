@@ -696,6 +696,17 @@ _MINI_SCENE_TEMPLATES: list[str] = [
     "city buildings at night with a neon arrow sweeping left",
     "clouds drifting at golden hour with a calm character walking right",
     "underwater fish swimming left with dreamy ambient music",
+    # Fidelity-biased adds (weather / educational / multi-beat / park-street-snow)
+    "a person walking left in the park with calm ambient music",
+    "a character walking right down the street with deep house beat",
+    "a shy person walking left in the snow with soft vocals",
+    "soft drizzle: person walking right under gray sky with melancholy music",
+    "storm mood: dark frame, ball drifting left, tense cinematic music",
+    "explain photosynthesis with a bouncing green orb and soft spoken vocals",
+    "teach gravity: ball falls then bounces then settles with calm music",
+    "a red ball enters left then bounces then exits right in the rain",
+    "a happy person walks in then waves then walks away at golden hour",
+    "a blue orb drifts left then rises then pulses by the ocean with ambient",
 ]
 
 
@@ -706,11 +717,48 @@ _SETTING_PHRASES = [
     "by the ocean",
     "in a forest",
     "in the rain",
+    "in the snow",
     "in a desert",
     "underwater",
     "in a studio",
     "at golden hour",
+    "in the park",
+    "on the street",
 ]
+
+
+def _classify_mini_scene(prompt: str) -> str:
+    """Bucket mini-scene templates for fidelity-weighted sampling."""
+    low = (prompt or "").lower()
+    if any(w in low for w in ("explain", "tutorial", "science explainer", "teach ", "lesson")):
+        return "educational"
+    if any(w in low for w in ("rain", "snow", "drizzle", "storm", "weather")):
+        return "weather"
+    if " then " in low:
+        return "multibeat"
+    if any(
+        w in low
+        for w in (
+            "forest", "ocean", "city", "sunset", "neon", "park", "street",
+            "desert", "underwater", "golden hour", "mountain", "studio",
+            "beach", "night", "clouds",
+        )
+    ):
+        return "setting"
+    return "general"
+
+
+def _mini_scene_pools() -> dict[str, list[str]]:
+    pools: dict[str, list[str]] = {
+        "setting": [],
+        "weather": [],
+        "educational": [],
+        "multibeat": [],
+        "general": [],
+    }
+    for p in _MINI_SCENE_TEMPLATES:
+        pools[_classify_mini_scene(p)].append(p)
+    return pools
 
 
 def mutate_liked_prompt(prompt: str, *, avoid: set[str] | None = None) -> str | None:
@@ -777,13 +825,33 @@ def mutate_liked_prompt(prompt: str, *, avoid: set[str] | None = None) -> str | 
 def generate_mini_scene_prompt(
     *,
     avoid: set[str] | None = None,
+    fidelity_bias: bool = False,
 ) -> str | None:
     """
     Natural-language mini-scene prompts for ~5s clips — closer to real user requests
     than registry-axis jargon. Exercises scene graph + music + event SFX.
+
+    When fidelity_bias=True (balanced/window loops), overweight setting / weather /
+    educational / multi-beat templates so procedural polish is exercised often.
     """
     avoid = avoid or set()
-    candidates = [p for p in _MINI_SCENE_TEMPLATES if p not in avoid]
+    pools = _mini_scene_pools()
+    if fidelity_bias:
+        r = secure_random()
+        if r < 0.35:
+            cat = "setting"
+        elif r < 0.55:
+            cat = "weather"
+        elif r < 0.70:
+            cat = "educational"
+        elif r < 0.85:
+            cat = "multibeat"
+        else:
+            cat = "general"
+        bucket = [p for p in pools.get(cat, []) if p not in avoid]
+        candidates = bucket or [p for p in _MINI_SCENE_TEMPLATES if p not in avoid]
+    else:
+        candidates = [p for p in _MINI_SCENE_TEMPLATES if p not in avoid]
     if not candidates:
         return None
     prompt = secure_choice(candidates)

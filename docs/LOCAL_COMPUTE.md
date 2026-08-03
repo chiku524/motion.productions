@@ -29,6 +29,12 @@ cd cloudflare
 printf '%s' 'your-long-secret' | npx wrangler secret put MOTION_API_SECRET
 ```
 
+### Live Python mounts
+
+Compose bind-mounts `./src` and `./scripts` into every Python worker so loop/render code picks up host edits without `--build`. Dependency or `Dockerfile` changes still need a rebuild. Set `PYTHONDONTWRITEBYTECODE=1` (already in compose) to avoid host/`__pycache__` fights.
+
+Clear accumulated MP4s inside containers periodically (`/app/output`) — they inflate the Docker VHDX even after upload.
+
 ### Start core services (webjobs + procedural render)
 
 ```bash

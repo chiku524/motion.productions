@@ -358,6 +358,10 @@ KEYWORD_TO_AUDIO_MOOD: dict[str, str] = {
     "dramatic": "dramatic",
     "peaceful": "peaceful",
     "chaotic": "chaotic",
+    "melancholy": "dark",
+    "sad": "dark",
+    "playful": "uplifting",
+    "cheerful": "uplifting",
 }
 KEYWORD_TO_AUDIO_PRESENCE: dict[str, str] = {
     "silence": "silence",
@@ -473,6 +477,9 @@ KEYWORD_TO_SETTING: dict[str, str] = {
     "outdoors": "exterior",
     "exterior": "exterior",
     "rain": "rain",
+    "drizzle": "rain",
+    "storm": "rain",
+    "stormy": "rain",
     "moody": "moody",
     "abstract": "abstract",
     "snow": "snow",
