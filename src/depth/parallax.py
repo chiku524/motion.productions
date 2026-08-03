@@ -31,12 +31,15 @@ def composite_depth_planes(
     t: float,
     *,
     motion_scale: float = 0.06,
+    camera_pan_x: float = 0.0,
+    camera_pan_y: float = 0.0,
 ) -> "np.ndarray":
     """
     Composite RGB background with (rgb, alpha, depth) planes.
 
     depth in [0, 1]: 0 = far (slow), 1 = near (fast). Each plane is shifted
-    horizontally by motion_scale * sin(t*0.5) * depth before alpha-over.
+    by intrinsic oscillation plus camera pan (near planes move more, opposite
+    to pan) before alpha-over.
     background and plane rgb are float 0-255; alpha is float 0-1 HxW.
     """
     import numpy as np
@@ -44,12 +47,19 @@ def composite_depth_planes(
     out = background.astype(np.float32).copy()
     if out.ndim == 2:
         out = np.stack([out, out, out], axis=-1)
+    h = out.shape[0]
     phase = float(np.sin(t * 0.5))
     for rgb, alpha, depth in planes:
         d = float(max(0.0, min(1.0, depth)))
-        offset = motion_scale * phase * d
+        # Oscillation + camera-coupled parallax (near layers counter-pan more)
+        offset = motion_scale * phase * d - float(camera_pan_x) * d * 1.35
         rgb_s = horizontal_shift(np.asarray(rgb, dtype=np.float32), offset)
         a = horizontal_shift(np.asarray(alpha, dtype=np.float32), offset)
+        if abs(camera_pan_y) > 1e-5:
+            pixels = int(np.clip(-float(camera_pan_y) * d * h * 0.85, -h // 10, h // 10))
+            if pixels != 0:
+                rgb_s = np.roll(rgb_s, pixels, axis=0)
+                a = np.roll(a, pixels, axis=0)
         if a.ndim == 3:
             a = a[..., 0]
         a = np.clip(a, 0.0, 1.0)[..., None]

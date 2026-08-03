@@ -84,6 +84,20 @@ class TestPhotorealismFoundation(unittest.TestCase):
         shifted = horizontal_shift(fg, 0.1)
         self.assertFalse(np.array_equal(fg, shifted))
 
+    def test_camera_pan_shifts_near_plane(self):
+        bg = np.zeros((24, 48, 3), dtype=np.float32)
+        fg = np.zeros((24, 48, 3), dtype=np.float32)
+        fg[:, 16:24, 1] = 200
+        alpha = np.zeros((24, 48), dtype=np.float32)
+        alpha[:, 16:24] = 1.0
+        still = composite_depth_planes(
+            bg, [(fg, alpha, 1.0)], t=0.0, motion_scale=0.0, camera_pan_x=0.0,
+        )
+        panned = composite_depth_planes(
+            bg, [(fg, alpha, 1.0)], t=0.0, motion_scale=0.0, camera_pan_x=0.08,
+        )
+        self.assertFalse(np.array_equal(still, panned))
+
     def test_create_depth_layers_uses_base_rgb(self):
         layers = create_depth_layers(16, 16, num_layers=2, seed=2, base_rgb=(10, 200, 30))
         self.assertEqual(len(layers), 2)

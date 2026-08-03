@@ -159,3 +159,46 @@ def script_to_entities_and_sfx(
             })
         t += beat.duration_sec
     return entities, sfx_events
+
+
+def script_beats_to_dicts(script: NarrativeScript) -> list[dict[str, Any]]:
+    """Timed beat dicts for SceneSpec.script_beats (renderer text + music)."""
+    out: list[dict[str, Any]] = []
+    t = 0.0
+    for beat in script.beats:
+        t_end = t + float(beat.duration_sec)
+        out.append({
+            "name": beat.name,
+            "text": beat.text,
+            "t_start": round(t, 3),
+            "t_end": round(t_end, 3),
+            "duration_sec": round(float(beat.duration_sec), 3),
+            "music_section": beat.music_section,
+            "entity_action": beat.entity_action,
+        })
+        t = t_end
+    return out
+
+
+def resolve_text_at_time(
+    script_beats: list[dict[str, Any]] | None,
+    t: float,
+    *,
+    fallback: str | None = None,
+) -> str | None:
+    """Pick the active beat's overlay text for time t (seconds into the clip)."""
+    if not script_beats:
+        return fallback
+    for beat in script_beats:
+        if not isinstance(beat, dict):
+            continue
+        t0 = float(beat.get("t_start", 0.0))
+        t1 = float(beat.get("t_end", t0))
+        if t0 <= t < t1:
+            text = beat.get("text")
+            return str(text) if text else fallback
+    last = script_beats[-1]
+    if isinstance(last, dict) and t >= float(last.get("t_start", 0.0)):
+        text = last.get("text")
+        return str(text) if text else fallback
+    return fallback

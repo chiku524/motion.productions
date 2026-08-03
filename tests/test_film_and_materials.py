@@ -9,10 +9,15 @@ from src.creation.builder import build_spec_from_instruction
 from src.interpretation.parser import interpret_user_prompt
 from src.photoreal import EnhancedProceduralBackend, get_render_backend
 from src.procedural.film import (
+    apply_atmospheric_haze,
+    apply_chromatic_aberration,
     apply_depth_of_field,
     apply_film_grain,
     apply_film_look,
     apply_motion_smear,
+    apply_soft_bloom,
+    apply_tone_curve,
+    apply_vignette,
     box_blur,
     estimate_depth_map,
 )
@@ -180,6 +185,57 @@ class TestFilmAndMaterials(unittest.TestCase):
             self.assertTrue(spec.film_look)
             self.assertTrue(spec.depth_parallax)
             self.assertTrue(out.exists() and out.stat().st_size > 100)
+
+    def test_vignette_darkens_corners(self):
+        frame = np.full((48, 48, 3), 200, dtype=np.uint8)
+        out = apply_vignette(frame, strength=0.6)
+        center = int(out[24, 24, 0])
+        corner = int(out[0, 0, 0])
+        self.assertGreater(center, corner + 20)
+
+    def test_haze_and_bloom_and_ca(self):
+        frame = np.full((40, 40, 3), 100, dtype=np.uint8)
+        frame[15:25, 15:25] = 240
+        depth = estimate_depth_map(40, 40)
+        hazed = apply_atmospheric_haze(frame, depth, strength=0.5)
+        self.assertEqual(hazed.shape, frame.shape)
+        bloomed = apply_soft_bloom(frame, threshold=200.0, strength=0.4)
+        self.assertGreater(int(bloomed.max()), int(frame[20, 20, 0]) - 1)
+        ca = apply_chromatic_aberration(frame, amount=0.02)
+        self.assertFalse(np.array_equal(frame[..., 0], ca[..., 0]))
+        toned = apply_tone_curve(frame)
+        self.assertEqual(toned.dtype, np.uint8)
+
+    def test_educational_script_beats_timed_text(self):
+        from src.creation.narrative_script import resolve_text_at_time
+
+        instruction = interpret_user_prompt("explain photosynthesis in 2 minutes")
+        self.assertEqual(instruction.educational_template, "explainer")
+        self.assertEqual(instruction.text_overlay, "photosynthesis")
+        self.assertAlmostEqual(instruction.duration_seconds or 0, 120.0, places=0)
+        instruction.duration_seconds = 120.0
+        spec = build_spec_from_instruction(instruction, knowledge={})
+        self.assertTrue(spec.script_beats)
+        self.assertEqual(len(spec.script_beats), 4)
+        self.assertEqual(spec.music_sections, ["intro", "build", "drop", "break"])
+        early = resolve_text_at_time(spec.script_beats, 1.0)
+        late = resolve_text_at_time(spec.script_beats, 100.0)
+        self.assertIn("photosynthesis", (early or "").lower())
+        self.assertIn("remember", (late or "").lower())
+        self.assertNotEqual(early, late)
+
+    def test_teach_prompt_sets_educational(self):
+        instruction = interpret_user_prompt("teach me about gravity")
+        self.assertEqual(instruction.educational_template, "explainer")
+        self.assertIn("gravity", (instruction.text_overlay or "").lower())
+
+    def test_arrangement_honors_music_sections(self):
+        from src.audio.music import arrangement_for
+
+        arr = arrangement_for(
+            "deep_house", duration_sec=30.0, sections=["intro", "build", "drop", "break"],
+        )
+        self.assertEqual(arr.sections, ["intro", "build", "drop", "break"])
 
 
 if __name__ == "__main__":

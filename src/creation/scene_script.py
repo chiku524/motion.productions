@@ -158,6 +158,8 @@ def spec_from_shot(
         text_overlay=getattr(base_spec, "text_overlay", None),
         text_position=getattr(base_spec, "text_position", "center") or "center",
         educational_template=getattr(base_spec, "educational_template", None),
+        script_beats=getattr(base_spec, "script_beats", None),
+        music_sections=getattr(base_spec, "music_sections", None),
         depth_parallax=getattr(base_spec, "depth_parallax", False),
         film_look=bool(getattr(base_spec, "film_look", False)),
         render_engine=getattr(base_spec, "render_engine", "procedural") or "procedural",

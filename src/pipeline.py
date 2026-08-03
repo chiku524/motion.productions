@@ -179,6 +179,8 @@ def _add_audio(
         audio_genre = getattr(spec, "audio_genre", None) or audio_genre
         audio_vocals = bool(getattr(spec, "audio_vocals", False) or audio_vocals)
 
+    music_sections = getattr(spec, "music_sections", None) if spec is not None else None
+
     try:
         out = mix_audio_to_video(
             output_path, output_path=output_path,
@@ -189,6 +191,7 @@ def _add_audio(
             audio_vocals=audio_vocals,
             sfx_events=sfx_events,
             vocal_phrase=vocal_phrase,
+            music_sections=music_sections,
         )
         out_path = Path(out)
         _verify_audio_track(out_path)

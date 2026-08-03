@@ -592,27 +592,35 @@ def _resolve_depth_parallax(words: list[str]) -> bool:
 
 def _resolve_text_overlay(prompt: str) -> tuple[str | None, str, str | None]:
     """
-    Resolve text overlay from prompt. Phase 4.
+    Resolve text overlay from prompt. Phase 4 / Roadmap B.5.
     Returns (text_overlay, text_position, educational_template).
     """
-    raw = (prompt or "").strip().lower()
-    # Patterns: "explain X", "tutorial about Y", "explainer on Z"
+    raw = (prompt or "").strip()
+    raw_l = raw.lower()
     import re
-    m = re.search(r"\bexplain\s+(.+?)(?:\s+in\s+\d+\s*(?:sec|s|min|m))?\.?$", raw, re.IGNORECASE)
-    if m:
-        topic = m.group(1).strip()
-        if len(topic) < 80:
-            return topic, "center", "explainer"
-    m = re.search(r"\btutorial\s+(?:about|on)\s+(.+?)(?:\s+in\s+\d+\s*(?:sec|s|min|m))?\.?$", raw, re.IGNORECASE)
-    if m:
-        topic = m.group(1).strip()
-        if len(topic) < 80:
-            return topic, "top", "tutorial"
-    m = re.search(r"\bexplainer\s+(?:about|on)\s+(.+?)(?:\s+in\s+\d+\s*(?:sec|s|min|m))?\.?$", raw, re.IGNORECASE)
-    if m:
-        topic = m.group(1).strip()
-        if len(topic) < 80:
-            return topic, "center", "explainer"
+    # Strip trailing duration so topic stays clean: "... in 2 minutes"
+    dur_tail = re.compile(
+        r"\s+in\s+\d+(?:\.\d+)?\s*(?:sec|secs?|s|min|mins?|minutes?|m)\.?$",
+        re.IGNORECASE,
+    )
+    patterns: list[tuple[str, str, str]] = [
+        # (regex, template, position)
+        (r"\bexplain\s+(.+)$", "explainer", "center"),
+        (r"\btutorial\s+(?:about|on)\s+(.+)$", "tutorial", "top"),
+        (r"\bexplainer\s+(?:about|on)\s+(.+)$", "explainer", "center"),
+        (r"\bteach\s+(?:me\s+)?(?:about\s+)?(.+)$", "explainer", "center"),
+        (r"\blesson\s+(?:on|about)\s+(.+)$", "tutorial", "top"),
+        (r"\blearn\s+(?:about\s+)?(.+)$", "explainer", "center"),
+        (r"\beducational\s+(?:video\s+)?(?:about|on)\s+(.+)$", "explainer", "center"),
+        (r"\bhow\s+(?:does|do)\s+(.+?)(?:\s+work)?$", "explainer", "center"),
+        (r"\bhow\s+to\s+(.+)$", "tutorial", "top"),
+    ]
+    for pat, template, position in patterns:
+        m = re.search(pat, raw_l, re.IGNORECASE)
+        if m:
+            topic = dur_tail.sub("", m.group(1).strip()).strip(" .")
+            if 1 < len(topic) < 80:
+                return topic, position, template
     return None, "center", None
 
 
@@ -742,6 +750,17 @@ def interpret_user_prompt(
     if entities and shape == "none":
         shape = entities[0]["kind"] if entities[0]["kind"] in ("circle", "rect") else "circle"
     text_overlay, text_position, educational_template = _resolve_text_overlay(prompt)
+    # Genre educational / tutorial / explainer without explicit "explain X" still gets a template
+    if not educational_template and genre_resolved in ("educational", "tutorial", "explainer"):
+        educational_template = "explainer" if genre_resolved == "educational" else genre_resolved
+        if not text_overlay:
+            cleaned = re.sub(
+                r"^(?:an?\s+)?(?:educational|tutorial|explainer)\s+(?:video\s+)?(?:about|on)?\s*",
+                "",
+                (prompt or "").strip(),
+                flags=re.IGNORECASE,
+            ).strip(" .")
+            text_overlay = (cleaned[:60] if cleaned else "the topic")
     depth_parallax = _resolve_depth_parallax(words)
 
     # Keywords that contributed (for learning and logging) — all domains

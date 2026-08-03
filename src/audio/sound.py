@@ -61,6 +61,7 @@ def mix_audio_to_video(
     audio_vocals: bool = False,
     sfx_events: list[dict] | None = None,
     vocal_phrase: str | None = None,
+    music_sections: list[str] | None = None,
 ) -> Path:
     """
     Add audio to a video. Phase 6+.
@@ -122,6 +123,7 @@ def mix_audio_to_video(
             presence=presence,
             pure_sounds=pure_sounds,
             audio_genre=audio_genre,
+            music_sections=music_sections,
         )
 
     # Cut accents + event SFX
@@ -174,6 +176,7 @@ def _build_audio_bed(
     presence: str,
     pure_sounds: list[dict] | None,
     audio_genre: str,
+    music_sections: list[str] | None = None,
 ):
     """Select music arrangement vs ambient vs sfx-only bed."""
     from pydub import AudioSegment
@@ -191,7 +194,11 @@ def _build_audio_bed(
     if use_music and genre not in ("none", ""):
         from .music import generate_arrangement_audio, duck_under_sfx
         music = generate_arrangement_audio(
-            duration_ms, genre=genre if genre != "ambient" else "ambient", tempo=tempo, mood=mood
+            duration_ms,
+            genre=genre if genre != "ambient" else "ambient",
+            tempo=tempo,
+            mood=mood,
+            music_sections=music_sections,
         )
         if presence == "full":
             # Layer light ambient under music

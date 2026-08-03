@@ -234,6 +234,24 @@ def _blend_shaded_layer(
         rim_boost = (0.35 + 0.4 * float(rim)) * edge
         lit = lit + (40.0 * float(key) * rim_boost)[..., None]
         lit = np.clip(lit, 0, 255)
+    # Key-light specular lobe (glossy materials catch more)
+    key, _f, _r, _amb = lighting_model
+    r = max(1e-6, float(radius))
+    nx = (xx - cx) / r
+    ny = (yy - cy) / r
+    kx, ky = -0.55, -0.72
+    ndot = np.clip(-(nx * kx + ny * ky), 0.0, 1.0)
+    spec_pow = {
+        "cloud": 26.0, "fish": 22.0, "character": 16.0,
+        "building": 11.0, "wave": 20.0, "tree": 5.0, "forest": 5.0,
+    }.get(mat, 9.0)
+    spec_amp = {
+        "cloud": 58.0, "fish": 48.0, "character": 32.0,
+        "building": 22.0, "wave": 40.0, "tree": 10.0, "forest": 10.0,
+    }.get(mat, 18.0)
+    specular = (ndot ** spec_pow) * float(key) * spec_amp
+    lit = lit + specular[..., None]
+    lit = np.clip(lit, 0, 255)
     a3 = a[..., None]
     out_rgb = out_rgb * (1.0 - a3) + lit * a3
     out_a = out_a * (1.0 - a) + a
@@ -748,7 +766,12 @@ def render_frame(
                 texture=texture,
             )
             planes.append((fg_rgb, fg_a, depth))
-        frame = composite_depth_planes(background, planes, t, motion_scale=0.06)
+        frame = composite_depth_planes(
+            background, planes, t,
+            motion_scale=0.06,
+            camera_pan_x=float(pan_x),
+            camera_pan_y=float(pan_y),
+        )
     elif scene_layers:
         frame = _composite_scene_layers(
             background, scene_layers, t, width, height,
@@ -791,6 +814,13 @@ def render_frame(
     frame = apply_lighting_preset(frame, lighting_preset)
 
     text_overlay = getattr(spec, "text_overlay", None)
+    script_beats = getattr(spec, "script_beats", None)
+    if script_beats:
+        try:
+            from ..creation.narrative_script import resolve_text_at_time
+            text_overlay = resolve_text_at_time(script_beats, t, fallback=text_overlay)
+        except ImportError:
+            pass
     if text_overlay:
         try:
             from ..graphics.text import render_text_overlay

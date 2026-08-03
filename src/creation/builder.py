@@ -278,10 +278,16 @@ def build_spec_from_instruction(
         sfx_events_from_scene_graph,
         walk_cycle_keyframes,
     )
-    from .narrative_script import build_educational_script, script_to_entities_and_sfx
+    from .narrative_script import (
+        build_educational_script,
+        script_beats_to_dicts,
+        script_to_entities_and_sfx,
+    )
 
     duration_hint = float(getattr(instruction, "duration_seconds", None) or 4.0)
     entities = list(getattr(instruction, "entities", None) or [])
+    script_beats: list[dict] | None = None
+    music_sections: list[str] | None = None
 
     # Phase 5 / Roadmap B: educational template → multi-beat entities + SFX
     if getattr(instruction, "educational_template", None) and not entities:
@@ -292,6 +298,8 @@ def build_spec_from_instruction(
         instruction.entities = entities
         if not getattr(instruction, "sfx_events", None):
             instruction.sfx_events = sfx_from_script
+        script_beats = script_beats_to_dicts(narr)
+        music_sections = [b.music_section for b in narr.beats]
         if not text_overlay and narr.beats:
             text_overlay = narr.beats[0].text
 
@@ -323,7 +331,7 @@ def build_spec_from_instruction(
         and (entities[0].get("bounce") or entities[0].get("kind") == "character")
         and not getattr(instruction, "educational_template", None)
     ):
-        from .narrative_script import build_mini_scene_script
+        from .narrative_script import build_mini_scene_script, script_beats_to_dicts
         action = "walk" if entities[0].get("kind") == "character" else "bounce"
         narr = build_mini_scene_script(
             total_duration=duration_hint,
@@ -343,6 +351,9 @@ def build_spec_from_instruction(
         instruction.entities = entities
         if not getattr(instruction, "sfx_events", None):
             instruction.sfx_events = sfx_from_script
+        if script_beats is None:
+            script_beats = script_beats_to_dicts(narr)
+            music_sections = [b.music_section for b in narr.beats]
 
     # Optionally enrich missing entity slots from learned_entities (variety without overriding prompt)
     learned_ents = (knowledge or {}).get("learned_entities") or []
@@ -454,6 +465,8 @@ def build_spec_from_instruction(
         text_overlay=text_overlay,
         text_position=text_position,
         educational_template=educational_template,
+        script_beats=script_beats,
+        music_sections=music_sections,
         depth_parallax=depth_parallax,
         film_look=bool(
             depth_parallax

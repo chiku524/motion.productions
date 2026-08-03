@@ -124,6 +124,8 @@ Video generation software that can utilize any aspect within the movie industry 
 - E: `film_look` stack — depth map DoF, lighting-preset grain, camera motion smear (`src/procedural/film.py`); auto-on for `style=realistic|photoreal` or `depth_parallax`
 - Enhanced HTTP path: `POST /render` accepts `engine=enhanced|photoreal` (720p + film/depth); Video AI lab select option **Enhanced**
 - `composition_symmetry` now adjusts layer x (bilateral pulls center; asymmetric pushes out); contact shadows darken the background plane under props
+- Timed educational beat overlays (`script_beats`); broader teach/lesson/learn prompts; music sections follow beat plan
+- Film stack extended: vignette, tone curve, depth haze, soft bloom, chromatic aberration; key-light specular on materials; camera-coupled parallax
 
 
 **Success criteria:** More realistic or asset-driven visuals when enabled; photoreal path uses the same prompt → registries → render contract.
@@ -185,11 +187,11 @@ Every domain from INTENDED_LOOP is represented in prompts and interpretation (co
 
 | Task | Description | Status |
 |------|-------------|--------|
-| B.1 | Script template: 4–6 beats (hook, concept, example, recap) | Pending |
-| B.2 | Duration allocation per beat | Pending |
-| B.3 | Beat-specific pacing | Pending |
-| B.4 | Text overlays per beat | Partial |
-| B.5 | Prompt: "explain X in 2 minutes" → structured script | Pending |
+| B.1 | Script template: 4–6 beats (hook, concept, example, recap) | Done |
+| B.2 | Duration allocation per beat | Done |
+| B.3 | Beat-specific pacing | Done |
+| B.4 | Text overlays per beat | Done — timed `script_beats` on SceneSpec; renderer picks text by `t` |
+| B.5 | Prompt: "explain X in 2 minutes" → structured script | Done — explain/teach/lesson/learn/how-to + genre educational; duration extract honors minutes |
 
 ## Phase C: Object/entity primitives
 

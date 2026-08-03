@@ -82,9 +82,13 @@ class SceneSpec:
     sfx_events: list[dict] | None = None
     # Scene graph layers (Phase 2+): list of LayerSpec-like dicts
     scene_layers: list[dict] | None = None
-    text_overlay: str | None = None   # Phase 4: text to display
+    text_overlay: str | None = None   # Phase 4: text to display (fallback / first beat)
     text_position: str = "center"
     educational_template: str | None = None
+    # Timed beat overlays: [{name, text, t_start, t_end, music_section, ...}]
+    script_beats: list[dict] | None = None
+    # Music arrangement sections aligned to educational / mini-scene beats
+    music_sections: list[str] | None = None
     depth_parallax: bool = False      # Phase 7: enable 2.5D parallax
     # Tier E / 7.4 bridge: film camera post (DoF, grain, motion smear)
     film_look: bool = False
