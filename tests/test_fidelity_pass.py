@@ -218,6 +218,37 @@ class TestFidelityPass(unittest.TestCase):
         p = generate_mini_scene_prompt(fidelity_bias=True)
         self.assertTrue(p)
 
+    def test_continuous_subject_path_segments(self):
+        from src.creation.narrative_script import build_mini_scene_script, script_to_entities_and_sfx
+
+        narr = build_mini_scene_script(total_duration=5.0, action="walk", topic="walk")
+        ents, _ = script_to_entities_and_sfx(narr)
+        self.assertEqual(len(ents), 1)
+        self.assertIn("path_segments", ents[0])
+        self.assertGreaterEqual(len(ents[0]["path_segments"]), 2)
+
+    def test_short_educational_has_teach_copy(self):
+        from src.creation.narrative_script import build_educational_script
+
+        narr = build_educational_script("gravity", total_duration=5.0)
+        texts = [b.text for b in narr.beats]
+        self.assertEqual(len(texts), 3)
+        self.assertTrue(all(texts))
+        self.assertTrue(any("gravity" in (t or "").lower() for t in texts))
+        self.assertTrue(any(b.callout or b.arrow for b in narr.beats))
+
+    def test_weather_particles_stable_across_nearby_frames(self):
+        from src.procedural.renderer import _apply_weather_overlay
+
+        base = np.full((64, 64, 3), 80, dtype=np.uint8)
+        a = _apply_weather_overlay(base.copy(), "rain", 0.40, seed=7)
+        b = _apply_weather_overlay(base.copy(), "rain", 0.42, seed=7)
+        # Adjacent frames should be similar (streaks advect), not fully reshuffled
+        diff = np.mean(np.abs(a.astype(np.float32) - b.astype(np.float32)))
+        reshuffle = _apply_weather_overlay(base.copy(), "rain", 0.40, seed=999)
+        reshuffle_diff = np.mean(np.abs(a.astype(np.float32) - reshuffle.astype(np.float32)))
+        self.assertLess(diff, reshuffle_diff)
+
 
 if __name__ == "__main__":
     unittest.main()

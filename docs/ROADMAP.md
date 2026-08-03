@@ -131,6 +131,7 @@ Video generation software that can utilize any aspect within the movie industry 
 - Tension curves wired; rain drip/forest rustle SFX; setting-tinted atmosphere; shot pan_range + extreme framing; multi-shot duration exact sum; educational spotlight; anime/minimal/abstract style grades; spin/flourish gags preserved
 - Multi-shot time base: motion uses per-shot `t`, content (beats/entities/tension/weather) uses clip-global `t_content`; `spec_from_shot` keeps setting; beat-timed faces; adaptive transition length; music sections weighted by beat durations
 - Balanced loops: skip color-family starvation; fidelity-weighted mini-scenes (setting/weather/educational/multi-beat); walk bob preserved (no auto spin/double_take on walks); melancholy→dark audio mood; compose bind-mounts `./src`+`./scripts`
+- Continuous beat subjects (no fade-teleports); stable rain/snow particles; short educational teach copy; character walk limbs; ambient/cinematic section dynamics; text legibility plates
 
 
 **Success criteria:** More realistic or asset-driven visuals when enabled; photoreal path uses the same prompt → registries → render contract.

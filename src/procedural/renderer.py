@@ -107,34 +107,45 @@ def _apply_weather_overlay(
     *,
     seed: int = 0,
 ) -> "np.ndarray":
-    """Rain streaks or snow flakes for weather settings (NumPy only)."""
+    """Rain streaks or snow flakes for weather settings (stable particles, not flicker)."""
     s = (setting or "").strip().lower()
     if s not in ("rain", "snow"):
         return frame
     h, w = frame.shape[:2]
     out = frame.astype(np.float32)
-    rng = np.random.default_rng(abs(int(seed + t * 1000)) % (2**31))
+    # Stable particle IDs — advect with time instead of reseeding every frame
+    rng = np.random.default_rng(abs(int(seed)) % (2**31))
     if s == "rain":
         n = max(40, (h * w) // 900)
-        for _ in range(n):
-            x = int(rng.integers(0, w))
-            y0 = int((rng.random() * 1.2 + (t * 2.5) % 1.0) * h) % h
-            length = int(rng.integers(6, 14))
-            thickness = 1 if rng.random() < 0.7 else 2
+        xs = rng.integers(0, w, size=n)
+        y0s = rng.random(n)
+        speeds = 0.55 + 0.75 * rng.random(n)
+        lengths = rng.integers(6, 14, size=n)
+        alphas = 0.35 + 0.25 * rng.random(n)
+        for i in range(n):
+            x = int(xs[i])
+            y0 = int(((y0s[i] + t * speeds[i]) % 1.0) * h) % h
+            length = int(lengths[i])
+            thickness = 1 if (i % 5) else 2
             y1 = min(h, y0 + length)
-            alpha = 0.35 + 0.25 * float(rng.random())
+            alpha = float(alphas[i])
             x1 = min(w, x + thickness)
             out[y0:y1, x:x1, :] = out[y0:y1, x:x1, :] * (1 - alpha) + 200.0 * alpha
-        # Slight wet ground darken
         yy = np.linspace(0, 1, h, dtype=np.float32)[:, None]
         wet = np.clip((yy - 0.7) / 0.3, 0, 1)
         out = out * (1.0 - 0.12 * wet[..., None])
     else:  # snow
         n = max(50, (h * w) // 700)
-        for _ in range(n):
-            x = int((rng.random() + 0.15 * float(np.sin(t * 0.8 + rng.random()))) * w) % w
-            y = int((rng.random() * 1.1 + (t * 0.35) % 1.0) * h) % h
-            r = int(rng.integers(1, 3))
+        xs = rng.random(n)
+        y0s = rng.random(n)
+        speeds = 0.12 + 0.28 * rng.random(n)
+        drifts = 0.08 + 0.12 * rng.random(n)
+        radii = rng.integers(1, 3, size=n)
+        phases = rng.random(n) * 6.28
+        for i in range(n):
+            x = int((xs[i] + drifts[i] * float(np.sin(t * 0.8 + phases[i]))) * w) % w
+            y = int(((y0s[i] + t * speeds[i]) % 1.0) * h) % h
+            r = int(radii[i])
             y0, y1 = max(0, y - r), min(h, y + r + 1)
             x0, x1 = max(0, x - r), min(w, x + r + 1)
             out[y0:y1, x0:x1, :] = np.clip(out[y0:y1, x0:x1, :] * 0.55 + 240.0 * 0.45, 0, 255)
@@ -546,7 +557,43 @@ def _render_layers_rgba(
             head_cy = cy - radius * 0.55
             head_m = _soft_disk(xx_l, yy_l, cx, head_cy, head_r, soft=0.025)
             body_m = _soft_box(xx_l, yy_l, cx, cy + radius * 0.15, body_r * 0.55, body_r, soft=0.03)
-            mask = np.clip(np.maximum(head_m, body_m), 0, 1)
+            # Walk limbs: swing from keyframe rot (phase) or time
+            limb_phase = float(pose.get("rot") or 0.0) if isinstance(pose, dict) else 0.0
+            if abs(limb_phase) < 1e-6:
+                limb_phase = float(np.sin(t * 8.0))
+            swing = float(np.sin(limb_phase * 2.5 if abs(limb_phase) > 0.05 else t * 8.0))
+            leg_len = radius * 0.55
+            arm_len = radius * 0.42
+            hip_y = cy + radius * 0.55
+            shoulder_y = cy - radius * 0.05
+            # Legs (alternating)
+            leg_dx = radius * 0.18
+            left_leg = _soft_box(
+                xx_l, yy_l,
+                cx - leg_dx + swing * radius * 0.12,
+                hip_y + leg_len * 0.45,
+                radius * 0.12, leg_len * 0.55, soft=0.025,
+            )
+            right_leg = _soft_box(
+                xx_l, yy_l,
+                cx + leg_dx - swing * radius * 0.12,
+                hip_y + leg_len * 0.45,
+                radius * 0.12, leg_len * 0.55, soft=0.025,
+            )
+            left_arm = _soft_box(
+                xx_l, yy_l,
+                cx - radius * 0.42 - swing * radius * 0.1,
+                shoulder_y + arm_len * 0.35,
+                radius * 0.1, arm_len * 0.5, soft=0.02,
+            )
+            right_arm = _soft_box(
+                xx_l, yy_l,
+                cx + radius * 0.42 + swing * radius * 0.1,
+                shoulder_y + arm_len * 0.35,
+                radius * 0.1, arm_len * 0.5, soft=0.02,
+            )
+            limbs = np.clip(left_leg + right_leg + left_arm + right_arm, 0, 1)
+            mask = np.clip(np.maximum(np.maximum(head_m, body_m), limbs), 0, 1)
             # Inter-layer soft AO under this character onto existing draw
             if float(np.max(out_a)) > 0.05:
                 ao = np.clip(np.roll(mask, max(1, int(0.018 * height)), axis=0) * 0.28, 0, 1)

@@ -212,21 +212,30 @@ def _trajectory_path(
     return kfs
 
 
-def _offset_keyframes(kfs: list[LayerKeyframe], t_start: float, t_end: float) -> list[LayerKeyframe]:
-    """Shift local 0..dur keyframes into [t_start, t_end] and bookend with opacity fades."""
+def _offset_keyframes(
+    kfs: list[LayerKeyframe],
+    t_start: float,
+    t_end: float,
+    *,
+    fade_edges: bool = True,
+) -> list[LayerKeyframe]:
+    """Shift local 0..dur keyframes into [t_start, t_end]; optional opacity bookends."""
     t_start = max(0.0, float(t_start))
     t_end = max(t_start + 0.05, float(t_end))
     if not kfs:
         return [
-            LayerKeyframe(t=t_start, opacity=0.0),
-            LayerKeyframe(t=t_end, opacity=0.0),
+            LayerKeyframe(t=t_start, opacity=0.0 if fade_edges else 1.0),
+            LayerKeyframe(t=t_end, opacity=0.0 if fade_edges else 1.0),
         ]
     local_max = max(float(k.t) for k in kfs) or 1.0
     window = t_end - t_start
     out: list[LayerKeyframe] = []
-    # Invisible before window
     first = kfs[0]
-    out.append(LayerKeyframe(t=max(0.0, t_start - 0.02), x=first.x, y=first.y, scale=first.scale, rot=first.rot, opacity=0.0))
+    if fade_edges:
+        out.append(LayerKeyframe(
+            t=max(0.0, t_start - 0.02), x=first.x, y=first.y,
+            scale=first.scale, rot=first.rot, opacity=0.0,
+        ))
     for k in kfs:
         u = float(k.t) / local_max if local_max > 0 else 0.0
         out.append(LayerKeyframe(
@@ -238,7 +247,10 @@ def _offset_keyframes(kfs: list[LayerKeyframe], t_start: float, t_end: float) ->
             opacity=1.0 if k.opacity > 0 else 0.0,
         ))
     last = kfs[-1]
-    out.append(LayerKeyframe(t=t_end, x=last.x, y=last.y, scale=last.scale, rot=last.rot, opacity=0.0))
+    if fade_edges:
+        out.append(LayerKeyframe(
+            t=t_end, x=last.x, y=last.y, scale=last.scale, rot=last.rot, opacity=0.0,
+        ))
     return out
 
 
@@ -350,6 +362,44 @@ def build_scene_graph_from_instruction(
                 for k in raw_kfs
             ]
             z = int(ent.get("z", 0))
+        elif ent.get("path_segments"):
+            # Continuous multi-beat subject: stitch segment paths without mid fade-teleports
+            segs = [s for s in (ent.get("path_segments") or []) if isinstance(s, dict)]
+            stitched: list[LayerKeyframe] = []
+            for si, seg in enumerate(segs):
+                seg_start = float(seg.get("t_start", 0.0))
+                seg_end = float(seg.get("t_end", seg_start + 0.5))
+                local_dur = max(0.35, seg_end - seg_start)
+                seg_traj = str(seg.get("trajectory") or traj or "left")
+                seg_bounce = bool(seg.get("bounce"))
+                seg_gag = str(seg.get("gag") or "none").lower()
+                seg_pace = float(seg.get("pacing") or 1.0)
+                if kind == "character" and seg_gag in ("none", "squash", "wink", ""):
+                    direction = "right" if seg_traj == "right" else "left"
+                    local_kfs = walk_cycle_keyframes(
+                        duration=local_dur,
+                        direction=direction,
+                        personality=str(ent.get("personality") or "neutral"),
+                    )
+                else:
+                    local_kfs = _trajectory_path(
+                        seg_traj, duration=local_dur, bounce=seg_bounce, gag=seg_gag, pacing=seg_pace,
+                    )
+                piece = _offset_keyframes(local_kfs, seg_start, seg_end, fade_edges=False)
+                stitched.extend(piece)
+            if stitched:
+                # Soft fade only at clip edges
+                first, last = stitched[0], stitched[-1]
+                stitched.insert(0, LayerKeyframe(
+                    t=max(0.0, first.t - 0.03), x=first.x, y=first.y,
+                    scale=first.scale, rot=first.rot, opacity=0.0,
+                ))
+                stitched.append(LayerKeyframe(
+                    t=last.t + 0.02, x=last.x, y=last.y,
+                    scale=last.scale, rot=last.rot, opacity=0.0,
+                ))
+            kfs = stitched
+            z = i + 1
         elif t_start is not None and t_end is not None:
             local_dur = max(0.35, float(t_end) - float(t_start))
             # Character walks get bob cycles in their time window (not slide+gag)
@@ -507,5 +557,7 @@ def walk_cycle_keyframes(
         t = duration * u
         x = x0 + (x1 - x0) * u
         y = 0.55 + (bob if i % 2 else -bob * 0.5)
-        kfs.append(LayerKeyframe(t=t, x=x, y=y, scale=scale_base))
+        # Encode gait phase in rot for limb swing at render time
+        phase = (1.0 if i % 2 else -1.0) * 0.4
+        kfs.append(LayerKeyframe(t=t, x=x, y=y, scale=scale_base, rot=phase))
     return kfs

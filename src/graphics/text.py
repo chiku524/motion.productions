@@ -52,10 +52,28 @@ def render_text_overlay(
     bboxes = [draw.textbbox((0, 0), line, font=font) for line in lines]
     line_height = max(b[3] - b[1] for b in bboxes) if bboxes else font_size
     total_height = line_height * len(lines)
+    max_line_w = max((b[2] - b[0]) for b in bboxes) if bboxes else 0
 
     # Position
     x_center = w // 2
     y_top = _y_for_position(position, h, total_height)
+
+    # Soft dark plate behind text for legibility on neon/rain/film grades
+    pad_x, pad_y = 14, 10
+    plate_l = max(0, x_center - max_line_w // 2 - pad_x)
+    plate_r = min(w, x_center + max_line_w // 2 + pad_x)
+    plate_t = max(0, y_top - pad_y)
+    plate_b = min(h, y_top + total_height + pad_y)
+    if plate_r > plate_l and plate_b > plate_t:
+        overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        od = ImageDraw.Draw(overlay)
+        od.rounded_rectangle(
+            [plate_l, plate_t, plate_r, plate_b],
+            radius=8,
+            fill=(0, 0, 0, 110),
+        )
+        pil = Image.alpha_composite(pil.convert("RGBA"), overlay).convert("RGB")
+        draw = ImageDraw.Draw(pil)
 
     for i, line in enumerate(lines):
         bx = bboxes[i]

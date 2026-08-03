@@ -110,11 +110,28 @@ class TestMiniSceneFidelity(unittest.TestCase):
         instruction.duration_seconds = 5.0
         spec = build_spec_from_instruction(instruction, knowledge={})
         self.assertTrue(spec.scene_layers)
-        # Sequential windows: not all layers active for full 0..5s
+        # Continuous subject (path_segments) or staggered timed windows
+        foreground = [
+            L for L in spec.scene_layers
+            if L.get("kind") in ("circle", "rect", "arrow", "character")
+        ]
+        self.assertTrue(foreground)
+        has_segments = any(
+            isinstance(e, dict) and e.get("path_segments")
+            for e in (getattr(instruction, "entities", None) or [])
+        )
         starts = [l.get("keyframes", [{}])[0].get("t", 0) for l in spec.scene_layers]
-        self.assertTrue(any(float(s) > 0.05 for s in starts) or len(spec.scene_layers) >= 2)
+        self.assertTrue(
+            has_segments
+            or any(float(s) > 0.05 for s in starts)
+            or len(spec.scene_layers) >= 2
+        )
         bouncing = [l for l in spec.scene_layers if l.get("bounce") or l.get("gag") == "squash"]
-        self.assertTrue(bouncing or any(l.get("gag") for l in spec.scene_layers))
+        self.assertTrue(
+            bouncing
+            or any(l.get("gag") for l in spec.scene_layers)
+            or has_segments
+        )
         # Phase E: freeform beats wire timed overlays + music sections
         self.assertTrue(spec.script_beats, "expected script_beats from freeform then-clauses")
         self.assertGreaterEqual(len(spec.script_beats), 2)

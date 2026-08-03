@@ -126,13 +126,44 @@ def build_educational_script(
     style: str = "educational",
 ) -> NarrativeScript:
     """
-    Allocate a 4-beat educational arc. Durations scale to total_duration.
-    For short clips (<=8s), use the compact mini-scene script instead.
+    Allocate an educational arc. Durations scale to total_duration.
+    Short clips (<=8s) keep a compact 3-beat teach script with on-screen copy.
     """
     topic = (topic or "the topic").strip() or "the topic"
     total_duration = max(5.0, float(total_duration))
     if total_duration <= 8.0:
-        return build_mini_scene_script(total_duration=total_duration, action="bounce", topic=topic)
+        weights = [0.28, 0.44, 0.28]
+        names = ["hook", "concept", "recap"]
+        short = topic if len(topic) <= 28 else (topic[:25] + "…")
+        texts = [
+            f"What is {short}?",
+            f"How {short} works",
+            f"Remember: {short}",
+        ]
+        actions = ["toward", "bounce", "right"]
+        sections = ["intro", "drop", "break"]
+        sfx_sets: list[list[str]] = [[], ["bounce"], ["click"]]
+        beats: list[ScriptBeat] = []
+        for i, (w, name, text, action, section, sfx) in enumerate(
+            zip(weights, names, texts, actions, sections, sfx_sets)
+        ):
+            pos, fs = _layout_for_beat(name, i)
+            beats.append(
+                ScriptBeat(
+                    name=name,
+                    duration_sec=round(total_duration * w, 2),
+                    text=text,
+                    music_section=section,
+                    entity_action=action,
+                    sfx=list(sfx),
+                    position=pos,
+                    font_size=max(28, fs - 2),
+                    expression=_BEAT_EXPRESSION.get(name, "neutral"),
+                    callout=(name == "concept"),
+                    arrow=(name == "concept"),
+                )
+            )
+        return NarrativeScript(topic=topic, beats=beats)
 
     # Prefer graphics template layout hints when available
     template_name = "explainer"
@@ -162,7 +193,7 @@ def build_educational_script(
     except ImportError:
         pass
 
-    beats: list[ScriptBeat] = []
+    beats = []
     for i, (w, name, text, action, section, sfx) in enumerate(
         zip(weights, names, texts, actions, sections, sfx_sets)
     ):
@@ -192,20 +223,29 @@ def script_to_entities_and_sfx(
     script: NarrativeScript,
     *,
     entity_kind: str = "circle",
+    continuous: bool = True,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Flatten beats into timed entity hints + SFX (sequential windows, not overlapping)."""
+    """
+    Flatten beats into timed entity hints + SFX.
+
+    When continuous=True (default), emit one subject with path_segments so the
+    figure keeps moving across beats instead of fading out/in per window.
+    """
     entities: list[dict[str, Any]] = []
     sfx_events: list[dict[str, Any]] = []
     t = 0.0
+    segments: list[dict[str, Any]] = []
+    any_walk = False
     for i, beat in enumerate(script.beats):
         traj = beat.entity_action or "left"
         bounce = traj == "bounce" or "bounce" in beat.sfx
         is_walk = traj == "walk"
+        if is_walk:
+            any_walk = True
         gag = None
         if bounce:
             gag = "squash"
         elif is_walk:
-            # Walk bob comes from walk_cycle_keyframes — don't overwrite with spin/double_take
             gag = None
         elif traj == "toward":
             gag = "flourish"
@@ -213,7 +253,6 @@ def script_to_entities_and_sfx(
             gag = "spin"
         elif (beat.name or "").lower() in ("hook", "beat"):
             gag = "double_take"
-        # Beat pacing: setup slower, climax faster, resolve ease-out
         pacing = 1.0
         name = (beat.name or "").lower()
         if name in ("setup", "hook", "beat1"):
@@ -223,27 +262,57 @@ def script_to_entities_and_sfx(
         elif name in ("resolve", "recap"):
             pacing = 0.9
         expression = beat.expression or _BEAT_EXPRESSION.get(name, "neutral")
-        entities.append({
-            "id": f"beat{i}",
-            "kind": "character" if traj == "walk" else entity_kind,
-            "label": beat.name,
-            "trajectory": "left" if traj == "walk" else traj,
-            "bounce": bounce,
-            "sfx_on": list(beat.sfx),
-            "directionality": "horizontal",
+        t_end = t + float(beat.duration_sec)
+        seg = {
             "t_start": round(t, 3),
-            "t_end": round(t + beat.duration_sec, 3),
-            "pacing": pacing,
+            "t_end": round(t_end, 3),
+            "trajectory": "left" if is_walk else traj,
+            "bounce": bounce,
             "gag": gag,
+            "pacing": pacing,
             "expression": expression,
-        })
+            "label": beat.name,
+        }
+        segments.append(seg)
+        if not continuous:
+            entities.append({
+                "id": f"beat{i}",
+                "kind": "character" if is_walk else entity_kind,
+                "label": beat.name,
+                "trajectory": seg["trajectory"],
+                "bounce": bounce,
+                "sfx_on": list(beat.sfx),
+                "directionality": "horizontal",
+                "t_start": seg["t_start"],
+                "t_end": seg["t_end"],
+                "pacing": pacing,
+                "gag": gag,
+                "expression": expression,
+            })
         for kind in beat.sfx:
             sfx_events.append({
                 "kind": kind,
                 "t_sec": round(t + beat.duration_sec * 0.5, 3),
                 "strength": 0.75,
             })
-        t += beat.duration_sec
+        t = t_end
+
+    if continuous and segments:
+        kind = "character" if any_walk else entity_kind
+        entities.append({
+            "id": "subject0",
+            "kind": kind,
+            "label": script.topic or "subject",
+            "trajectory": segments[0]["trajectory"],
+            "bounce": any(s.get("bounce") for s in segments),
+            "sfx_on": [],
+            "directionality": "horizontal",
+            "t_start": segments[0]["t_start"],
+            "t_end": segments[-1]["t_end"],
+            "path_segments": segments,
+            "expression": segments[0].get("expression") or "neutral",
+            "gag": None,
+        })
     return entities, sfx_events
 
 

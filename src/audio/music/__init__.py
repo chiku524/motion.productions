@@ -204,20 +204,40 @@ def generate_arrangement_audio(
                     out = out.overlay(pad, position=pos)
 
     elif arr.genre == "cinematic":
-        pad = _pad_chord([root, root * 1.5, root * 2], duration_ms)
-        out = out.overlay(pad)
-        # Sparse low hits — denser on drop
+        # Section-shaped pad + denser hits on drop
+        for i, section in enumerate(arr.sections or ["drop"]):
+            start = 0.0 if i == 0 else bounds[i - 1]
+            end = bounds[i] if i < len(bounds) else float(duration_ms)
+            chunk = max(1, int(end - start))
+            gain = {"intro": -8, "build": -4, "drop": -2, "break": -10}.get(section, -4)
+            pad = _pad_chord([root, root * 1.5, root * 2], chunk) + gain
+            out = out.overlay(pad, position=int(start))
         t = 0.0
         while t < duration_ms:
             sec_i = _section_index_at(t, bounds)
             section = arr.sections[sec_i] if arr.sections else "drop"
             step = bar if section == "drop" else bar * 2
-            out = out.overlay(_kick(120) + (-6), position=int(t))
+            hit_adj = {"intro": -10, "break": -12, "build": -8}.get(section, -6)
+            out = out.overlay(_kick(120) + hit_adj, position=int(t))
             t += step
 
-    else:  # ambient
-        pad = _pad_chord([root, root * 1.25, root * 1.5], duration_ms)
-        out = out.overlay(pad + (-4))
+    else:  # ambient — gentle section dynamics (not a flat pad)
+        for i, section in enumerate(arr.sections or ["drop"]):
+            start = 0.0 if i == 0 else bounds[i - 1]
+            end = bounds[i] if i < len(bounds) else float(duration_ms)
+            chunk = max(1, int(end - start))
+            gain = {"intro": -10, "build": -6, "drop": -3, "break": -12}.get(section, -6)
+            freqs = [root, root * 1.25, root * 1.5]
+            if section == "drop":
+                freqs = [root, root * 1.5, root * 2]
+            elif section == "break":
+                freqs = [root, root * 1.2]
+            pad = _pad_chord(freqs, chunk) + gain
+            out = out.overlay(pad, position=int(start))
+            # Sparse soft ticks on drop/build only
+            if section in ("drop", "build") and chunk > 800:
+                tick_t = start + chunk * 0.35
+                out = out.overlay(_hat() + (-14), position=int(tick_t))
 
     return out.set_frame_rate(sample_rate)
 
