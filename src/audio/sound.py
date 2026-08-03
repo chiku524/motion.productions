@@ -62,6 +62,7 @@ def mix_audio_to_video(
     sfx_events: list[dict] | None = None,
     vocal_phrase: str | None = None,
     music_sections: list[str] | None = None,
+    script_beats: list[dict] | None = None,
 ) -> Path:
     """
     Add audio to a video. Phase 6+.
@@ -143,6 +144,7 @@ def mix_audio_to_video(
                 mood=mood,
                 phrase=vocal_phrase,
                 duration_ms=duration_ms,
+                script_beats=script_beats,
             )
 
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:

@@ -91,13 +91,30 @@ def mix_vocals_into(
     mood: str = "neutral",
     phrase: str | None = None,
     duration_ms: int,
+    script_beats: list[dict] | None = None,
 ):
-    """Overlay vocal bed (+ optional local TTS phrase) onto music/ambient bed."""
+    """Overlay vocal bed (+ optional local TTS phrases timed to beats) onto music/ambient bed."""
     if not enable:
         return bed
     vocals = generate_vocal_bed(duration_ms, mood=mood)
     out = bed.overlay(vocals)
-    if phrase:
+    spoken_any = False
+    if script_beats:
+        for beat in script_beats:
+            if not isinstance(beat, dict):
+                continue
+            text = (beat.get("text") or "").strip()
+            if not text or len(text) > 120:
+                continue
+            t0 = float(beat.get("t_start", 0.0))
+            span = float(beat.get("duration_sec") or max(0.5, float(beat.get("t_end", t0) - t0)))
+            spoken = try_local_tts(text, duration_ms=min(int(span * 1000), 5000))
+            if spoken is not None:
+                pos = max(0, int(t0 * 1000) + 80)
+                if pos < duration_ms:
+                    out = out.overlay(spoken, position=pos)
+                    spoken_any = True
+    if phrase and not spoken_any:
         spoken = try_local_tts(phrase, duration_ms=min(duration_ms, 5000))
         if spoken is not None:
             out = out.overlay(spoken, position=max(0, duration_ms // 10))

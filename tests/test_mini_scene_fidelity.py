@@ -115,6 +115,12 @@ class TestMiniSceneFidelity(unittest.TestCase):
         self.assertTrue(any(float(s) > 0.05 for s in starts) or len(spec.scene_layers) >= 2)
         bouncing = [l for l in spec.scene_layers if l.get("bounce") or l.get("gag") == "squash"]
         self.assertTrue(bouncing or any(l.get("gag") for l in spec.scene_layers))
+        # Phase E: freeform beats wire timed overlays + music sections
+        self.assertTrue(spec.script_beats, "expected script_beats from freeform then-clauses")
+        self.assertGreaterEqual(len(spec.script_beats), 2)
+        self.assertTrue(any(b.get("text") for b in spec.script_beats))
+        self.assertEqual(len(spec.music_sections or []), len(spec.script_beats))
+        self.assertTrue(any(b.get("callout") for b in spec.script_beats))
 
     def test_setting_themed_blended_background(self):
         """Mini-scenes with entities must use blended mode + setting, not rainbow pure mesh."""

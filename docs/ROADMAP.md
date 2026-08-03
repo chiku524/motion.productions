@@ -126,6 +126,7 @@ Video generation software that can utilize any aspect within the movie industry 
 - `composition_symmetry` now adjusts layer x (bilateral pulls center; asymmetric pushes out); contact shadows darken the background plane under props
 - Timed educational beat overlays (`script_beats`); broader teach/lesson/learn prompts; music sections follow beat plan
 - Film stack extended: vignette, tone curve, depth haze, soft bloom, chromatic aberration; key-light specular on materials; camera-coupled parallax
+- Soft-edge AA on props/characters; brows/blush expressions; beat callouts; freeform → script_beats; beat-synced TTS hooks
 
 
 **Success criteria:** More realistic or asset-driven visuals when enabled; photoreal path uses the same prompt → registries → render contract.
@@ -203,11 +204,11 @@ Every domain from INTENDED_LOOP is represented in prompts and interpretation (co
 
 ## Phase E: Script parsing
 
-**Goal:** User provides a script; system breaks it into scenes and actions. **Status:** Partial — 5s mini-scene scripts (setup→beat→resolve), educational multi-beat for longer clips, and free-form `then` / `→` clause splitting into ordered beats.
+**Goal:** User provides a script; system breaks it into scenes and actions. **Status:** Done — free-form `then` / `→` clauses now fill `script_beats` + `music_sections` + overlays; educational + mini-scene paths already did.
 
 ## Phase F: Entertainment layer
 
-**Goal:** Make educational content engaging (humor/tone, character personality, visual gags, pacing variation). **Status:** Partial — squash-on-bounce, spin/flourish/wink/double-take gags; sequential beat time windows with per-beat pacing; mini-scenes gallery at `/mini-scenes/`.
+**Goal:** Make educational content engaging (humor/tone, character personality, visual gags, pacing variation). **Status:** Advanced — beat-timed expressions/gags, callout rings on concept/example, brows/blush faces, soft-edge AA, prop upgrades (multi-canopy trees, flickering windows, soft clouds), beat-synced TTS when espeak present.
 
 ## Educational implementation order
 

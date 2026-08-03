@@ -98,18 +98,27 @@ def parse_freeform_mini_script(
     n = len(clauses)
     beat_dur = round(total_duration / n, 3)
     sections = ["intro", "drop", "break", "build"]
+    positions = ["top", "center", "bottom", "center"]
     beats: list[ScriptBeat] = []
     for i, clause in enumerate(clauses):
         action = _clause_action(clause)
         sfx = _clause_sfx(clause, action)
+        # Short overlay label from the clause (strip filler)
+        label = re.sub(r"\b(a|an|the|then)\b", " ", clause, flags=re.IGNORECASE)
+        label = re.sub(r"\s+", " ", label).strip(" .,!")[:42] or None
+        name = f"beat{i + 1}"
         beats.append(
             ScriptBeat(
-                name=f"beat{i + 1}",
+                name=name,
                 duration_sec=beat_dur if i < n - 1 else round(total_duration - beat_dur * (n - 1), 3),
-                text=None,
+                text=label,
                 music_section=sections[i % len(sections)],
                 entity_action=action,
                 sfx=sfx,
+                position=positions[i % len(positions)],
+                font_size=36,
+                expression="excited" if i == 1 else ("calm" if i == 0 else "happy"),
+                callout=(i == 1),
             )
         )
     topic = clauses[0][:60]

@@ -223,11 +223,50 @@ class TestFilmAndMaterials(unittest.TestCase):
         self.assertIn("photosynthesis", (early or "").lower())
         self.assertIn("remember", (late or "").lower())
         self.assertNotEqual(early, late)
+        # Layout + callout metadata from educational template
+        self.assertTrue(any(b.get("position") for b in spec.script_beats))
+        self.assertTrue(any(b.get("callout") for b in spec.script_beats))
+        self.assertTrue(any(b.get("expression") for b in spec.script_beats))
+        # Entities carry beat expressions
+        exprs = {e.get("expression") for e in (instruction.entities or []) if isinstance(e, dict)}
+        self.assertTrue(exprs & {"excited", "calm", "happy", "neutral"})
 
     def test_teach_prompt_sets_educational(self):
         instruction = interpret_user_prompt("teach me about gravity")
         self.assertEqual(instruction.educational_template, "explainer")
         self.assertIn("gravity", (instruction.text_overlay or "").lower())
+
+    def test_soft_disk_has_antialiased_edge(self):
+        from src.procedural.renderer import _soft_disk
+
+        h = w = 64
+        yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+        xx /= w - 1
+        yy /= h - 1
+        mask = _soft_disk(xx, yy, 0.5, 0.5, 0.25, soft=0.04)
+        vals = set(np.round(mask.ravel(), 2).tolist())
+        # Soft edge should produce fractional alphas, not only 0/1
+        self.assertGreater(len(vals), 3)
+        self.assertGreater(float(mask.max()), 0.99)
+        self.assertLess(float(mask.min()), 0.01)
+
+    def test_character_expression_brows_render(self):
+        from src.procedural.renderer import _render_layers_rgba
+
+        layers = [{
+            "kind": "character",
+            "color": [200, 80, 80],
+            "z": 1,
+            "expression": "angry",
+            "gag": "none",
+            "keyframes": [
+                {"t": 0, "x": 0.5, "y": 0.5, "scale": 1.4, "rot": 0, "opacity": 1},
+                {"t": 1, "x": 0.5, "y": 0.5, "scale": 1.4, "rot": 0, "opacity": 1},
+            ],
+        }]
+        rgb, a = _render_layers_rgba(layers, 0.2, 72, 72)
+        self.assertGreater(float(a.max()), 0.5)
+        self.assertGreater(float(rgb.std()), 5)
 
     def test_arrangement_honors_music_sections(self):
         from src.audio.music import arrangement_for

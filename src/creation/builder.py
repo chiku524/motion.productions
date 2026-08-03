@@ -292,7 +292,11 @@ def build_spec_from_instruction(
     # Phase 5 / Roadmap B: educational template → multi-beat entities + SFX
     if getattr(instruction, "educational_template", None) and not entities:
         topic = (getattr(instruction, "text_overlay", None) or "the topic").strip()
-        narr = build_educational_script(topic, total_duration=max(5.0, duration_hint))
+        narr = build_educational_script(
+            topic,
+            total_duration=max(5.0, duration_hint),
+            style=str(getattr(instruction, "educational_template", None) or "educational"),
+        )
         ents, sfx_from_script = script_to_entities_and_sfx(narr)
         entities = ents
         instruction.entities = entities
@@ -306,19 +310,29 @@ def build_spec_from_instruction(
     # Phase E: free-form "then" mini-scripts override single-entity expansion
     freeform_applied = False
     if duration_hint <= 12.0 and not getattr(instruction, "educational_template", None):
-        from .script_parse import freeform_entities_from_prompt, split_script_clauses
-        if split_script_clauses(getattr(instruction, "raw_prompt", "") or ""):
+        from .script_parse import (
+            freeform_entities_from_prompt,
+            parse_freeform_mini_script,
+            split_script_clauses,
+        )
+        raw_prompt = getattr(instruction, "raw_prompt", "") or ""
+        if split_script_clauses(raw_prompt):
             base = entities[0] if entities and isinstance(entities[0], dict) else None
+            narr = parse_freeform_mini_script(raw_prompt, total_duration=duration_hint)
             parsed = freeform_entities_from_prompt(
-                instruction.raw_prompt,
+                raw_prompt,
                 base_entity=base,
                 total_duration=duration_hint,
             )
-            if parsed:
+            if parsed and narr:
                 ents, sfx_from_script = parsed
                 entities = ents
                 instruction.entities = entities
                 instruction.sfx_events = sfx_from_script
+                script_beats = script_beats_to_dicts(narr)
+                music_sections = [b.music_section for b in narr.beats]
+                if not text_overlay and narr.beats and narr.beats[0].text:
+                    text_overlay = narr.beats[0].text
                 freeform_applied = True
 
     # Short mini-scenes: if we have a single bouncing/walking entity, expand to a 3-beat arc

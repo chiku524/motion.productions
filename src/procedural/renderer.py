@@ -190,6 +190,54 @@ def _sample_texture_mod(
     return 0.299 * tex[:, :, 0] + 0.587 * tex[:, :, 1] + 0.114 * tex[:, :, 2]
 
 
+def _soft_disk(
+    xx: "np.ndarray",
+    yy: "np.ndarray",
+    cx: float,
+    cy: float,
+    radius: float,
+    soft: float = 0.03,
+) -> "np.ndarray":
+    """Anti-aliased disk mask (1 inside, soft falloff over soft band)."""
+    dist = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
+    band = max(1e-5, float(soft))
+    return np.clip((float(radius) + band - dist) / band, 0.0, 1.0)
+
+
+def _soft_box(
+    xx: "np.ndarray",
+    yy: "np.ndarray",
+    cx: float,
+    cy: float,
+    half_w: float,
+    half_h: float,
+    soft: float = 0.025,
+) -> "np.ndarray":
+    """Anti-aliased axis-aligned box via max-norm distance."""
+    dx = np.abs(xx - cx) / max(1e-6, float(half_w))
+    dy = np.abs(yy - cy) / max(1e-6, float(half_h))
+    m = np.maximum(dx, dy)
+    band = max(1e-5, float(soft) / max(min(half_w, half_h), 1e-6))
+    return np.clip((1.0 + band - m) / band, 0.0, 1.0)
+
+
+def _soft_ellipse(
+    xx: "np.ndarray",
+    yy: "np.ndarray",
+    cx: float,
+    cy: float,
+    rx: float,
+    ry: float,
+    soft: float = 0.03,
+) -> "np.ndarray":
+    """Anti-aliased ellipse mask."""
+    nx = (xx - cx) / max(1e-6, float(rx))
+    ny = (yy - cy) / max(1e-6, float(ry))
+    dist = np.sqrt(nx * nx + ny * ny)
+    band = max(1e-5, float(soft) / max(min(rx, ry), 1e-6))
+    return np.clip((1.0 + band - dist) / band, 0.0, 1.0)
+
+
 def _blend_shaded_layer(
     out_rgb: "np.ndarray",
     out_a: "np.ndarray",
@@ -414,9 +462,7 @@ def _render_layers_rgba(
 
         if kind == "rect":
             half = radius * 1.1
-            mask = ((np.abs(xx_l - cx) < half) & (np.abs(yy_l - cy) < half)).astype(np.float32)
-            edge = np.clip(1.0 - np.maximum(np.abs(xx_l - cx) / half, np.abs(yy_l - cy) / half), 0, 1)
-            mask = mask * edge
+            mask = _soft_box(xx_l, yy_l, cx, cy, half, half, soft=0.03)
             out_rgb, out_a = _blend_shaded_layer(
                 out_rgb, out_a, mask, (cr, cg, cb), xx_l, yy_l, cx, cy, radius,
                 lighting_model, texture_mod, opacity, material=kind,
@@ -424,9 +470,16 @@ def _render_layers_rgba(
         elif kind == "arrow":
             dxv = xx_l - cx
             dyv = yy_l - cy
-            body = (np.abs(dyv) < radius * 0.25) & (dxv > -radius) & (dxv < radius * 0.4)
-            head = (dxv > radius * 0.2) & (dxv < radius) & (np.abs(dyv) < (radius - dxv) * 0.9)
-            mask = (body | head).astype(np.float32)
+            # Soft body via distance to horizontal strip
+            body_m = np.clip(1.0 - np.abs(dyv) / max(1e-6, radius * 0.28), 0, 1)
+            body_m = body_m * ((dxv > -radius) & (dxv < radius * 0.45)).astype(np.float32)
+            head_m = (
+                (dxv > radius * 0.15)
+                & (dxv < radius)
+                & (np.abs(dyv) < (radius - dxv) * 0.95 + 0.02)
+            ).astype(np.float32)
+            head_soft = head_m * np.clip(1.0 - np.abs(dyv) / max(1e-6, (radius - dxv) * 0.95 + 0.02), 0, 1)
+            mask = np.clip(np.maximum(body_m, head_soft), 0, 1)
             out_rgb, out_a = _blend_shaded_layer(
                 out_rgb, out_a, mask, (cr, cg, cb), xx_l, yy_l, cx, cy, radius,
                 lighting_model, texture_mod, opacity, material=kind,
@@ -435,18 +488,65 @@ def _render_layers_rgba(
             head_r = radius * 0.45
             body_r = radius * 0.7
             head_cy = cy - radius * 0.55
-            head_m = (np.sqrt((xx_l - cx) ** 2 + (yy_l - head_cy) ** 2) < head_r).astype(np.float32)
-            body_m = ((np.abs(xx_l - cx) < body_r * 0.55) & (np.abs(yy_l - (cy + radius * 0.15)) < body_r)).astype(np.float32)
-            mask = np.clip(head_m + body_m, 0, 1)
+            head_m = _soft_disk(xx_l, yy_l, cx, head_cy, head_r, soft=0.025)
+            body_m = _soft_box(xx_l, yy_l, cx, cy + radius * 0.15, body_r * 0.55, body_r, soft=0.03)
+            mask = np.clip(np.maximum(head_m, body_m), 0, 1)
+            # Inter-layer soft AO under this character onto existing draw
+            if float(np.max(out_a)) > 0.05:
+                ao = np.clip(np.roll(mask, max(1, int(0.018 * height)), axis=0) * 0.28, 0, 1)
+                out_rgb = out_rgb * (1.0 - ao * (out_a > 0.08).astype(np.float32))[..., None]
             eye_y = head_cy - head_r * 0.15
             eye_dx = head_r * 0.35
             eye_r = head_r * 0.12
             gag = str(layer.get("gag") or "none").lower()
             wink = gag == "wink" and (int(t * 8) % 8 == 3)
-            left_eye_r = eye_r * (0.25 if wink else 1.0)
-            left_eye = (np.sqrt((xx_l - (cx - eye_dx)) ** 2 + (yy_l - eye_y) ** 2) < left_eye_r).astype(np.float32)
-            right_eye = (np.sqrt((xx_l - (cx + eye_dx)) ** 2 + (yy_l - eye_y) ** 2) < eye_r).astype(np.float32)
             expression = str(layer.get("expression") or "neutral").lower()
+            # Expression-tuned eye scale
+            eye_scale = 1.0
+            if expression in ("excited", "happy"):
+                eye_scale = 1.2
+            elif expression in ("sad", "nervous"):
+                eye_scale = 0.85
+            elif expression == "angry":
+                eye_scale = 0.95
+            left_eye_r = eye_r * eye_scale * (0.25 if wink else 1.0)
+            right_eye_r = eye_r * eye_scale
+            if expression == "angry":
+                eye_y = eye_y + head_r * 0.04
+            left_eye = _soft_disk(xx_l, yy_l, cx - eye_dx, eye_y, left_eye_r, soft=0.012)
+            right_eye = _soft_disk(xx_l, yy_l, cx + eye_dx, eye_y, right_eye_r, soft=0.012)
+            # Brows
+            brow_y = eye_y - head_r * 0.22
+            brow_h = head_r * 0.06
+            if expression == "angry":
+                # Slanted inward
+                left_brow = (
+                    (np.abs((yy_l - brow_y) - 0.45 * (xx_l - (cx - eye_dx))) < brow_h)
+                    & (np.abs(xx_l - (cx - eye_dx)) < head_r * 0.22)
+                ).astype(np.float32)
+                right_brow = (
+                    (np.abs((yy_l - brow_y) + 0.45 * (xx_l - (cx + eye_dx))) < brow_h)
+                    & (np.abs(xx_l - (cx + eye_dx)) < head_r * 0.22)
+                ).astype(np.float32)
+            elif expression == "sad":
+                left_brow = (
+                    (np.abs((yy_l - brow_y) + 0.35 * (xx_l - (cx - eye_dx))) < brow_h)
+                    & (np.abs(xx_l - (cx - eye_dx)) < head_r * 0.22)
+                ).astype(np.float32)
+                right_brow = (
+                    (np.abs((yy_l - brow_y) - 0.35 * (xx_l - (cx + eye_dx))) < brow_h)
+                    & (np.abs(xx_l - (cx + eye_dx)) < head_r * 0.22)
+                ).astype(np.float32)
+            else:
+                left_brow = (
+                    (np.abs(yy_l - brow_y) < brow_h)
+                    & (np.abs(xx_l - (cx - eye_dx)) < head_r * 0.2)
+                ).astype(np.float32)
+                right_brow = (
+                    (np.abs(yy_l - brow_y) < brow_h)
+                    & (np.abs(xx_l - (cx + eye_dx)) < head_r * 0.2)
+                ).astype(np.float32)
+            brows = np.clip(left_brow + right_brow, 0, 1)
             mouth_y = head_cy + head_r * 0.35
             if expression == "happy":
                 mouth = (
@@ -461,22 +561,33 @@ def _render_layers_rgba(
                 ).astype(np.float32)
             elif expression == "angry":
                 mouth = ((np.abs(yy_l - mouth_y) < head_r * 0.06) & (np.abs(xx_l - cx) < head_r * 0.35)).astype(np.float32)
-                left_eye = (np.sqrt((xx_l - (cx - eye_dx)) ** 2 + (yy_l - (eye_y + head_r * 0.05)) ** 2) < eye_r * 1.15).astype(np.float32)
-                right_eye = (np.sqrt((xx_l - (cx + eye_dx)) ** 2 + (yy_l - (eye_y + head_r * 0.05)) ** 2) < eye_r * 1.15).astype(np.float32)
             elif expression == "excited":
-                mouth = ((np.sqrt((xx_l - cx) ** 2 + (yy_l - mouth_y) ** 2) < head_r * 0.22) & (yy_l > mouth_y - head_r * 0.05)).astype(np.float32)
+                mouth = _soft_disk(xx_l, yy_l, cx, mouth_y + head_r * 0.02, head_r * 0.2, soft=0.015)
+                mouth = mouth * (yy_l > mouth_y - head_r * 0.05).astype(np.float32)
             elif expression == "nervous":
                 mouth = ((np.abs(yy_l - mouth_y) < head_r * 0.05) & (np.abs(xx_l - cx) < head_r * 0.2)).astype(np.float32)
             elif expression == "calm":
                 mouth = ((np.abs(yy_l - mouth_y) < head_r * 0.05) & (np.abs(xx_l - cx) < head_r * 0.3)).astype(np.float32)
             else:
                 mouth = ((np.abs(yy_l - mouth_y) < head_r * 0.05) & (np.abs(xx_l - cx) < head_r * 0.28)).astype(np.float32)
-            face = np.clip(left_eye + right_eye + mouth, 0, 1)
+            blush = np.zeros_like(mask)
+            if expression in ("happy", "excited"):
+                blush = (
+                    _soft_disk(xx_l, yy_l, cx - eye_dx * 1.15, mouth_y - head_r * 0.05, head_r * 0.14, soft=0.02)
+                    + _soft_disk(xx_l, yy_l, cx + eye_dx * 1.15, mouth_y - head_r * 0.05, head_r * 0.14, soft=0.02)
+                )
+                blush = np.clip(blush, 0, 1)
+            face = np.clip(left_eye + right_eye + mouth + brows, 0, 1)
             mask = np.clip(mask + face * 0.35, 0, 1)
             out_rgb, out_a = _blend_shaded_layer(
                 out_rgb, out_a, mask, (cr, cg, cb), xx_l, yy_l, cx, cy, radius,
                 lighting_model, texture_mod, opacity, material=kind,
             )
+            if float(np.max(blush)) > 0.05:
+                out_rgb, out_a = _blend_shaded_layer(
+                    out_rgb, out_a, blush * opacity * 0.35, (255.0, 140.0, 150.0),
+                    xx_l, yy_l, cx, cy, radius * 0.4, lighting_model, None, 1.0, material=kind,
+                )
             feat_a = face * opacity * 0.55
             dark = (cr * 0.35, cg * 0.35, cb * 0.35)
             out_rgb, out_a = _blend_shaded_layer(
@@ -485,13 +596,16 @@ def _render_layers_rgba(
             )
         elif kind == "tree":
             trunk_w, trunk_h = radius * 0.22, radius * 0.85
-            trunk = (
-                (np.abs(xx_l - cx) < trunk_w * 0.5)
-                & (yy_l > cy - trunk_h * 0.1)
-                & (yy_l < cy + trunk_h * 0.55)
-            ).astype(np.float32)
+            trunk = _soft_box(xx_l, yy_l, cx, cy + trunk_h * 0.15, trunk_w * 0.5, trunk_h * 0.55, soft=0.02)
             canopy_cy = cy - radius * 0.35
-            canopy = (np.sqrt((xx_l - cx) ** 2 + (yy_l - canopy_cy) ** 2) < radius * 0.7).astype(np.float32)
+            canopy = _soft_disk(xx_l, yy_l, cx, canopy_cy, radius * 0.7, soft=0.04)
+            # Second canopy lobe + leaf speckles
+            canopy2 = _soft_disk(xx_l, yy_l, cx - radius * 0.25, canopy_cy + radius * 0.08, radius * 0.45, soft=0.035)
+            canopy3 = _soft_disk(xx_l, yy_l, cx + radius * 0.22, canopy_cy + radius * 0.05, radius * 0.4, soft=0.035)
+            canopy = np.clip(np.maximum(np.maximum(canopy, canopy2), canopy3), 0, 1)
+            if texture_mod is not None:
+                speck = (texture_mod > 0.62).astype(np.float32) * canopy * 0.35
+                canopy = np.clip(canopy + speck, 0, 1)
             out_rgb, out_a = _blend_shaded_layer(
                 out_rgb, out_a, canopy, (cr, cg, cb), xx_l, yy_l, cx, canopy_cy, radius * 0.7,
                 lighting_model, texture_mod, opacity, material=kind,
@@ -501,21 +615,18 @@ def _render_layers_rgba(
                 lighting_model, texture_mod, opacity * 0.9, material=kind,
             )
         elif kind == "fish":
-            body = (
-                ((xx_l - cx) / max(1e-6, radius * 0.9)) ** 2
-                + ((yy_l - cy) / max(1e-6, radius * 0.45)) ** 2
-            ) < 1.0
-            tail = (
+            body = _soft_ellipse(xx_l, yy_l, cx, cy, radius * 0.9, radius * 0.45, soft=0.03)
+            tail_core = (
                 (xx_l < cx - radius * 0.55)
                 & (xx_l > cx - radius * 1.15)
-                & (np.abs(yy_l - cy) < (cx - radius * 0.4 - xx_l) * 0.9)
-            )
-            mask = (body | tail).astype(np.float32)
+                & (np.abs(yy_l - cy) < (cx - radius * 0.4 - xx_l) * 0.9 + 0.02)
+            ).astype(np.float32)
+            mask = np.clip(np.maximum(body, tail_core * 0.9), 0, 1)
             out_rgb, out_a = _blend_shaded_layer(
                 out_rgb, out_a, mask, (cr, cg, cb), xx_l, yy_l, cx, cy, radius,
                 lighting_model, texture_mod, opacity, material=kind,
             )
-            eye = (np.sqrt((xx_l - (cx + radius * 0.35)) ** 2 + (yy_l - (cy - radius * 0.08)) ** 2) < radius * 0.1).astype(np.float32)
+            eye = _soft_disk(xx_l, yy_l, cx + radius * 0.35, cy - radius * 0.08, radius * 0.1, soft=0.01)
             out_rgb, out_a = _blend_shaded_layer(
                 out_rgb, out_a, eye, (20.0, 20.0, 30.0), xx_l, yy_l, cx, cy, radius * 0.2,
                 lighting_model, None, opacity * 0.7, material=kind,
@@ -530,7 +641,7 @@ def _render_layers_rgba(
             )
         elif kind == "building":
             half_w, half_h = radius * 0.55, radius * 1.2
-            body = ((np.abs(xx_l - cx) < half_w) & (np.abs(yy_l - cy) < half_h)).astype(np.float32)
+            body = _soft_box(xx_l, yy_l, cx, cy, half_w, half_h, soft=0.025)
             wx = np.floor((xx_l - (cx - half_w)) / max(1e-6, half_w * 0.35))
             wy = np.floor((yy_l - (cy - half_h)) / max(1e-6, half_h * 0.22))
             windows = (
@@ -539,19 +650,24 @@ def _render_layers_rgba(
                 & (np.abs(xx_l - cx) < half_w * 0.85)
                 & (np.abs(yy_l - cy) < half_h * 0.85)
             ).astype(np.float32)
+            # Neon / night flicker: pulse window brightness with time
+            flicker = 0.75 + 0.25 * float(np.sin(t * 4.7 + cx * 9.0))
+            if (lighting_preset or "").lower() in ("neon", "noir", "moody"):
+                flicker = 0.55 + 0.45 * (0.5 + 0.5 * float(np.sin(t * 7.3 + cx * 5.0)))
+            win_color = (220.0 * flicker, 200.0 * flicker, 90.0 + 40.0 * flicker)
             out_rgb, out_a = _blend_shaded_layer(
                 out_rgb, out_a, body, (cr, cg, cb), xx_l, yy_l, cx, cy, radius,
                 lighting_model, texture_mod, opacity, material=kind,
             )
             out_rgb, out_a = _blend_shaded_layer(
-                out_rgb, out_a, windows, (220.0, 200.0, 90.0), xx_l, yy_l, cx, cy, radius * 0.5,
+                out_rgb, out_a, windows, win_color, xx_l, yy_l, cx, cy, radius * 0.5,
                 lighting_model, None, opacity * 0.45, material=kind,
             )
         elif kind == "cloud":
-            c1 = np.sqrt((xx_l - (cx - radius * 0.45)) ** 2 + (yy_l - cy) ** 2) < radius * 0.55
-            c2 = np.sqrt((xx_l - cx) ** 2 + (yy_l - (cy - radius * 0.15)) ** 2) < radius * 0.65
-            c3 = np.sqrt((xx_l - (cx + radius * 0.4)) ** 2 + (yy_l - cy) ** 2) < radius * 0.5
-            mask = (c1 | c2 | c3).astype(np.float32)
+            c1 = _soft_disk(xx_l, yy_l, cx - radius * 0.45, cy, radius * 0.55, soft=0.05)
+            c2 = _soft_disk(xx_l, yy_l, cx, cy - radius * 0.15, radius * 0.65, soft=0.055)
+            c3 = _soft_disk(xx_l, yy_l, cx + radius * 0.4, cy, radius * 0.5, soft=0.05)
+            mask = np.clip(np.maximum(np.maximum(c1, c2), c3), 0, 1)
             out_rgb, out_a = _blend_shaded_layer(
                 out_rgb, out_a, mask, (cr, cg, cb), xx_l, yy_l, cx, cy, radius,
                 lighting_model, texture_mod, opacity * 0.7, material=kind,
@@ -814,19 +930,65 @@ def render_frame(
     frame = apply_lighting_preset(frame, lighting_preset)
 
     text_overlay = getattr(spec, "text_overlay", None)
+    text_pos = getattr(spec, "text_position", "center") or "center"
+    font_size = 44
+    want_callout = False
     script_beats = getattr(spec, "script_beats", None)
     if script_beats:
         try:
-            from ..creation.narrative_script import resolve_text_at_time
-            text_overlay = resolve_text_at_time(script_beats, t, fallback=text_overlay)
+            from ..creation.narrative_script import resolve_overlay_at_time
+            overlay = resolve_overlay_at_time(
+                script_beats, t,
+                fallback_text=text_overlay,
+                fallback_position=text_pos,
+                fallback_font_size=44,
+            )
+            text_overlay = overlay.get("text") or text_overlay
+            text_pos = overlay.get("position") or text_pos
+            font_size = int(overlay.get("font_size") or font_size)
+            want_callout = bool(overlay.get("callout"))
         except ImportError:
             pass
+
+    if want_callout and scene_layers:
+        try:
+            from ..graphics.primitives import draw_callout
+            from ..creation.scene_graph import (
+                apply_composition_symmetry_x,
+                composition_balance_offset,
+                sample_layer_at,
+            )
+            # Ring the front-most non-prop-looking layer (highest z)
+            target = None
+            for layer in sorted(
+                [L for L in scene_layers if isinstance(L, dict)],
+                key=lambda L: int(L.get("z", 1)),
+                reverse=True,
+            ):
+                if str(layer.get("kind") or "") not in ("cloud", "wave"):
+                    target = layer
+                    break
+            if target is not None:
+                pose = sample_layer_at(target, t)
+                cdx, cdy = composition_balance_offset(composition_balance)
+                px = apply_composition_symmetry_x(
+                    max(0.02, min(0.98, float(pose["x"]) + cdx)),
+                    composition_symmetry,
+                )
+                py = max(0.02, min(0.98, float(pose["y"]) + cdy))
+                scale = max(0.15, float(pose["scale"]))
+                cx_px = int(px * (width - 1))
+                cy_px = int(py * (height - 1))
+                rad = max(12, int(0.14 * scale * min(width, height)))
+                frame = draw_callout(frame, (cx_px, cy_px), radius=rad)
+        except ImportError:
+            pass
+
     if text_overlay:
         try:
             from ..graphics.text import render_text_overlay
-            text_pos = getattr(spec, "text_position", "center") or "center"
             frame = render_text_overlay(
-                frame, text_overlay, position=text_pos, font_size=44
+                frame, text_overlay, position=text_pos, font_size=font_size
             )
         except ImportError:
             pass
