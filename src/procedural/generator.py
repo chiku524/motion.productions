@@ -87,6 +87,7 @@ class ProceduralVideoGenerator(VideoGenerator):
             build_scene_script_from_instruction,
             spec_from_shot,
             cut_times_from_script,
+            cut_meta_from_script,
         )
         from ..knowledge import get_knowledge_for_creation
 
@@ -135,7 +136,9 @@ class ProceduralVideoGenerator(VideoGenerator):
             segment_index=segment_index,
             total_segments=total_segments,
         )
-        base_spec.cut_times = cut_times_from_script(scene_script)
+        cuts, cut_trans = cut_meta_from_script(scene_script)
+        base_spec.cut_times = cuts or cut_times_from_script(scene_script)
+        base_spec.cut_transitions = cut_trans or None
         # Re-time SFX events to actual duration
         if base_spec.sfx_events:
             for ev in base_spec.sfx_events:
@@ -166,7 +169,7 @@ class ProceduralVideoGenerator(VideoGenerator):
         )
         fps_val = float(fps)
         trans_duration = 0.5
-        from ..cinematography.transitions import apply_transition
+        from ..cinematography.transitions import apply_transition, cross_blend
 
         # Cumulative shot end times (seconds)
         shot_end_times: list[float] = []
@@ -174,6 +177,10 @@ class ProceduralVideoGenerator(VideoGenerator):
         for s in scene_script.shots:
             acc += s.duration_seconds
             shot_end_times.append(acc)
+
+        last_clean = None
+        outgoing_hold = None
+        prev_shot_index = -1
 
         try:
             for i in range(num_frames):
@@ -185,6 +192,11 @@ class ProceduralVideoGenerator(VideoGenerator):
                         break
                 if t_global >= shot_end_times[-1]:
                     shot_index = len(scene_script.shots) - 1
+
+                if shot_index != prev_shot_index:
+                    # Freeze last clean frame of previous shot for cross-blend
+                    outgoing_hold = last_clean
+                    prev_shot_index = shot_index
 
                 shot = scene_script.shots[shot_index]
                 t_local = t_global - (shot_end_times[shot_index - 1] if shot_index > 0 else 0)
@@ -204,17 +216,31 @@ class ProceduralVideoGenerator(VideoGenerator):
 
                 is_first_frames = shot_elapsed < trans_duration
                 is_last_frames = (shot_end - t_global) < trans_duration
+                out_frame = frame
 
-                if is_first_frames and shot.transition_in != "cut":
-                    frame = apply_transition(
-                        frame, shot_elapsed, trans_duration, shot.transition_in, is_in=True
+                if is_first_frames and shot.transition_in != "cut" and shot_index > 0:
+                    progress = shot_elapsed / max(1e-6, trans_duration)
+                    if shot.transition_in in ("dissolve", "wipe") and outgoing_hold is not None:
+                        out_frame = cross_blend(
+                            outgoing_hold, frame, progress, shot.transition_in,
+                        )
+                    else:
+                        out_frame = apply_transition(
+                            frame, shot_elapsed, trans_duration, shot.transition_in, is_in=True
+                        )
+                elif is_first_frames and shot.transition_in == "fade" and shot_index == 0:
+                    out_frame = apply_transition(
+                        frame, shot_elapsed, trans_duration, "fade", is_in=True
                     )
-                elif is_last_frames and shot.transition_out != "cut":
+                elif is_last_frames and shot.transition_out == "fade":
                     t_out = trans_duration - (shot_end - t_global)
-                    frame = apply_transition(
-                        frame, t_out, trans_duration, shot.transition_out, is_in=False
+                    out_frame = apply_transition(
+                        frame, t_out, trans_duration, "fade", is_in=False
                     )
-                writer.append_data(frame)
+                # dissolve/wipe out handled by next shot's cross-blend in
+
+                writer.append_data(out_frame)
+                last_clean = frame
         finally:
             writer.close()
 

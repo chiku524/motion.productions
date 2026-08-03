@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from .data.palettes import PALETTES
-from .motion import get_camera_params, get_motion_func
+from .motion import get_camera_params, get_motion_func, rhythm_modulation, steadiness_shake
 from .parser import SceneSpec
 
 if TYPE_CHECKING:
@@ -20,9 +20,17 @@ except ImportError:
         return 1.0, 0.1, 0.0
 
 try:
-    from ..lighting.grading import apply_lighting_preset, apply_spatial_layer_lighting, get_lighting_model
+    from ..lighting.grading import (
+        apply_color_temperature,
+        apply_lighting_preset,
+        apply_spatial_layer_lighting,
+        get_lighting_model,
+    )
 except ImportError:
     def apply_lighting_preset(fr: "np.ndarray", _: str):
+        return fr
+
+    def apply_color_temperature(fr: "np.ndarray", _: str):
         return fr
 
     def get_lighting_model(_: str):
@@ -88,6 +96,47 @@ def _gradient_value(
     return np.clip(v, 0, 1)
 
 
+def _apply_weather_overlay(
+    frame: "np.ndarray",
+    setting: str,
+    t: float,
+    *,
+    seed: int = 0,
+) -> "np.ndarray":
+    """Rain streaks or snow flakes for weather settings (NumPy only)."""
+    s = (setting or "").strip().lower()
+    if s not in ("rain", "snow"):
+        return frame
+    h, w = frame.shape[:2]
+    out = frame.astype(np.float32)
+    rng = np.random.default_rng(abs(int(seed + t * 1000)) % (2**31))
+    if s == "rain":
+        n = max(40, (h * w) // 900)
+        for _ in range(n):
+            x = int(rng.integers(0, w))
+            y0 = int((rng.random() * 1.2 + (t * 2.5) % 1.0) * h) % h
+            length = int(rng.integers(6, 14))
+            thickness = 1 if rng.random() < 0.7 else 2
+            y1 = min(h, y0 + length)
+            alpha = 0.35 + 0.25 * float(rng.random())
+            x1 = min(w, x + thickness)
+            out[y0:y1, x:x1, :] = out[y0:y1, x:x1, :] * (1 - alpha) + 200.0 * alpha
+        # Slight wet ground darken
+        yy = np.linspace(0, 1, h, dtype=np.float32)[:, None]
+        wet = np.clip((yy - 0.7) / 0.3, 0, 1)
+        out = out * (1.0 - 0.12 * wet[..., None])
+    else:  # snow
+        n = max(50, (h * w) // 700)
+        for _ in range(n):
+            x = int((rng.random() + 0.15 * float(np.sin(t * 0.8 + rng.random()))) * w) % w
+            y = int((rng.random() * 1.1 + (t * 0.35) % 1.0) * h) % h
+            r = int(rng.integers(1, 3))
+            y0, y1 = max(0, y - r), min(h, y + r + 1)
+            x0, x1 = max(0, x - r), min(w, x + r + 1)
+            out[y0:y1, x0:x1, :] = np.clip(out[y0:y1, x0:x1, :] * 0.55 + 240.0 * 0.45, 0, 255)
+    return np.clip(out, 0, 255).astype(np.uint8)
+
+
 def _apply_setting_backdrop(
     r: "np.ndarray",
     g: "np.ndarray",
@@ -123,6 +172,9 @@ def _apply_setting_backdrop(
         "interior": ((12, 8, 5), (5, 5, 8)),
         "exterior": ((15, 20, 8), (8, 22, 40)),
         "rain": ((-20, -5, 15), (-25, 5, 25)),
+        "snow": ((35, 38, 42), (20, 30, 45)),
+        "street": ((15, 10, 20), (-5, 5, 30)),
+        "park": ((-5, 30, -8), (5, 25, 35)),
         "moody": ((-15, -10, 5), (-25, -15, 20)),
         "abstract": ((20, -10, 35), (10, 15, 40)),
     }
@@ -765,6 +817,8 @@ def render_frame(
     directionality = getattr(spec, "motion_directionality", "none") or "none"
     smoothness = getattr(spec, "motion_smoothness", "smooth") or "smooth"
     intensity = max(0.1, min(1.0, spec.intensity))
+    rhythm = getattr(spec, "motion_rhythm", "steady") or "steady"
+    intensity = max(0.1, min(1.0, intensity * rhythm_modulation(rhythm, t)))
     if duration_seconds and duration_seconds > 0:
         try:
             from ..narrative.story import get_tension_at
@@ -797,6 +851,10 @@ def render_frame(
     shot_type = getattr(spec, "shot_type", "medium") or "medium"
     shot_zoom, _, handheld = get_shot_params(shot_type)
     zoom, pan_x, pan_y, rotate = get_camera_params(camera_motion, t)
+    sx, sy, srot = steadiness_shake(getattr(spec, "camera_steadiness", "stable") or "stable", t)
+    pan_x += sx
+    pan_y += sy
+    rotate += srot
     zoom = zoom * shot_zoom
     if handheld > 0:
         shake = np.sin(t * 23.7) * handheld * 0.02
@@ -928,11 +986,16 @@ def render_frame(
 
     frame = np.clip(frame, 0, 255).astype(np.uint8)
     frame = apply_lighting_preset(frame, lighting_preset)
+    frame = apply_color_temperature(frame, getattr(spec, "color_temperature", "neutral") or "neutral")
+    setting_name = getattr(spec, "setting", None) or ""
+    if setting_name in ("rain", "snow"):
+        frame = _apply_weather_overlay(frame, setting_name, t, seed=seed)
 
     text_overlay = getattr(spec, "text_overlay", None)
     text_pos = getattr(spec, "text_position", "center") or "center"
     font_size = 44
     want_callout = False
+    want_arrow = False
     script_beats = getattr(spec, "script_beats", None)
     if script_beats:
         try:
@@ -947,12 +1010,13 @@ def render_frame(
             text_pos = overlay.get("position") or text_pos
             font_size = int(overlay.get("font_size") or font_size)
             want_callout = bool(overlay.get("callout"))
+            want_arrow = bool(overlay.get("arrow"))
         except ImportError:
             pass
 
-    if want_callout and scene_layers:
+    if (want_callout or want_arrow) and scene_layers:
         try:
-            from ..graphics.primitives import draw_callout
+            from ..graphics.primitives import draw_arrow, draw_callout
             from ..creation.scene_graph import (
                 apply_composition_symmetry_x,
                 composition_balance_offset,
@@ -980,7 +1044,12 @@ def render_frame(
                 cx_px = int(px * (width - 1))
                 cy_px = int(py * (height - 1))
                 rad = max(12, int(0.14 * scale * min(width, height)))
-                frame = draw_callout(frame, (cx_px, cy_px), radius=rad)
+                if want_callout:
+                    frame = draw_callout(frame, (cx_px, cy_px), radius=rad)
+                if want_arrow:
+                    # Arrow from top-center text area toward subject
+                    start = (width // 2, max(20, height // 8))
+                    frame = draw_arrow(frame, start, (cx_px, max(0, cy_px - rad)), thickness=3)
         except ImportError:
             pass
 

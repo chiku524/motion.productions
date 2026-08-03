@@ -127,8 +127,33 @@ def infer_bounce_events(
     return events
 
 
-def cut_accent_events(cut_times: list[float] | None) -> list[dict[str, Any]]:
-    """Soft click accents at scene cuts."""
+def cut_accent_events(
+    cut_times: list[float] | None,
+    *,
+    transition_types: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """
+    Accents at scene cuts. transition_types aligns with cut_times when provided:
+    cut→click, fade/dissolve→soft whoosh, wipe→whoosh.
+    """
     if not cut_times:
         return []
-    return [{"kind": "click", "t_sec": float(t), "strength": 0.45} for t in cut_times if t and t > 0.05]
+    events: list[dict[str, Any]] = []
+    for i, t in enumerate(cut_times):
+        if not t or float(t) <= 0.05:
+            continue
+        kind = "click"
+        strength = 0.45
+        if transition_types and i < len(transition_types):
+            tt = (transition_types[i] or "cut").lower()
+            if tt in ("dissolve", "fade"):
+                kind = "whoosh"
+                strength = 0.35
+            elif tt == "wipe":
+                kind = "whoosh"
+                strength = 0.55
+            elif tt == "cut":
+                kind = "click"
+                strength = 0.45
+        events.append({"kind": kind, "t_sec": float(t), "strength": strength})
+    return events

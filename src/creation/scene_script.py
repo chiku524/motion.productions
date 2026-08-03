@@ -109,16 +109,31 @@ def _resolve_pacing(instruction: InterpretedInstruction) -> float:
 
 def cut_times_from_script(scene_script: SceneScript) -> list[float]:
     """Shot boundary times (seconds) for audio sync accents."""
+    times, _ = cut_meta_from_script(scene_script)
+    return times
+
+
+def cut_meta_from_script(scene_script: SceneScript) -> tuple[list[float], list[str]]:
+    """Shot boundaries with the transition type used at each cut."""
     times: list[float] = []
+    types: list[str] = []
+    shots = list(getattr(scene_script, "shots", None) or [])
+    if len(shots) < 2:
+        return [], []
     acc = 0.0
-    for shot in getattr(scene_script, "shots", None) or []:
+    for i, shot in enumerate(shots[:-1]):
         acc += float(getattr(shot, "duration_seconds", 0) or 0)
-        if acc > 0.05:
-            times.append(acc)
-    # Drop final end-of-video boundary (not a cut between shots)
-    if len(times) > 1:
-        return times[:-1]
-    return []
+        if acc <= 0.05:
+            continue
+        times.append(acc)
+        nxt = shots[i + 1]
+        tt = (
+            getattr(nxt, "transition_in", None)
+            or getattr(shot, "transition_out", None)
+            or "cut"
+        )
+        types.append(str(tt).lower())
+    return times, types
 
 
 def spec_from_shot(
@@ -167,4 +182,7 @@ def spec_from_shot(
         creation_mode=getattr(base_spec, "creation_mode", "blended") or "blended",
         pure_sounds=getattr(base_spec, "pure_sounds", None),
         cut_times=getattr(base_spec, "cut_times", None),
+        cut_transitions=getattr(base_spec, "cut_transitions", None),
+        camera_steadiness=getattr(base_spec, "camera_steadiness", "stable") or "stable",
+        color_temperature=getattr(base_spec, "color_temperature", "neutral") or "neutral",
     )

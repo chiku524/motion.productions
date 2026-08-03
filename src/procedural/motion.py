@@ -146,4 +146,51 @@ def get_camera_params(
         s = 0.85 - 0.1 * math.sin(t * 0.2)
         rotate = t * 0.15
         return max(0.6, s), 0.0, 0.0, rotate
+    if camera_motion == "handheld":
+        # Organic micro-shake + slight drift
+        pan_x = 0.012 * math.sin(t * 11.3) + 0.008 * math.sin(t * 7.1)
+        pan_y = 0.010 * math.sin(t * 9.7 + 1.2) + 0.006 * math.cos(t * 5.3)
+        rot = 0.015 * math.sin(t * 6.5)
+        return 1.0, pan_x, pan_y, rot
     return 1.0, 0.0, 0.0, 0.0
+
+
+def steadiness_shake(
+    steadiness: str,
+    t: float,
+) -> tuple[float, float, float]:
+    """
+    Extra (pan_x, pan_y, rotate) from camera steadiness origin.
+    locked/stable → none; handheld → mild; shaky → strong.
+    """
+    s = (steadiness or "stable").lower()
+    if s in ("locked", "stable", "tripod", ""):
+        return 0.0, 0.0, 0.0
+    if s == "handheld":
+        return (
+            0.010 * math.sin(t * 13.1),
+            0.008 * math.sin(t * 10.4 + 0.7),
+            0.012 * math.sin(t * 8.2),
+        )
+    if s in ("shaky", "unstable", "chaotic"):
+        return (
+            0.028 * math.sin(t * 17.0) + 0.015 * math.sin(t * 23.0),
+            0.022 * math.sin(t * 19.0 + 1.1),
+            0.035 * math.sin(t * 14.0),
+        )
+    return 0.0, 0.0, 0.0
+
+
+def rhythm_modulation(rhythm: str, t: float) -> float:
+    """
+    Scalar ~0.85–1.15 modulating intensity / layer scale from motion_rhythm.
+    """
+    r = (rhythm or "steady").lower()
+    if r == "pulsing":
+        return 0.88 + 0.22 * pulse(t, 1.2)
+    if r == "wave":
+        return 0.92 + 0.14 * (0.5 + 0.5 * wave(t, 0.45))
+    if r == "random":
+        # Deterministic pseudo-random wobble
+        return 0.9 + 0.2 * (0.5 + 0.5 * math.sin(t * 5.7 + math.sin(t * 13.3)))
+    return 1.0

@@ -22,6 +22,7 @@ class ScriptBeat:
     font_size: int = 40
     expression: str | None = None  # happy|sad|angry|calm|excited|nervous
     callout: bool = False  # ring active subject during this beat
+    arrow: bool = False  # draw arrow pointing at subject
 
 
 @dataclass
@@ -177,6 +178,7 @@ def build_educational_script(
                 font_size=fs,
                 expression=_BEAT_EXPRESSION.get(name, "neutral"),
                 callout=(name in ("concept", "example")),
+                arrow=(name == "example"),
             )
         )
     return NarrativeScript(topic=topic, beats=beats)
@@ -255,6 +257,7 @@ def script_beats_to_dicts(script: NarrativeScript) -> list[dict[str, Any]]:
             "font_size": int(beat.font_size or 40),
             "expression": beat.expression,
             "callout": bool(beat.callout),
+            "arrow": bool(getattr(beat, "arrow", False)),
         })
         t = t_end
     return out
@@ -275,6 +278,7 @@ def resolve_overlay_at_time(
         "font_size": fallback_font_size,
         "name": None,
         "callout": False,
+        "arrow": False,
     }
     if not script_beats:
         return defaults
@@ -287,6 +291,7 @@ def resolve_overlay_at_time(
             "font_size": int(beat.get("font_size") or fallback_font_size),
             "name": beat.get("name"),
             "callout": bool(beat.get("callout")),
+            "arrow": bool(beat.get("arrow")),
         }
 
     for beat in script_beats:

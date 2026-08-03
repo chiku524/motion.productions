@@ -127,6 +127,7 @@ Video generation software that can utilize any aspect within the movie industry 
 - Timed educational beat overlays (`script_beats`); broader teach/lesson/learn prompts; music sections follow beat plan
 - Film stack extended: vignette, tone curve, depth haze, soft bloom, chromatic aberration; key-light specular on materials; camera-coupled parallax
 - Soft-edge AA on props/characters; brows/blush expressions; beat callouts; freeform → script_beats; beat-synced TTS hooks
+- True cross-shot dissolve/wipe; rain/snow weather overlays; camera steadiness + handheld; motion_rhythm modulation; color temperature grade; transition-aware cut SFX; educational arrows; snow/street/park settings
 
 
 **Success criteria:** More realistic or asset-driven visuals when enabled; photoreal path uses the same prompt → registries → render contract.

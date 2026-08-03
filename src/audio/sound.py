@@ -63,6 +63,7 @@ def mix_audio_to_video(
     vocal_phrase: str | None = None,
     music_sections: list[str] | None = None,
     script_beats: list[dict] | None = None,
+    cut_transitions: list[str] | None = None,
 ) -> Path:
     """
     Add audio to a video. Phase 6+.
@@ -130,7 +131,7 @@ def mix_audio_to_video(
     # Cut accents + event SFX
     from .event_sfx import schedule_sfx_events, cut_accent_events
     events = list(sfx_events or [])
-    events.extend(cut_accent_events(cut_times))
+    events.extend(cut_accent_events(cut_times, transition_types=cut_transitions))
     audio = schedule_sfx_events(audio, events, duration_ms=duration_ms)
 
     # Offline vocals

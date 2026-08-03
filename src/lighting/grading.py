@@ -87,6 +87,30 @@ def apply_lut_params(
     return out.astype(np.uint8)
 
 
+def apply_color_temperature(
+    frame: "np.ndarray",
+    temperature: str,
+) -> "np.ndarray":
+    """Nudge frame toward warm or cool using lift/gain on channels."""
+    import numpy as np
+
+    t = (temperature or "neutral").lower()
+    if t == "neutral" or t == "":
+        return frame
+    out = frame.astype(np.float32)
+    if t == "warm":
+        out[..., 0] = np.clip(out[..., 0] * 1.06 + 4, 0, 255)
+        out[..., 1] = np.clip(out[..., 1] * 1.02, 0, 255)
+        out[..., 2] = np.clip(out[..., 2] * 0.94 - 2, 0, 255)
+    elif t == "cool":
+        out[..., 0] = np.clip(out[..., 0] * 0.94 - 2, 0, 255)
+        out[..., 1] = np.clip(out[..., 1] * 1.0, 0, 255)
+        out[..., 2] = np.clip(out[..., 2] * 1.07 + 5, 0, 255)
+    if frame.dtype == np.uint8:
+        return out.astype(np.uint8)
+    return out
+
+
 def get_lighting_model(preset: str) -> tuple[float, float, float, float]:
     """Return (key, fill, rim, ambient) for a preset."""
     preset = (preset or "neutral").lower().replace(" ", "_")

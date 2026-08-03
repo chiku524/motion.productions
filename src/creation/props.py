@@ -59,6 +59,21 @@ SETTING_PROP_RECIPES: dict[str, list[dict[str, Any]]] = {
         {"kind": "cloud", "trajectory": "none", "x": 0.5, "y": 0.15, "scale": 1.4, "z": 0},
         {"kind": "building", "trajectory": "none", "x": 0.8, "y": 0.55, "scale": 1.0, "z": 0},
     ],
+    "snow": [
+        {"kind": "cloud", "trajectory": "left", "x": 0.35, "y": 0.18, "scale": 1.2, "z": 0},
+        {"kind": "cloud", "trajectory": "right", "x": 0.75, "y": 0.22, "scale": 0.9, "z": 0},
+        {"kind": "tree", "trajectory": "none", "x": 0.2, "y": 0.68, "scale": 0.85, "z": 0},
+    ],
+    "street": [
+        {"kind": "building", "trajectory": "none", "x": 0.2, "y": 0.52, "scale": 1.3, "z": 0},
+        {"kind": "building", "trajectory": "none", "x": 0.75, "y": 0.55, "scale": 1.15, "z": 0},
+        {"kind": "cloud", "trajectory": "left", "x": 0.55, "y": 0.2, "scale": 0.85, "z": 0},
+    ],
+    "park": [
+        {"kind": "tree", "trajectory": "none", "x": 0.2, "y": 0.62, "scale": 1.0, "z": 0},
+        {"kind": "tree", "trajectory": "none", "x": 0.78, "y": 0.65, "scale": 0.9, "z": 0},
+        {"kind": "cloud", "trajectory": "right", "x": 0.45, "y": 0.2, "scale": 1.0, "z": 0},
+    ],
     "night": [
         {"kind": "building", "trajectory": "none", "x": 0.3, "y": 0.55, "scale": 1.2, "z": 0},
         {"kind": "cloud", "trajectory": "left", "x": 0.7, "y": 0.18, "scale": 0.9, "z": 0},

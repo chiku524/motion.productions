@@ -36,6 +36,7 @@ _MOTION_VALID = frozenset(("slow", "wave", "flow", "fast", "pulse"))
 _CAMERA_VALID = frozenset((
     "static", "zoom", "zoom_out", "pan", "rotate", "dolly", "crane",
     "tilt", "roll", "truck", "pedestal", "arc", "tracking", "whip_pan", "birds_eye",
+    "handheld",
 ))
 
 
@@ -494,10 +495,46 @@ def build_spec_from_instruction(
         pure_colors=pure_colors,
         creation_mode=creation_mode,
         pure_sounds=pure_sounds,
+        camera_steadiness=_resolve_camera_steadiness(instruction, camera, shot),
+        color_temperature=_resolve_color_temperature(instruction, lighting),
     )
 
     _validate_spec_against_instruction(spec, instruction)
     return spec
+
+
+def _resolve_camera_steadiness(instruction: InterpretedInstruction, camera: str, shot: str) -> str:
+    """Map prompt/camera/shot cues to steadiness origin values."""
+    words = set(getattr(instruction, "keywords", None) or [])
+    raw = (getattr(instruction, "raw_prompt", None) or "").lower()
+    if "shaky" in words or "shaky" in raw or "unstable" in raw:
+        return "shaky"
+    if (
+        camera == "handheld"
+        or shot == "handheld"
+        or "handheld" in words
+        or "documentary" in words
+    ):
+        return "handheld"
+    if "locked" in words or "tripod" in raw:
+        return "locked"
+    return "stable"
+
+
+def _resolve_color_temperature(instruction: InterpretedInstruction, lighting: str) -> str:
+    """Warm / cool / neutral from prompt words or lighting preset."""
+    words = set(getattr(instruction, "keywords", None) or [])
+    raw = (getattr(instruction, "raw_prompt", None) or "").lower()
+    if any(w in words or w in raw for w in ("warm", "golden", "sunset", "amber", "orange")):
+        return "warm"
+    if any(w in words or w in raw for w in ("cool", "cold", "blue", "icy", "winter", "snow")):
+        return "cool"
+    lighting = (lighting or "").lower()
+    if lighting in ("golden_hour",):
+        return "warm"
+    if lighting in ("noir", "neon", "moody"):
+        return "cool"
+    return "neutral"
 
 
 def _build_pure_color_pool(

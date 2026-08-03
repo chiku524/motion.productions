@@ -101,6 +101,12 @@ class SceneSpec:
     pure_sounds: list[dict] | None = None  # e.g. [{"key", "tone", "timbre", "amplitude"}, ...]
     # Shot cut times (seconds) for audio sync
     cut_times: list[float] | None = None
+    # Transition type at each cut (aligned with cut_times) for SFX variety
+    cut_transitions: list[str] | None = None
+    # Camera steadiness: locked | stable | handheld | shaky
+    camera_steadiness: str = "stable"
+    # Color temperature grade: warm | neutral | cool
+    color_temperature: str = "neutral"
 
 
 def parse_prompt_to_spec(prompt: str, *, seed: int | None = None) -> SceneSpec:

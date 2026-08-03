@@ -118,6 +118,8 @@ KEYWORD_TO_CAMERA: dict[str, str] = {
     "overhead": "birds_eye",
     "whip_pan": "whip_pan",
     "whip": "whip_pan",
+    "handheld": "handheld",
+    "shaky": "handheld",
 }
 
 # Words that suggest shot type (Phase 2)
@@ -469,6 +471,13 @@ KEYWORD_TO_SETTING: dict[str, str] = {
     "rain": "rain",
     "moody": "moody",
     "abstract": "abstract",
+    "snow": "snow",
+    "snowy": "snow",
+    "winter": "snow",
+    "street": "street",
+    "avenue": "street",
+    "park": "park",
+    "garden": "park",
 }
 
 # Setting → default palette / lighting / gradient when prompt doesn't override strongly
@@ -492,6 +501,9 @@ SETTING_VISUAL_DEFAULTS: dict[str, dict[str, str]] = {
     "rain": {"palette": "ocean", "lighting": "moody", "gradient": "vertical"},
     "moody": {"palette": "night", "lighting": "moody", "gradient": "angled"},
     "abstract": {"palette": "dreamy", "lighting": "neon", "gradient": "angled"},
+    "snow": {"palette": "mono", "lighting": "documentary", "gradient": "vertical"},
+    "street": {"palette": "neon", "lighting": "documentary", "gradient": "horizontal"},
+    "park": {"palette": "forest", "lighting": "documentary", "gradient": "vertical"},
 }
 
 # Character expression (Phase D) — drawn on head+body primitive
