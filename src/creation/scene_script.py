@@ -182,6 +182,7 @@ def spec_from_shot(
         lighting_preset=getattr(base_spec, "lighting_preset", "neutral") or "neutral",
         genre=getattr(base_spec, "genre", "general") or "general",
         style=getattr(base_spec, "style", "cinematic") or "cinematic",
+        setting=getattr(base_spec, "setting", None),
         composition_balance=getattr(base_spec, "composition_balance", "balanced") or "balanced",
         composition_symmetry=getattr(base_spec, "composition_symmetry", "slight") or "slight",
         pacing_factor=getattr(base_spec, "pacing_factor", 1.0) or 1.0,

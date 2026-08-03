@@ -95,6 +95,35 @@ def _pad_chord(freqs: list[float], dur_ms: int):
     return base
 
 
+def _section_bounds_ms(
+    duration_ms: int,
+    n_sec: int,
+    section_durations_ms: list[float] | None = None,
+) -> list[float]:
+    """Cumulative end times (ms) for each music section. Unequal when weights given."""
+    n_sec = max(1, n_sec)
+    if section_durations_ms and len(section_durations_ms) >= n_sec:
+        weights = [max(1.0, float(w)) for w in section_durations_ms[:n_sec]]
+        total_w = sum(weights) or 1.0
+        scale = duration_ms / total_w
+        bounds: list[float] = []
+        acc = 0.0
+        for w in weights:
+            acc += w * scale
+            bounds.append(acc)
+        bounds[-1] = float(duration_ms)
+        return bounds
+    section_ms = duration_ms / n_sec
+    return [(i + 1) * section_ms for i in range(n_sec)]
+
+
+def _section_index_at(t_ms: float, bounds: list[float]) -> int:
+    for i, end in enumerate(bounds):
+        if t_ms < end:
+            return i
+    return max(0, len(bounds) - 1)
+
+
 def generate_arrangement_audio(
     duration_ms: int,
     *,
@@ -103,6 +132,7 @@ def generate_arrangement_audio(
     mood: str = "neutral",
     sample_rate: int = 44100,
     music_sections: list[str] | None = None,
+    section_durations_ms: list[float] | None = None,
 ):
     """Render a full music bed for duration_ms."""
     from pydub import AudioSegment
@@ -127,15 +157,19 @@ def generate_arrangement_audio(
         "neutral": 73.0,
     }.get((mood or "neutral").lower(), 73.0)
 
-    # Section timeline: map each section to a time window for energy shaping
+    # Section timeline: prefer beat-weighted windows over equal splits
     n_sec = max(1, len(arr.sections))
-    section_ms = duration_ms / n_sec
+    bounds = _section_bounds_ms(duration_ms, n_sec, section_durations_ms)
+
+    def _sec_len(i: int) -> float:
+        start = 0.0 if i == 0 else bounds[i - 1]
+        return max(1.0, bounds[i] - start)
 
     if arr.genre in ("deep_house", "techno"):
         # Four-on-floor kick — quieter in intro/break
         t = 0.0
         while t < duration_ms:
-            sec_i = min(n_sec - 1, int(t / section_ms))
+            sec_i = _section_index_at(t, bounds)
             section = arr.sections[sec_i] if arr.sections else "drop"
             kick_adj = {"intro": -6, "break": -6, "build": -2}.get(section, 0)
             out = out.overlay(_kick() + kick_adj, position=int(t))
@@ -143,7 +177,7 @@ def generate_arrangement_audio(
         # Offbeat hats (skip sparse intro)
         t = beat / 2
         while t < duration_ms:
-            sec_i = min(n_sec - 1, int(t / section_ms))
+            sec_i = _section_index_at(t, bounds)
             section = arr.sections[sec_i] if arr.sections else "drop"
             if section != "intro":
                 out = out.overlay(_hat(), position=int(t))
@@ -162,8 +196,10 @@ def generate_arrangement_audio(
         # Pad stabs on drop/build sections
         for i, section in enumerate(arr.sections):
             if section in ("drop", "build") and duration_ms > 1500:
-                pos = int(i * section_ms + section_ms * 0.15)
-                pad = _pad_chord([root * 2, root * 2.5, root * 3], min(800, int(section_ms * 0.5)))
+                sec_len = _sec_len(i)
+                start = 0.0 if i == 0 else bounds[i - 1]
+                pos = int(start + sec_len * 0.15)
+                pad = _pad_chord([root * 2, root * 2.5, root * 3], min(800, int(sec_len * 0.5)))
                 if pos < duration_ms:
                     out = out.overlay(pad, position=pos)
 
@@ -173,7 +209,7 @@ def generate_arrangement_audio(
         # Sparse low hits — denser on drop
         t = 0.0
         while t < duration_ms:
-            sec_i = min(n_sec - 1, int(t / section_ms))
+            sec_i = _section_index_at(t, bounds)
             section = arr.sections[sec_i] if arr.sections else "drop"
             step = bar if section == "drop" else bar * 2
             out = out.overlay(_kick(120) + (-6), position=int(t))

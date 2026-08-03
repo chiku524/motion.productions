@@ -168,7 +168,6 @@ class ProceduralVideoGenerator(VideoGenerator):
             quality=8,
         )
         fps_val = float(fps)
-        trans_duration = 0.5
         from ..cinematography.transitions import apply_transition, cross_blend
 
         # Cumulative shot end times (seconds)
@@ -199,23 +198,28 @@ class ProceduralVideoGenerator(VideoGenerator):
                     prev_shot_index = shot_index
 
                 shot = scene_script.shots[shot_index]
-                t_local = t_global - (shot_end_times[shot_index - 1] if shot_index > 0 else 0)
+                shot_start = shot_end_times[shot_index - 1] if shot_index > 0 else 0.0
+                shot_end = shot_end_times[shot_index]
+                shot_dur = max(0.5, shot_end - shot_start)
+                # Cap transition length so short shots aren't mostly transition
+                trans_duration = min(0.5, max(0.12, 0.22 * shot_dur))
+                t_local = t_global - shot_start
                 pacing = getattr(shot, "pacing", 1.0) or 1.0
-                t_local *= pacing  # Pacing: faster = more motion per second
+                t_local_paced = t_local * pacing  # Pacing: faster = more motion per second
                 spec = spec_from_shot(base_spec, shot)
                 backend = get_render_backend(getattr(spec, "render_engine", None))
                 frame = backend.render_frame(
-                    spec, t_local, width, height, seed=seed,
+                    spec, t_local_paced, width, height, seed=seed,
                     duration_seconds=duration_seconds,
+                    t_content=t_global,
                 )
 
                 # Transitions at shot boundaries
-                shot_start = shot_end_times[shot_index - 1] if shot_index > 0 else 0.0
-                shot_end = shot_end_times[shot_index]
                 shot_elapsed = t_global - shot_start
 
                 is_first_frames = shot_elapsed < trans_duration
                 is_last_frames = (shot_end - t_global) < trans_duration
+                # Avoid stacking fade-out with next dissolve-in on tiny shots
                 out_frame = frame
 
                 if is_first_frames and shot.transition_in != "cut" and shot_index > 0:

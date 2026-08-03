@@ -802,14 +802,17 @@ def render_frame(
     *,
     seed: int = 0,
     duration_seconds: float | None = None,
+    t_content: float | None = None,
 ) -> "np.ndarray":
     """
     Generate one RGB frame (H, W, 3) uint8 from our procedural algorithms.
-    Supports vertical, radial, angled, horizontal gradients and camera motion (zoom, pan, rotate).
-    When creation_mode is pure_per_frame, uses randomly placed pure colors (§7) for emergent blends.
-    When depth_parallax is set, composites true depth planes (atmosphere + z-grouped layers)
-    instead of a single UV warp.
+
+    t: camera / motion clock (may be per-shot + paced).
+    t_content: clip-global time for script_beats, entity keyframes, and tension.
+    When t_content is None, t is used for both (single-shot / short clips).
     """
+    t_motion = float(t)
+    t_abs = float(t if t_content is None else t_content)
     creation_mode = getattr(spec, "creation_mode", "blended") or "blended"
     pure_colors = getattr(spec, "pure_colors", None) or []
 
@@ -817,16 +820,16 @@ def render_frame(
     if not palette:
         palette = PALETTES.get(spec.palette_name, PALETTES["default"])
     motion_fn = get_motion_func(spec.motion_type)
-    motion_val = motion_fn(t)
+    motion_val = motion_fn(t_motion)
     directionality = getattr(spec, "motion_directionality", "none") or "none"
     smoothness = getattr(spec, "motion_smoothness", "smooth") or "smooth"
     intensity = max(0.1, min(1.0, spec.intensity))
     rhythm = getattr(spec, "motion_rhythm", "steady") or "steady"
-    intensity = max(0.1, min(1.0, intensity * rhythm_modulation(rhythm, t)))
+    intensity = max(0.1, min(1.0, intensity * rhythm_modulation(rhythm, t_motion)))
     if duration_seconds and duration_seconds > 0:
         try:
             from ..narrative.story import get_tension_at
-            t_norm = min(1.0, t / duration_seconds)
+            t_norm = min(1.0, t_abs / duration_seconds)
             tension = get_tension_at(
                 t_norm,
                 curve=getattr(spec, "tension_curve", "standard") or "standard",
@@ -857,24 +860,24 @@ def render_frame(
 
     shot_type = getattr(spec, "shot_type", "medium") or "medium"
     shot_zoom, pan_range, handheld = get_shot_params(shot_type)
-    zoom, pan_x, pan_y, rotate = get_camera_params(camera_motion, t)
+    zoom, pan_x, pan_y, rotate = get_camera_params(camera_motion, t_motion)
     # Shot pan_range scales camera pans (wide = more roam, close = locked)
     pan_scale = 0.5 + 5.0 * float(pan_range)
     pan_x *= pan_scale
     pan_y *= pan_scale
-    sx, sy, srot = steadiness_shake(getattr(spec, "camera_steadiness", "stable") or "stable", t)
+    sx, sy, srot = steadiness_shake(getattr(spec, "camera_steadiness", "stable") or "stable", t_motion)
     pan_x += sx
     pan_y += sy
     rotate += srot
     zoom = zoom * shot_zoom
     if handheld > 0:
-        shake = np.sin(t * 23.7) * handheld * 0.02
+        shake = np.sin(t_motion * 23.7) * handheld * 0.02
         pan_x += shake
-        pan_y += np.sin(t * 17.3) * handheld * 0.02
+        pan_y += np.sin(t_motion * 17.3) * handheld * 0.02
     xx, yy = _apply_camera_transform(xx, yy, zoom, pan_x, pan_y, rotate)
 
     if creation_mode == "pure_per_frame" and pure_colors:
-        r, g, b = _render_pure_per_frame(xx, yy, pure_colors, t, seed, intensity)
+        r, g, b = _render_pure_per_frame(xx, yy, pure_colors, t_abs, seed, intensity)
     else:
         v = _gradient_value(
             xx, yy, gradient_type, motion_val,
@@ -897,7 +900,7 @@ def render_frame(
         g = g0 * (1 - frac) + g1 * frac
         b = b0 * (1 - frac) + b1 * frac
 
-        n = np.sin(xx * 12.9898 + yy * 78.233 + (seed + t * 100) * 43758.5453) * 43758.5453
+        n = np.sin(xx * 12.9898 + yy * 78.233 + (seed + t_abs * 100) * 43758.5453) * 43758.5453
         n = n - np.floor(n)
         amp = 20 * intensity
         r = np.clip(r + (n - 0.5) * amp, 0, 255)
@@ -913,12 +916,28 @@ def render_frame(
     shape_overlay = getattr(spec, "shape_overlay", "none") or "none"
     overlay_palette = pure_colors if (creation_mode == "pure_per_frame" and pure_colors) else palette
     scene_layers = getattr(spec, "scene_layers", None) or []
+    # Apply active-beat expression onto character layers (timed faces)
+    beat_expression = None
     depth_parallax = bool(getattr(spec, "depth_parallax", False))
     film_look = bool(getattr(spec, "film_look", False))
     render_engine = (getattr(spec, "render_engine", None) or "procedural").lower()
     if render_engine in ("enhanced", "photoreal", "realistic"):
         film_look = True
         depth_parallax = True
+
+    script_beats_early = getattr(spec, "script_beats", None)
+    if script_beats_early:
+        try:
+            from ..creation.narrative_script import resolve_overlay_at_time
+            ov = resolve_overlay_at_time(script_beats_early, t_abs)
+            beat_expression = ov.get("expression")
+        except ImportError:
+            pass
+    if beat_expression and scene_layers:
+        scene_layers = [
+            ({**L, "expression": beat_expression} if isinstance(L, dict) and L.get("kind") == "character" else L)
+            for L in scene_layers
+        ]
 
     if scene_layers and depth_parallax:
         from ..depth.parallax import composite_depth_planes
@@ -930,7 +949,7 @@ def render_frame(
         background = _darken_with_shadows(
             background,
             _accumulate_contact_shadows(
-                scene_layers, t, width, height,
+                scene_layers, t_abs, width, height,
                 composition_balance=composition_balance,
                 composition_symmetry=composition_symmetry,
                 lighting_preset=lighting_preset,
@@ -946,7 +965,7 @@ def render_frame(
             if not group:
                 continue
             fg_rgb, fg_a = _render_layers_rgba(
-                group, t, width, height,
+                group, t_abs, width, height,
                 composition_balance=composition_balance,
                 composition_symmetry=composition_symmetry,
                 lighting_preset=lighting_preset,
@@ -954,14 +973,14 @@ def render_frame(
             )
             planes.append((fg_rgb, fg_a, depth))
         frame = composite_depth_planes(
-            background, planes, t,
+            background, planes, t_motion,
             motion_scale=0.06,
             camera_pan_x=float(pan_x),
             camera_pan_y=float(pan_y),
         )
     elif scene_layers:
         frame = _composite_scene_layers(
-            background, scene_layers, t, width, height,
+            background, scene_layers, t_abs, width, height,
             composition_balance=composition_balance,
             composition_symmetry=composition_symmetry,
             lighting_preset=lighting_preset,
@@ -1003,7 +1022,7 @@ def render_frame(
     frame = apply_style_look(frame, getattr(spec, "style", "cinematic") or "cinematic")
     setting_name = getattr(spec, "setting", None) or ""
     if setting_name in ("rain", "snow"):
-        frame = _apply_weather_overlay(frame, setting_name, t, seed=seed)
+        frame = _apply_weather_overlay(frame, setting_name, t_abs, seed=seed)
 
     text_overlay = getattr(spec, "text_overlay", None)
     text_pos = getattr(spec, "text_position", "center") or "center"
@@ -1015,7 +1034,7 @@ def render_frame(
         try:
             from ..creation.narrative_script import resolve_overlay_at_time
             overlay = resolve_overlay_at_time(
-                script_beats, t,
+                script_beats, t_abs,
                 fallback_text=text_overlay,
                 fallback_position=text_pos,
                 fallback_font_size=44,
@@ -1047,7 +1066,7 @@ def render_frame(
                     target = layer
                     break
             if target is not None:
-                pose = sample_layer_at(target, t)
+                pose = sample_layer_at(target, t_abs)
                 cdx, cdy = composition_balance_offset(composition_balance)
                 px = apply_composition_symmetry_x(
                     max(0.02, min(0.98, float(pose["x"]) + cdx)),
@@ -1080,7 +1099,7 @@ def render_frame(
     if depth_parallax and not scene_layers:
         try:
             from ..depth.parallax import apply_parallax
-            frame = apply_parallax(frame, t, depth_layers=3, motion_scale=0.05)
+            frame = apply_parallax(frame, t_motion, depth_layers=3, motion_scale=0.05)
         except ImportError:
             pass
 
@@ -1089,11 +1108,11 @@ def render_frame(
         try:
             from .film import apply_film_look, estimate_depth_map
             # Camera pan delta for smear (finite difference)
-            _z2, px2, py2, _r2 = get_camera_params(camera_motion, t + 0.04)
+            _z2, px2, py2, _r2 = get_camera_params(camera_motion, t_motion + 0.04)
             depth_map = estimate_depth_map(
                 height, width,
                 scene_layers=scene_layers or None,
-                t=t,
+                t=t_abs,
                 composition_balance=composition_balance,
             )
             # Focus near mid-ground / subject
@@ -1104,7 +1123,7 @@ def render_frame(
                 frame,
                 lighting_preset=lighting_preset,
                 seed=seed,
-                t=t,
+                t=t_abs,
                 depth_map=depth_map,
                 focus=focus,
                 pan_dx=float(px2 - pan_x),

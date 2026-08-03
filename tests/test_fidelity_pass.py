@@ -88,6 +88,92 @@ class TestFidelityPass(unittest.TestCase):
         frame = render_frame(spec, 0.4, 64, 64, seed=1)
         self.assertEqual(frame.shape, (64, 64, 3))
 
+    def test_spec_from_shot_keeps_setting(self):
+        from src.cinematography.schema import ShotSpec
+        from src.creation.scene_script import spec_from_shot
+
+        instruction = interpret_user_prompt("a ball bouncing in the forest")
+        instruction.duration_seconds = 6.0
+        instruction.setting = "forest"
+        base = build_spec_from_instruction(instruction, knowledge={})
+        self.assertEqual(base.setting, "forest")
+        shot = ShotSpec(duration_seconds=3.0, shot_type="wide", transition_in="cut", transition_out="cut")
+        derived = spec_from_shot(base, shot)
+        self.assertEqual(derived.setting, "forest")
+        self.assertEqual(derived.script_beats, base.script_beats)
+
+    def test_overlay_expression_at_time(self):
+        from src.creation.narrative_script import resolve_overlay_at_time
+
+        beats = [
+            {"name": "setup", "t_start": 0.0, "t_end": 2.0, "text": "A", "expression": "calm"},
+            {"name": "beat", "t_start": 2.0, "t_end": 4.0, "text": "B", "expression": "excited"},
+            {"name": "resolve", "t_start": 4.0, "t_end": 6.0, "text": "C", "expression": "happy"},
+        ]
+        mid = resolve_overlay_at_time(beats, 3.0)
+        self.assertEqual(mid.get("expression"), "excited")
+        self.assertEqual(mid.get("text"), "B")
+        late = resolve_overlay_at_time(beats, 5.5)
+        self.assertEqual(late.get("expression"), "happy")
+
+    def test_t_content_drives_tension_and_beats(self):
+        from src.creation.narrative_script import build_mini_scene_script, script_beats_to_dicts
+
+        instruction = interpret_user_prompt("a character walks left")
+        instruction.duration_seconds = 6.0
+        instruction.entities = [{
+            "id": "c0",
+            "kind": "character",
+            "trajectory": "left",
+            "expression": "neutral",
+        }]
+        narr = build_mini_scene_script(total_duration=6.0, action="walk", topic="walk")
+        beats = script_beats_to_dicts(narr)
+        spec = build_spec_from_instruction(instruction, knowledge={})
+        spec.script_beats = beats
+        spec.tension_curve = "slow_build"
+        # Local shot time near 0 but clip-global near climax — tension/beats must use t_content
+        early = render_frame(spec, 0.05, 48, 48, seed=2, duration_seconds=6.0, t_content=0.05)
+        late = render_frame(spec, 0.05, 48, 48, seed=2, duration_seconds=6.0, t_content=5.5)
+        self.assertEqual(early.shape, late.shape)
+        # Frames should differ once global beat/tension advance
+        self.assertFalse(np.array_equal(early, late))
+
+    def test_mini_scene_keeps_beat_expressions(self):
+        instruction = interpret_user_prompt("a happy character walks left")
+        instruction.duration_seconds = 5.0
+        instruction.entities = [{
+            "id": "c0",
+            "kind": "character",
+            "trajectory": "left",
+            "bounce": False,
+            "expression": "happy",
+            "personality": "playful",
+        }]
+        spec = build_spec_from_instruction(instruction, knowledge={})
+        # Prompt expression survives on the character layer
+        layer = next(
+            (L for L in (spec.scene_layers or []) if L.get("kind") == "character"),
+            None,
+        )
+        self.assertIsNotNone(layer)
+        self.assertEqual(layer.get("expression"), "happy")
+        # Timed beat faces remain on script_beats for render-time overrides
+        beats = getattr(spec, "script_beats", None) or []
+        self.assertTrue(beats)
+        beat_exprs = [b.get("expression") for b in beats if isinstance(b, dict)]
+        self.assertTrue(any(e for e in beat_exprs))
+
+    def test_music_section_bounds_unequal(self):
+        from src.audio.music import _section_bounds_ms
+
+        equal = _section_bounds_ms(1000, 4)
+        self.assertAlmostEqual(equal[0], 250.0, places=1)
+        weighted = _section_bounds_ms(1000, 3, [100.0, 300.0, 600.0])
+        self.assertAlmostEqual(weighted[0], 100.0, places=0)
+        self.assertAlmostEqual(weighted[1], 400.0, places=0)
+        self.assertAlmostEqual(weighted[2], 1000.0, places=0)
+
 
 if __name__ == "__main__":
     unittest.main()

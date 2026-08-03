@@ -129,6 +129,7 @@ Video generation software that can utilize any aspect within the movie industry 
 - Soft-edge AA on props/characters; brows/blush expressions; beat callouts; freeform → script_beats; beat-synced TTS hooks
 - True cross-shot dissolve/wipe; rain/snow weather overlays; camera steadiness + handheld; motion_rhythm modulation; color temperature grade; transition-aware cut SFX; educational arrows; snow/street/park settings
 - Tension curves wired; rain drip/forest rustle SFX; setting-tinted atmosphere; shot pan_range + extreme framing; multi-shot duration exact sum; educational spotlight; anime/minimal/abstract style grades; spin/flourish gags preserved
+- Multi-shot time base: motion uses per-shot `t`, content (beats/entities/tension/weather) uses clip-global `t_content`; `spec_from_shot` keeps setting; beat-timed faces; adaptive transition length; music sections weighted by beat durations
 
 
 **Success criteria:** More realistic or asset-driven visuals when enabled; photoreal path uses the same prompt → registries → render contract.

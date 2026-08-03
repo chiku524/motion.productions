@@ -291,7 +291,8 @@ def build_spec_from_instruction(
     music_sections: list[str] | None = None
 
     # Phase 5 / Roadmap B: educational template → multi-beat entities + SFX
-    if getattr(instruction, "educational_template", None) and not entities:
+    # Always build beats/music when a template is set — merge prompt entities as subject look.
+    if getattr(instruction, "educational_template", None):
         topic = (getattr(instruction, "text_overlay", None) or "the topic").strip()
         narr = build_educational_script(
             topic,
@@ -299,6 +300,16 @@ def build_spec_from_instruction(
             style=str(getattr(instruction, "educational_template", None) or "educational"),
         )
         ents, sfx_from_script = script_to_entities_and_sfx(narr)
+        seed = entities[0] if entities and isinstance(entities[0], dict) else None
+        if seed:
+            for e in ents:
+                if not isinstance(e, dict):
+                    continue
+                for key in ("kind", "color_hint", "label", "personality", "directionality"):
+                    if seed.get(key):
+                        e[key] = seed[key]
+                # Keep per-beat expression from the script; fill only if missing
+                e["expression"] = e.get("expression") or seed.get("expression") or "neutral"
         entities = ents
         instruction.entities = entities
         if not getattr(instruction, "sfx_events", None):
@@ -355,13 +366,13 @@ def build_spec_from_instruction(
         )
         kind = entities[0].get("kind") or "circle"
         ents, sfx_from_script = script_to_entities_and_sfx(narr, entity_kind=kind if kind != "character" else "circle")
-        # Preserve character kind / color / expression from the original entity
+        # Preserve character look from the prompt; per-beat faces live on script_beats
         for e in ents:
             e["kind"] = kind
             e["color_hint"] = entities[0].get("color_hint")
             e["directionality"] = entities[0].get("directionality") or e.get("directionality")
-            e["expression"] = entities[0].get("expression") or "neutral"
-            e["personality"] = entities[0].get("personality") or "neutral"
+            e["expression"] = entities[0].get("expression") or e.get("expression") or "neutral"
+            e["personality"] = entities[0].get("personality") or e.get("personality") or "neutral"
         entities = ents
         instruction.entities = entities
         if not getattr(instruction, "sfx_events", None):

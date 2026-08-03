@@ -126,6 +126,7 @@ def mix_audio_to_video(
             pure_sounds=pure_sounds,
             audio_genre=audio_genre,
             music_sections=music_sections,
+            script_beats=script_beats,
         )
 
     # Cut accents + event SFX
@@ -180,6 +181,7 @@ def _build_audio_bed(
     pure_sounds: list[dict] | None,
     audio_genre: str,
     music_sections: list[str] | None = None,
+    script_beats: list[dict] | None = None,
 ):
     """Select music arrangement vs ambient vs sfx-only bed."""
     from pydub import AudioSegment
@@ -194,14 +196,28 @@ def _build_audio_bed(
     if use_music and genre in ("none", "", "ambient") and presence == "music":
         genre = "deep_house"
 
+    section_durations_ms = None
+    if script_beats:
+        durs = []
+        for b in script_beats:
+            if not isinstance(b, dict):
+                continue
+            if b.get("duration_sec") is not None:
+                durs.append(float(b["duration_sec"]) * 1000.0)
+            elif b.get("t_end") is not None and b.get("t_start") is not None:
+                durs.append(max(1.0, (float(b["t_end"]) - float(b["t_start"])) * 1000.0))
+        if durs:
+            section_durations_ms = durs
+
     if use_music and genre not in ("none", ""):
-        from .music import generate_arrangement_audio, duck_under_sfx
+        from .music import generate_arrangement_audio
         music = generate_arrangement_audio(
             duration_ms,
             genre=genre if genre != "ambient" else "ambient",
             tempo=tempo,
             mood=mood,
             music_sections=music_sections,
+            section_durations_ms=section_durations_ms,
         )
         if presence == "full":
             # Layer light ambient under music

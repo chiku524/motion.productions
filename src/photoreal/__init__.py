@@ -30,6 +30,7 @@ class PhotorealBackend(Protocol):
         *,
         seed: int = 0,
         duration_seconds: float | None = None,
+        t_content: float | None = None,
     ) -> np.ndarray:
         ...
 
@@ -52,6 +53,7 @@ class EnhancedProceduralBackend:
         *,
         seed: int = 0,
         duration_seconds: float | None = None,
+        t_content: float | None = None,
     ) -> np.ndarray:
         from ..procedural.renderer import render_frame
 
@@ -77,6 +79,7 @@ class EnhancedProceduralBackend:
             height,
             seed=seed,
             duration_seconds=duration_seconds,
+            t_content=t_content,
         )
 
 
@@ -94,11 +97,13 @@ class ProceduralBackend:
         *,
         seed: int = 0,
         duration_seconds: float | None = None,
+        t_content: float | None = None,
     ) -> np.ndarray:
         from ..procedural.renderer import render_frame
 
         return render_frame(
-            spec, t, width, height, seed=seed, duration_seconds=duration_seconds,
+            spec, t, width, height,
+            seed=seed, duration_seconds=duration_seconds, t_content=t_content,
         )
 
 

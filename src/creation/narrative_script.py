@@ -279,6 +279,7 @@ def resolve_overlay_at_time(
         "name": None,
         "callout": False,
         "arrow": False,
+        "expression": None,
     }
     if not script_beats:
         return defaults
@@ -292,6 +293,7 @@ def resolve_overlay_at_time(
             "name": beat.get("name"),
             "callout": bool(beat.get("callout")),
             "arrow": bool(beat.get("arrow")),
+            "expression": beat.get("expression"),
         }
 
     for beat in script_beats:
