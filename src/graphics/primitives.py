@@ -39,6 +39,28 @@ def draw_arrow(
     return np.array(pil)
 
 
+def draw_spotlight(
+    frame: "np.ndarray",
+    center: tuple[int, int],
+    radius: int = 60,
+    *,
+    darkness: float = 0.45,
+) -> "np.ndarray":
+    """Dim everything outside a soft circular spotlight (educational highlight)."""
+    import numpy as np
+
+    h, w = frame.shape[:2]
+    x, y = int(center[0]), int(center[1])
+    yy, xx = np.ogrid[:h, :w]
+    dist = np.sqrt((xx - x) ** 2 + (yy - y) ** 2).astype(np.float32)
+    r = max(8.0, float(radius))
+    # 1 inside, soft falloff to 0 outside
+    falloff = np.clip(1.0 - (dist - r) / max(8.0, r * 0.55), 0.0, 1.0)
+    factor = 1.0 - float(darkness) * (1.0 - falloff)
+    out = frame.astype(np.float32) * factor[..., None]
+    return np.clip(out, 0, 255).astype(np.uint8)
+
+
 def draw_callout(
     frame: "np.ndarray",
     center: tuple[int, int],

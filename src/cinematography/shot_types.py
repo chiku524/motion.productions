@@ -12,14 +12,16 @@ def get_shot_params(shot_type: str) -> Tuple[float, float, float]:
     pan_range: 0-1, how much camera can pan
     handheld_shake: 0-1, subtle movement for handheld
     """
-    if shot_type == "wide":
-        return 0.85, 0.15, 0.0
+    if shot_type in ("wide", "establishing"):
+        return 0.82, 0.18, 0.0
+    if shot_type == "extreme_wide":
+        return 0.72, 0.22, 0.0
     if shot_type == "medium":
         return 1.0, 0.1, 0.0
-    if shot_type == "close":
+    if shot_type in ("close", "close_up"):
         return 1.25, 0.05, 0.0
-    if shot_type == "close_up":
-        return 1.25, 0.05, 0.0
+    if shot_type in ("extreme_close", "extreme_closeup"):
+        return 1.45, 0.03, 0.0
     if shot_type == "pov":
         return 1.1, 0.2, 0.02
     if shot_type == "handheld":

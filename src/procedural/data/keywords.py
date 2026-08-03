@@ -125,11 +125,15 @@ KEYWORD_TO_CAMERA: dict[str, str] = {
 # Words that suggest shot type (Phase 2)
 KEYWORD_TO_SHOT: dict[str, str] = {
     "wide": "wide",
-    "establishing": "wide",
+    "establishing": "establishing",
+    "extreme_wide": "extreme_wide",
     "medium": "medium",
     "close": "close",
     "closeup": "close",
     "close_up": "close",
+    "extreme_close": "extreme_close",
+    "extreme_closeup": "extreme_close",
+    "macro": "extreme_close",
     "pov": "pov",
     "handheld": "handheld",
 }

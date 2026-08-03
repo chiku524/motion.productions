@@ -116,7 +116,7 @@ Video generation software that can utilize any aspect within the movie industry 
 | 7.1 | 2.5D / depth: parallax, layered depth | Done — true multi-plane compositing when `depth_parallax` (z-grouped layers + atmospheric plates); legacy UV warp only as fallback |
 | 7.2 | Asset libraries: textures, shapes, icons | Done — `get_asset_texture` wired into backgrounds/layers via setting→texture map |
 | 7.3 | 3D primitives or external model integration | Done (foundation); full photoreal renderer still the destination |
-| 7.4 | Photoreal path that consumes the same interpreted instruction + registries | Partial — `src/photoreal` backend protocol + `enhanced` procedural stand-in (`render_engine=enhanced\|photoreal`); true generative/asset photoreal still pending |
+| 7.4 | Photoreal path that consumes the same interpreted instruction + registries | Partial — `src/photoreal` backend protocol + `enhanced` procedural stand-in (`render_engine=enhanced\|photoreal`); true generative/asset photoreal still pending (Video AI lab labels photoreal as stand-in) |
 
 **Also wired (Aug 2026 Tier A–E):**
 - A: `composition_balance` offsets layer framing; lighting `key/fill/rim/ambient` shades layers via fake normals
@@ -128,6 +128,7 @@ Video generation software that can utilize any aspect within the movie industry 
 - Film stack extended: vignette, tone curve, depth haze, soft bloom, chromatic aberration; key-light specular on materials; camera-coupled parallax
 - Soft-edge AA on props/characters; brows/blush expressions; beat callouts; freeform → script_beats; beat-synced TTS hooks
 - True cross-shot dissolve/wipe; rain/snow weather overlays; camera steadiness + handheld; motion_rhythm modulation; color temperature grade; transition-aware cut SFX; educational arrows; snow/street/park settings
+- Tension curves wired; rain drip/forest rustle SFX; setting-tinted atmosphere; shot pan_range + extreme framing; multi-shot duration exact sum; educational spotlight; anime/minimal/abstract style grades; spin/flourish gags preserved
 
 
 **Success criteria:** More realistic or asset-driven visuals when enabled; photoreal path uses the same prompt → registries → render contract.

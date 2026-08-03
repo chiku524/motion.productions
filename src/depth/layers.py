@@ -7,6 +7,25 @@ if TYPE_CHECKING:
     import numpy as np
 
 
+# Soft atmosphere tint deltas by setting (added to base_rgb)
+SETTING_ATMOSPHERE: dict[str, tuple[float, float, float]] = {
+    "forest": (-15, 25, -8),
+    "park": (-8, 22, -5),
+    "rain": (-20, 5, 20),
+    "snow": (25, 28, 35),
+    "ocean": (-25, 15, 40),
+    "beach": (20, 15, 5),
+    "neon": (30, -5, 45),
+    "city": (10, 5, 25),
+    "street": (12, 8, 22),
+    "night": (-30, -25, 10),
+    "noir": (-35, -30, -15),
+    "golden_hour": (45, 25, -5),
+    "desert": (40, 25, 5),
+    "mountain": (5, 15, 25),
+}
+
+
 def create_depth_layers(
     width: int,
     height: int,
@@ -14,13 +33,14 @@ def create_depth_layers(
     *,
     seed: int = 0,
     base_rgb: tuple[int, int, int] | None = None,
+    setting: str | None = None,
 ) -> list[tuple["np.ndarray", float]]:
     """
     Create atmospheric depth plates (image, depth_value) for 2.5D compositing.
 
     depth_value: 0 = back, 1 = front; used for parallax speed.
     When base_rgb is set, plates are muted tints of that color (usable as haze
-    between background and entities). Otherwise a neutral procedural gradient.
+    between background and entities). Setting tints the atmosphere further.
     Returns list of (layer_image uint8 HxWx3, depth).
     """
     import numpy as np
@@ -31,6 +51,10 @@ def create_depth_layers(
     x = np.linspace(0, 1, width, dtype=np.float32)
     xx, yy = np.meshgrid(x, y)
     br, bg, bb = base_rgb if base_rgb else (120, 130, 140)
+    tint = SETTING_ATMOSPHERE.get((setting or "").strip().lower(), (0.0, 0.0, 0.0))
+    br = float(np.clip(br + tint[0] * 0.45, 0, 255))
+    bg = float(np.clip(bg + tint[1] * 0.45, 0, 255))
+    bb = float(np.clip(bb + tint[2] * 0.45, 0, 255))
 
     for i in range(num_layers):
         depth = (i + 1) / max(1, num_layers)

@@ -69,27 +69,53 @@ def build_scene_script_from_instruction(
         ]
         return SceneScript(shots=shots, total_duration=dur)
 
-    # Multi-shot: divide duration across shots
+    # Multi-shot: divide duration across shots so sum == duration_seconds
     n = min(len(shot_seq), max(1, int(duration_seconds / 3)))  # at least 3 sec per shot
     seq = shot_seq[:n]
-    base_dur = duration_seconds / n
+    weights = [0.9 if i == 0 else 1.0 for i in range(n)]
+    wsum = sum(weights) or 1.0
+    raw = [duration_seconds * (w / wsum) for w in weights]
+    # Floor at 1.5s then renormalize so total matches exactly
+    floored = [max(1.5, d) for d in raw]
+    fsum = sum(floored)
+    if fsum > duration_seconds and n > 1:
+        scale = duration_seconds / fsum
+        floored = [max(1.2, d * scale) for d in floored]
+        # Fix residual on last shot
+        floored[-1] = max(1.2, duration_seconds - sum(floored[:-1]))
+    else:
+        floored[-1] = max(1.2, duration_seconds - sum(floored[:-1]))
+
+    genre_rules = get_genre_rules(genre)
+    preferred = getattr(genre_rules, "preferred_transition", transition) or transition
     shots: list[ShotSpec] = []
     for i, st in enumerate(seq):
-        # Slight variation per shot
-        dur = base_dur * (0.9 if i == 0 else 1.0) if i < n - 1 else duration_seconds - sum(s.duration_seconds for s in shots)
-        dur = max(2.0, dur)
-        trans_in = transition if i == 0 else transition
-        trans_out = transition if i < n - 1 else (getattr(instruction, "transition_out", transition) or transition)
+        # Alternate cut/dissolve for multi-shot educational/documentary feel
+        if i == 0:
+            trans_in = transition
+        elif preferred in ("dissolve", "fade") or genre in ("documentary", "educational", "explainer"):
+            trans_in = "dissolve" if i % 2 == 1 else "cut"
+        else:
+            trans_in = transition
+        trans_out = getattr(instruction, "transition_out", transition) or transition
+        if i < n - 1:
+            trans_out = trans_in if trans_in != "cut" else transition
         shots.append(
             ShotSpec(
                 shot_type=st,
                 transition_in=trans_in,
                 transition_out=trans_out,
                 pacing=pacing,
-                duration_seconds=dur,
+                duration_seconds=round(floored[i], 3),
             )
         )
     total = sum(s.duration_seconds for s in shots)
+    # Final clamp: nudge last shot so sum == requested duration
+    if abs(total - duration_seconds) > 0.02 and shots:
+        shots[-1].duration_seconds = round(
+            max(1.2, shots[-1].duration_seconds + (duration_seconds - total)), 3
+        )
+        total = sum(s.duration_seconds for s in shots)
     return SceneScript(shots=shots, total_duration=total)
 
 

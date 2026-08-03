@@ -127,6 +127,32 @@ def infer_bounce_events(
     return events
 
 
+def infer_weather_events(
+    setting: str | None,
+    duration_sec: float,
+) -> list[dict[str, Any]]:
+    """Sparse weather SFX for rain/snow/forest settings."""
+    s = (setting or "").strip().lower()
+    duration_sec = max(0.5, float(duration_sec))
+    events: list[dict[str, Any]] = []
+    if s == "rain":
+        t = 0.35
+        while t < duration_sec:
+            events.append({"kind": "drip", "t_sec": round(t, 3), "strength": 0.4})
+            t += 0.55 + (0.25 * ((int(t * 10) % 3) / 3.0))
+    elif s == "snow":
+        t = 0.8
+        while t < duration_sec:
+            events.append({"kind": "rustle", "t_sec": round(t, 3), "strength": 0.3})
+            t += 1.4
+    elif s in ("forest", "park"):
+        t = 1.0
+        while t < duration_sec:
+            events.append({"kind": "rustle", "t_sec": round(t, 3), "strength": 0.35})
+            t += 1.8
+    return events
+
+
 def cut_accent_events(
     cut_times: list[float] | None,
     *,

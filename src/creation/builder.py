@@ -408,8 +408,15 @@ def build_spec_from_instruction(
         palette_colors=palette_colors,
     )
     # Attach walk-cycle keyframes for characters (personality modulates bob)
+    # Skip when a gag already built spin/flourish/double_take keyframes
+    _WALK_SAFE_GAGS = frozenset(("none", "squash", "wink", ""))
     for layer in graph.layers:
-        if layer.kind == "character" and len(layer.keyframes) <= 2:
+        gag = (getattr(layer, "gag", None) or "none").lower()
+        if (
+            layer.kind == "character"
+            and len(layer.keyframes) <= 2
+            and gag in _WALK_SAFE_GAGS
+        ):
             direction = "left"
             if layer.keyframes and layer.keyframes[-1].x > layer.keyframes[0].x:
                 direction = "right"
@@ -437,6 +444,14 @@ def build_spec_from_instruction(
             isinstance(e, dict) and e.get("bounce") for e in entities
         ):
             sfx_events = infer_bounce_events(duration_hint)
+    # Weather SFX for rain/snow/forest settings
+    try:
+        from ..audio.event_sfx import infer_weather_events
+        weather_ev = infer_weather_events(setting, duration_hint)
+        if weather_ev:
+            sfx_events = list(sfx_events) + weather_ev
+    except ImportError:
+        pass
 
     # Mini-scenes with entities: blended palette gradients (setting themes), not rainbow mesh
     wants_pure = any(

@@ -24,6 +24,7 @@ try:
         apply_color_temperature,
         apply_lighting_preset,
         apply_spatial_layer_lighting,
+        apply_style_look,
         get_lighting_model,
     )
 except ImportError:
@@ -31,6 +32,9 @@ except ImportError:
         return fr
 
     def apply_color_temperature(fr: "np.ndarray", _: str):
+        return fr
+
+    def apply_style_look(fr: "np.ndarray", _: str):
         return fr
 
     def get_lighting_model(_: str):
@@ -823,7 +827,10 @@ def render_frame(
         try:
             from ..narrative.story import get_tension_at
             t_norm = min(1.0, t / duration_seconds)
-            tension = get_tension_at(t_norm)
+            tension = get_tension_at(
+                t_norm,
+                curve=getattr(spec, "tension_curve", "standard") or "standard",
+            )
             intensity = intensity * (0.7 + 0.3 * tension)
             intensity = max(0.1, min(1.0, intensity))
         except ImportError:
@@ -849,8 +856,12 @@ def render_frame(
     xx, yy = np.meshgrid(x, y)
 
     shot_type = getattr(spec, "shot_type", "medium") or "medium"
-    shot_zoom, _, handheld = get_shot_params(shot_type)
+    shot_zoom, pan_range, handheld = get_shot_params(shot_type)
     zoom, pan_x, pan_y, rotate = get_camera_params(camera_motion, t)
+    # Shot pan_range scales camera pans (wide = more roam, close = locked)
+    pan_scale = 0.5 + 5.0 * float(pan_range)
+    pan_x *= pan_scale
+    pan_y *= pan_scale
     sx, sy, srot = steadiness_shake(getattr(spec, "camera_steadiness", "stable") or "stable", t)
     pan_x += sx
     pan_y += sy
@@ -926,7 +937,9 @@ def render_frame(
             ),
         )
         planes: list[tuple[np.ndarray, np.ndarray, float]] = []
-        for img, depth in create_depth_layers(width, height, num_layers=2, seed=seed, base_rgb=base_rgb):
+        for img, depth in create_depth_layers(
+            width, height, num_layers=2, seed=seed, base_rgb=base_rgb, setting=setting,
+        ):
             haze_a = np.full((height, width), 0.10 * (1.15 - float(depth)), dtype=np.float32)
             planes.append((img.astype(np.float32), haze_a, float(depth) * 0.35))
         for group, depth in _partition_layers_by_depth(scene_layers):
@@ -987,6 +1000,7 @@ def render_frame(
     frame = np.clip(frame, 0, 255).astype(np.uint8)
     frame = apply_lighting_preset(frame, lighting_preset)
     frame = apply_color_temperature(frame, getattr(spec, "color_temperature", "neutral") or "neutral")
+    frame = apply_style_look(frame, getattr(spec, "style", "cinematic") or "cinematic")
     setting_name = getattr(spec, "setting", None) or ""
     if setting_name in ("rain", "snow"):
         frame = _apply_weather_overlay(frame, setting_name, t, seed=seed)
@@ -1016,7 +1030,7 @@ def render_frame(
 
     if (want_callout or want_arrow) and scene_layers:
         try:
-            from ..graphics.primitives import draw_arrow, draw_callout
+            from ..graphics.primitives import draw_arrow, draw_callout, draw_spotlight
             from ..creation.scene_graph import (
                 apply_composition_symmetry_x,
                 composition_balance_offset,
@@ -1045,6 +1059,7 @@ def render_frame(
                 cy_px = int(py * (height - 1))
                 rad = max(12, int(0.14 * scale * min(width, height)))
                 if want_callout:
+                    frame = draw_spotlight(frame, (cx_px, cy_px), radius=int(rad * 1.6), darkness=0.4)
                     frame = draw_callout(frame, (cx_px, cy_px), radius=rad)
                 if want_arrow:
                     # Arrow from top-center text area toward subject
