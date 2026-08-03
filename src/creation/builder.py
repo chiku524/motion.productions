@@ -455,6 +455,15 @@ def build_spec_from_instruction(
         text_position=text_position,
         educational_template=educational_template,
         depth_parallax=depth_parallax,
+        film_look=bool(
+            depth_parallax
+            or (style_val or "").lower() in ("realistic", "photoreal")
+        ),
+        render_engine=(
+            "enhanced"
+            if (style_val or "").lower() in ("realistic", "photoreal")
+            else "procedural"
+        ),
         pure_colors=pure_colors,
         creation_mode=creation_mode,
         pure_sounds=pure_sounds,

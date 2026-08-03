@@ -86,6 +86,10 @@ class SceneSpec:
     text_position: str = "center"
     educational_template: str | None = None
     depth_parallax: bool = False      # Phase 7: enable 2.5D parallax
+    # Tier E / 7.4 bridge: film camera post (DoF, grain, motion smear)
+    film_look: bool = False
+    # Backend selector: procedural | enhanced | photoreal (photoreal → enhanced until 7.4)
+    render_engine: str = "procedural"
     # Pure-per-frame creation (§7): randomly place pure colors at random pixel locations → emergent blends
     pure_colors: list[tuple[int, int, int]] | None = None  # origin + discovered static RGBs
     creation_mode: str = "blended"    # "blended" | "pure_per_frame"

@@ -116,9 +116,13 @@ Video generation software that can utilize any aspect within the movie industry 
 | 7.1 | 2.5D / depth: parallax, layered depth | Done — true multi-plane compositing when `depth_parallax` (z-grouped layers + atmospheric plates); legacy UV warp only as fallback |
 | 7.2 | Asset libraries: textures, shapes, icons | Done — `get_asset_texture` wired into backgrounds/layers via setting→texture map |
 | 7.3 | 3D primitives or external model integration | Done (foundation); full photoreal renderer still the destination |
-| 7.4 | Photoreal path that consumes the same interpreted instruction + registries | Pending |
+| 7.4 | Photoreal path that consumes the same interpreted instruction + registries | Partial — `src/photoreal` backend protocol + `enhanced` procedural stand-in (`render_engine=enhanced\|photoreal`); true generative/asset photoreal still pending |
 
-**Also wired (Aug 2026 Tier A):** `composition_balance` now offsets layer framing; lighting `key/fill/rim/ambient` shades layers via fake normals (global LUT grade still applies after).
+**Also wired (Aug 2026 Tier A–E):**
+- A: `composition_balance` offsets layer framing; lighting `key/fill/rim/ambient` shades layers via fake normals
+- C: soft contact shadows under props; material-specific texture/rim for tree/building/character/cloud
+- E: `film_look` stack — depth map DoF, lighting-preset grain, camera motion smear (`src/procedural/film.py`); auto-on for `style=realistic|photoreal` or `depth_parallax`
+
 
 **Success criteria:** More realistic or asset-driven visuals when enabled; photoreal path uses the same prompt → registries → render contract.
 

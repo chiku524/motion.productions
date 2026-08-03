@@ -203,18 +203,63 @@ def _blend_shaded_layer(
     lighting_model: tuple[float, float, float, float],
     texture_mod: "np.ndarray | None",
     opacity: float,
+    *,
+    material: str = "default",
 ) -> tuple["np.ndarray", "np.ndarray"]:
     """Porter-Duff over: shade flat color with spatial lights, optional texture, onto RGBA."""
     a = np.clip(mask * opacity, 0.0, 1.0)
     if float(np.max(a)) < 0.02:
         return out_rgb, out_a
     lit = apply_spatial_layer_lighting(color_rgb, a, xx, yy, cx, cy, radius, lighting_model)
+    # Material-specific surface response (Tier C)
+    mat = (material or "default").lower()
+    tex_amp = 0.22
+    if mat in ("tree", "forest"):
+        tex_amp = 0.38  # leafy roughness
+    elif mat in ("building", "city"):
+        tex_amp = 0.28
+    elif mat in ("cloud", "wave"):
+        tex_amp = 0.12  # soft / glossy
+    elif mat == "character":
+        tex_amp = 0.10
+    elif mat == "fish":
+        tex_amp = 0.18
     if texture_mod is not None:
-        lit = lit * (0.78 + 0.22 * texture_mod)[..., None]
+        lit = lit * (1.0 - tex_amp + tex_amp * (0.45 + 1.1 * texture_mod))[..., None]
+    # Extra rim for volumetric-ish props (cloud/tree canopy)
+    if mat in ("cloud", "tree", "character"):
+        key, _fill, rim, _amb = lighting_model
+        gy, gx = np.gradient(a)
+        edge = np.clip(np.sqrt(gx * gx + gy * gy) * 5.0, 0.0, 1.0)
+        rim_boost = (0.35 + 0.4 * float(rim)) * edge
+        lit = lit + (40.0 * float(key) * rim_boost)[..., None]
+        lit = np.clip(lit, 0, 255)
     a3 = a[..., None]
     out_rgb = out_rgb * (1.0 - a3) + lit * a3
     out_a = out_a * (1.0 - a) + a
     return out_rgb, out_a
+
+
+def _contact_shadow_mask(
+    xx: "np.ndarray",
+    yy: "np.ndarray",
+    cx: float,
+    cy: float,
+    radius: float,
+    lighting_model: tuple[float, float, float, float],
+) -> "np.ndarray":
+    """
+    Soft elliptical contact shadow opposite the key light (Tier C).
+    Key is upper-left → shadow falls down-right, grounded under the subject.
+    """
+    key, _f, _r, _a = lighting_model
+    k = max(0.35, float(key))
+    sx = cx + 0.045 * k
+    sy = cy + radius * 0.65 + 0.025 * k
+    rx = max(0.04, radius * 1.15)
+    ry = max(0.02, radius * 0.38)
+    d = ((xx - sx) / rx) ** 2 + ((yy - sy) / ry) ** 2
+    return np.clip(1.0 - d, 0.0, 1.0) ** 1.8
 
 
 def _partition_layers_by_depth(layers: list[dict]) -> list[tuple[list[dict], float]]:
@@ -288,6 +333,16 @@ def _render_layers_rgba(
         else:
             xx_l, yy_l = xx, yy
 
+        # Soft contact shadow under the subject (Tier C) — skip floating clouds slightly
+        if kind != "cloud":
+            shadow = _contact_shadow_mask(xx, yy, cx, cy, radius, lighting_model)
+            shadow_a = shadow * opacity * (0.28 if kind in ("tree", "building", "character") else 0.22)
+            dark = (12.0, 10.0, 18.0)
+            out_rgb, out_a = _blend_shaded_layer(
+                out_rgb, out_a, shadow_a, dark, xx, yy, cx, cy + radius * 0.5, radius,
+                lighting_model, None, 1.0, material="shadow",
+            )
+
         if kind == "rect":
             half = radius * 1.1
             mask = ((np.abs(xx_l - cx) < half) & (np.abs(yy_l - cy) < half)).astype(np.float32)
@@ -295,7 +350,7 @@ def _render_layers_rgba(
             mask = mask * edge
             out_rgb, out_a = _blend_shaded_layer(
                 out_rgb, out_a, mask, (cr, cg, cb), xx_l, yy_l, cx, cy, radius,
-                lighting_model, texture_mod, opacity,
+                lighting_model, texture_mod, opacity, material=kind,
             )
         elif kind == "arrow":
             dxv = xx_l - cx
@@ -305,7 +360,7 @@ def _render_layers_rgba(
             mask = (body | head).astype(np.float32)
             out_rgb, out_a = _blend_shaded_layer(
                 out_rgb, out_a, mask, (cr, cg, cb), xx_l, yy_l, cx, cy, radius,
-                lighting_model, texture_mod, opacity,
+                lighting_model, texture_mod, opacity, material=kind,
             )
         elif kind == "character":
             head_r = radius * 0.45
@@ -351,13 +406,13 @@ def _render_layers_rgba(
             mask = np.clip(mask + face * 0.35, 0, 1)
             out_rgb, out_a = _blend_shaded_layer(
                 out_rgb, out_a, mask, (cr, cg, cb), xx_l, yy_l, cx, cy, radius,
-                lighting_model, texture_mod, opacity,
+                lighting_model, texture_mod, opacity, material=kind,
             )
             feat_a = face * opacity * 0.55
             dark = (cr * 0.35, cg * 0.35, cb * 0.35)
             out_rgb, out_a = _blend_shaded_layer(
                 out_rgb, out_a, feat_a, dark, xx_l, yy_l, cx, cy, radius * 0.5,
-                lighting_model, None, 1.0,
+                lighting_model, None, 1.0, material=kind,
             )
         elif kind == "tree":
             trunk_w, trunk_h = radius * 0.22, radius * 0.85
@@ -370,11 +425,11 @@ def _render_layers_rgba(
             canopy = (np.sqrt((xx_l - cx) ** 2 + (yy_l - canopy_cy) ** 2) < radius * 0.7).astype(np.float32)
             out_rgb, out_a = _blend_shaded_layer(
                 out_rgb, out_a, canopy, (cr, cg, cb), xx_l, yy_l, cx, canopy_cy, radius * 0.7,
-                lighting_model, texture_mod, opacity,
+                lighting_model, texture_mod, opacity, material=kind,
             )
             out_rgb, out_a = _blend_shaded_layer(
                 out_rgb, out_a, trunk, (90.0, 55.0, 30.0), xx_l, yy_l, cx, cy, radius * 0.4,
-                lighting_model, texture_mod, opacity * 0.9,
+                lighting_model, texture_mod, opacity * 0.9, material=kind,
             )
         elif kind == "fish":
             body = (
@@ -389,12 +444,12 @@ def _render_layers_rgba(
             mask = (body | tail).astype(np.float32)
             out_rgb, out_a = _blend_shaded_layer(
                 out_rgb, out_a, mask, (cr, cg, cb), xx_l, yy_l, cx, cy, radius,
-                lighting_model, texture_mod, opacity,
+                lighting_model, texture_mod, opacity, material=kind,
             )
             eye = (np.sqrt((xx_l - (cx + radius * 0.35)) ** 2 + (yy_l - (cy - radius * 0.08)) ** 2) < radius * 0.1).astype(np.float32)
             out_rgb, out_a = _blend_shaded_layer(
                 out_rgb, out_a, eye, (20.0, 20.0, 30.0), xx_l, yy_l, cx, cy, radius * 0.2,
-                lighting_model, None, opacity * 0.7,
+                lighting_model, None, opacity * 0.7, material=kind,
             )
         elif kind == "wave":
             band = np.abs(yy_l - (cy + 0.03 * np.sin(xx_l * 18.0 + t * 3.0))) < radius * 0.35
@@ -402,7 +457,7 @@ def _render_layers_rgba(
             mask = band.astype(np.float32) * fade
             out_rgb, out_a = _blend_shaded_layer(
                 out_rgb, out_a, mask, (cr, cg, cb), xx_l, yy_l, cx, cy, radius,
-                lighting_model, texture_mod, opacity * 0.75,
+                lighting_model, texture_mod, opacity * 0.75, material=kind,
             )
         elif kind == "building":
             half_w, half_h = radius * 0.55, radius * 1.2
@@ -417,11 +472,11 @@ def _render_layers_rgba(
             ).astype(np.float32)
             out_rgb, out_a = _blend_shaded_layer(
                 out_rgb, out_a, body, (cr, cg, cb), xx_l, yy_l, cx, cy, radius,
-                lighting_model, texture_mod, opacity,
+                lighting_model, texture_mod, opacity, material=kind,
             )
             out_rgb, out_a = _blend_shaded_layer(
                 out_rgb, out_a, windows, (220.0, 200.0, 90.0), xx_l, yy_l, cx, cy, radius * 0.5,
-                lighting_model, None, opacity * 0.45,
+                lighting_model, None, opacity * 0.45, material=kind,
             )
         elif kind == "cloud":
             c1 = np.sqrt((xx_l - (cx - radius * 0.45)) ** 2 + (yy_l - cy) ** 2) < radius * 0.55
@@ -430,14 +485,14 @@ def _render_layers_rgba(
             mask = (c1 | c2 | c3).astype(np.float32)
             out_rgb, out_a = _blend_shaded_layer(
                 out_rgb, out_a, mask, (cr, cg, cb), xx_l, yy_l, cx, cy, radius,
-                lighting_model, texture_mod, opacity * 0.7,
+                lighting_model, texture_mod, opacity * 0.7, material=kind,
             )
         else:
             dist = np.sqrt((xx_l - cx) ** 2 + (yy_l - cy) ** 2)
             mask = np.clip(1.0 - dist / max(1e-6, radius), 0, 1) ** 1.5
             out_rgb, out_a = _blend_shaded_layer(
                 out_rgb, out_a, mask, (cr, cg, cb), xx_l, yy_l, cx, cy, radius,
-                lighting_model, texture_mod, opacity,
+                lighting_model, texture_mod, opacity, material=kind,
             )
 
     return np.clip(out_rgb, 0, 255), np.clip(out_a, 0, 1)
@@ -594,6 +649,11 @@ def render_frame(
     overlay_palette = pure_colors if (creation_mode == "pure_per_frame" and pure_colors) else palette
     scene_layers = getattr(spec, "scene_layers", None) or []
     depth_parallax = bool(getattr(spec, "depth_parallax", False))
+    film_look = bool(getattr(spec, "film_look", False))
+    render_engine = (getattr(spec, "render_engine", None) or "procedural").lower()
+    if render_engine in ("enhanced", "photoreal", "realistic"):
+        film_look = True
+        depth_parallax = True
 
     if scene_layers and depth_parallax:
         from ..depth.parallax import composite_depth_planes
@@ -671,6 +731,35 @@ def render_frame(
         try:
             from ..depth.parallax import apply_parallax
             frame = apply_parallax(frame, t, depth_layers=3, motion_scale=0.05)
+        except ImportError:
+            pass
+
+    # Tier E: film camera stack (DoF, grain, motion smear) when film_look / enhanced
+    if film_look:
+        try:
+            from .film import apply_film_look, estimate_depth_map
+            # Camera pan delta for smear (finite difference)
+            _z2, px2, py2, _r2 = get_camera_params(camera_motion, t + 0.04)
+            depth_map = estimate_depth_map(
+                height, width,
+                scene_layers=scene_layers or None,
+                t=t,
+                composition_balance=composition_balance,
+            )
+            # Focus near mid-ground / subject
+            focus = 0.55
+            if scene_layers:
+                focus = 0.62
+            frame = apply_film_look(
+                frame,
+                lighting_preset=lighting_preset,
+                seed=seed,
+                t=t,
+                depth_map=depth_map,
+                focus=focus,
+                pan_dx=float(px2 - pan_x),
+                pan_dy=float(py2 - pan_y),
+            )
         except ImportError:
             pass
 

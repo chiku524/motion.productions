@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from ..video_generator.base import VideoGenerator
-from .renderer import render_frame
+from ..photoreal import get_render_backend
 
 
 class ProceduralVideoGenerator(VideoGenerator):
@@ -168,7 +168,8 @@ class ProceduralVideoGenerator(VideoGenerator):
                 pacing = getattr(shot, "pacing", 1.0) or 1.0
                 t_local *= pacing  # Pacing: faster = more motion per second
                 spec = spec_from_shot(base_spec, shot)
-                frame = render_frame(
+                backend = get_render_backend(getattr(spec, "render_engine", None))
+                frame = backend.render_frame(
                     spec, t_local, width, height, seed=seed,
                     duration_seconds=duration_seconds,
                 )

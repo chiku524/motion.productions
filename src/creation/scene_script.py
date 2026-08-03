@@ -159,6 +159,8 @@ def spec_from_shot(
         text_position=getattr(base_spec, "text_position", "center") or "center",
         educational_template=getattr(base_spec, "educational_template", None),
         depth_parallax=getattr(base_spec, "depth_parallax", False),
+        film_look=bool(getattr(base_spec, "film_look", False)),
+        render_engine=getattr(base_spec, "render_engine", "procedural") or "procedural",
         pure_colors=getattr(base_spec, "pure_colors", None),
         creation_mode=getattr(base_spec, "creation_mode", "blended") or "blended",
         pure_sounds=getattr(base_spec, "pure_sounds", None),
