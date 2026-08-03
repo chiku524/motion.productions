@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 """
-HTTP render service for Video AI engine=procedural.
+HTTP render service for Video AI engine=procedural|enhanced|photoreal.
 
-POST /render  JSON { prompt, duration_seconds?, width?, height?, fps?, seed? }
+POST /render  JSON {
+  prompt, duration_seconds?, width?, height?, fps?, seed?,
+  engine?: "procedural"|"enhanced"|"photoreal",
+  quality?: "draft"|"standard"|"high",
+  film_look?: bool
+}
   → video/mp4 bytes
 
-GET /health → {"ok":true,"service":"procedural-render"}
+GET /health → {"ok":true,"service":"procedural-render","engines":[...]}
 
 Auth: when MOTION_API_SECRET / API_SECRET is set, require
   Authorization: Bearer <secret> or X-Motion-Api-Key: <secret>.
@@ -60,7 +65,14 @@ class ProceduralRenderHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         path = urlparse(self.path).path
         if path in ("/", "/health"):
-            self._send_json(200, {"ok": True, "service": "procedural-render"})
+            self._send_json(
+                200,
+                {
+                    "ok": True,
+                    "service": "procedural-render",
+                    "engines": ["procedural", "enhanced", "photoreal"],
+                },
+            )
             return
         self._send_json(404, {"error": "Not found"})
 
@@ -85,7 +97,6 @@ class ProceduralRenderHandler(BaseHTTPRequestHandler):
 
         prompt = str(body.get("prompt") or "").strip()
         if not prompt:
-            # Allow nested recipe.meta.prompt for Worker proxy convenience
             recipe = body.get("recipe") if isinstance(body.get("recipe"), dict) else None
             meta = recipe.get("meta") if recipe and isinstance(recipe.get("meta"), dict) else {}
             prompt = str(meta.get("prompt") or body.get("title") or "").strip()
@@ -101,13 +112,38 @@ class ProceduralRenderHandler(BaseHTTPRequestHandler):
         except (TypeError, ValueError):
             seed_i = None
 
+        recipe = body.get("recipe") if isinstance(body.get("recipe"), dict) else None
+        meta = recipe.get("meta") if recipe and isinstance(recipe.get("meta"), dict) else {}
+        engine = str(
+            body.get("engine")
+            or body.get("render_engine")
+            or meta.get("engine")
+            or "procedural"
+        ).strip().lower()
+        if engine in ("photoreal", "realistic"):
+            engine = "enhanced"
+        if engine not in ("procedural", "enhanced"):
+            engine = "procedural"
+
         config = load_config(None)
-        if body.get("width"):
-            config.setdefault("output", {})["width"] = int(body["width"])
-        if body.get("height"):
-            config.setdefault("output", {})["height"] = int(body["height"])
-        if body.get("fps"):
-            config.setdefault("output", {})["fps"] = int(body["fps"])
+        config.setdefault("output", {})
+        config.setdefault("render", {})
+        config["render"]["engine"] = engine
+        if body.get("film_look") is True or engine == "enhanced":
+            config["render"]["film_look"] = True
+
+        quality = body.get("quality") or meta.get("quality")
+        if quality:
+            config["output"]["quality"] = str(quality)
+        elif engine == "enhanced" and not body.get("width") and not meta.get("width"):
+            config["output"]["quality"] = "standard"
+
+        if body.get("width") or meta.get("width"):
+            config["output"]["width"] = int(body.get("width") or meta.get("width"))
+        if body.get("height") or meta.get("height"):
+            config["output"]["height"] = int(body.get("height") or meta.get("height"))
+        if body.get("fps") or meta.get("fps"):
+            config["output"]["fps"] = int(body.get("fps") or meta.get("fps"))
 
         generator = ProceduralVideoGenerator(config=config)
         try:
@@ -131,6 +167,7 @@ class ProceduralRenderHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "video/mp4")
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Motion-Engine", engine)
         self.end_headers()
         self.wfile.write(data)
 

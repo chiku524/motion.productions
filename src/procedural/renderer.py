@@ -262,6 +262,60 @@ def _contact_shadow_mask(
     return np.clip(1.0 - d, 0.0, 1.0) ** 1.8
 
 
+def _accumulate_contact_shadows(
+    layers: list[dict],
+    t: float,
+    width: int,
+    height: int,
+    *,
+    composition_balance: str = "balanced",
+    composition_symmetry: str = "slight",
+    lighting_preset: str = "neutral",
+) -> "np.ndarray":
+    """HxW soft contact-shadow alpha to darken the background before layer over."""
+    from ..creation.scene_graph import (
+        apply_composition_symmetry_x,
+        composition_balance_offset,
+        sample_layer_at,
+    )
+
+    shadow = np.zeros((height, width), dtype=np.float32)
+    if not layers:
+        return shadow
+    yy, xx = np.mgrid[0:height, 0:width].astype(np.float32)
+    xx = xx / max(1, width - 1)
+    yy = yy / max(1, height - 1)
+    dx, dy = composition_balance_offset(composition_balance)
+    lighting_model = get_lighting_model(lighting_preset)
+    for layer in layers:
+        if not isinstance(layer, dict):
+            continue
+        kind = str(layer.get("kind") or "circle")
+        if kind == "cloud":
+            continue
+        pose = sample_layer_at(layer, t)
+        cx = max(0.02, min(0.98, float(pose["x"]) + dx))
+        cx = apply_composition_symmetry_x(cx, composition_symmetry)
+        cy = max(0.02, min(0.98, float(pose["y"]) + dy))
+        scale = max(0.15, float(pose["scale"]))
+        opacity = max(0.0, min(1.0, float(pose["opacity"]))) * 0.85
+        if opacity < 0.02:
+            continue
+        radius = 0.12 * scale
+        s = _contact_shadow_mask(xx, yy, cx, cy, radius, lighting_model)
+        strength = 0.38 if kind in ("tree", "building", "character") else 0.28
+        shadow = np.maximum(shadow, s * opacity * strength)
+    return np.clip(shadow, 0.0, 1.0)
+
+
+def _darken_with_shadows(frame: "np.ndarray", shadow_a: "np.ndarray") -> "np.ndarray":
+    """Multiply-darken RGB float frame by soft contact shadows."""
+    if shadow_a is None or float(np.max(shadow_a)) < 0.01:
+        return frame
+    factor = 1.0 - 0.55 * shadow_a
+    return np.clip(frame * factor[..., None], 0, 255)
+
+
 def _partition_layers_by_depth(layers: list[dict]) -> list[tuple[list[dict], float]]:
     """Group layers into back / mid / front planes with depth tags for parallax."""
     back: list[dict] = []
@@ -287,14 +341,20 @@ def _render_layers_rgba(
     height: int,
     *,
     composition_balance: str = "balanced",
+    composition_symmetry: str = "slight",
     lighting_preset: str = "neutral",
     texture: "np.ndarray | None" = None,
 ) -> tuple["np.ndarray", "np.ndarray"]:
     """
     Render stylized layers onto a transparent canvas.
     Returns (rgb float 0-255 HxWx3, alpha float 0-1 HxW).
+    Contact shadows are applied separately onto the background.
     """
-    from ..creation.scene_graph import composition_balance_offset, sample_layer_at
+    from ..creation.scene_graph import (
+        apply_composition_symmetry_x,
+        composition_balance_offset,
+        sample_layer_at,
+    )
 
     out_rgb = np.zeros((height, width, 3), dtype=np.float32)
     out_a = np.zeros((height, width), dtype=np.float32)
@@ -315,6 +375,7 @@ def _render_layers_rgba(
         pose = sample_layer_at(layer, t)
         kind = pose.get("kind") or layer.get("kind") or "circle"
         cx = max(0.02, min(0.98, float(pose["x"]) + dx))
+        cx = apply_composition_symmetry_x(cx, composition_symmetry)
         cy = max(0.02, min(0.98, float(pose["y"]) + dy))
         scale = max(0.15, float(pose["scale"]))
         opacity = max(0.0, min(1.0, float(pose["opacity"]))) * 0.85
@@ -332,16 +393,6 @@ def _render_layers_rgba(
             yy_l = cy + dxr * sin_r + dyr * cos_r
         else:
             xx_l, yy_l = xx, yy
-
-        # Soft contact shadow under the subject (Tier C) — skip floating clouds slightly
-        if kind != "cloud":
-            shadow = _contact_shadow_mask(xx, yy, cx, cy, radius, lighting_model)
-            shadow_a = shadow * opacity * (0.28 if kind in ("tree", "building", "character") else 0.22)
-            dark = (12.0, 10.0, 18.0)
-            out_rgb, out_a = _blend_shaded_layer(
-                out_rgb, out_a, shadow_a, dark, xx, yy, cx, cy + radius * 0.5, radius,
-                lighting_model, None, 1.0, material="shadow",
-            )
 
         if kind == "rect":
             half = radius * 1.1
@@ -506,18 +557,28 @@ def _composite_scene_layers(
     height: int,
     *,
     composition_balance: str = "balanced",
+    composition_symmetry: str = "slight",
     lighting_preset: str = "neutral",
     texture: "np.ndarray | None" = None,
 ) -> "np.ndarray":
     """Composite keyframed stylized layers onto an RGB float frame (over)."""
+    bg = frame.astype(np.float32)
+    shadow_a = _accumulate_contact_shadows(
+        layers, t, width, height,
+        composition_balance=composition_balance,
+        composition_symmetry=composition_symmetry,
+        lighting_preset=lighting_preset,
+    )
+    bg = _darken_with_shadows(bg, shadow_a)
     fg_rgb, fg_a = _render_layers_rgba(
         layers, t, width, height,
         composition_balance=composition_balance,
+        composition_symmetry=composition_symmetry,
         lighting_preset=lighting_preset,
         texture=texture,
     )
     a = fg_a[..., None]
-    out = frame.astype(np.float32) * (1.0 - a) + fg_rgb * a
+    out = bg * (1.0 - a) + fg_rgb * a
     return np.clip(out, 0, 255)
 
 
@@ -583,6 +644,7 @@ def render_frame(
     camera_motion = getattr(spec, "camera_motion", "static") or "static"
     lighting_preset = getattr(spec, "lighting_preset", "neutral") or "neutral"
     composition_balance = getattr(spec, "composition_balance", "balanced") or "balanced"
+    composition_symmetry = getattr(spec, "composition_symmetry", "slight") or "slight"
     setting = getattr(spec, "setting", None)
 
     texture = None
@@ -661,6 +723,16 @@ def render_frame(
 
         mid = palette[len(palette) // 2] if palette else (120, 130, 140)
         base_rgb = (int(mid[0]), int(mid[1]), int(mid[2]))
+        # Contact shadows on the far background before depth planes
+        background = _darken_with_shadows(
+            background,
+            _accumulate_contact_shadows(
+                scene_layers, t, width, height,
+                composition_balance=composition_balance,
+                composition_symmetry=composition_symmetry,
+                lighting_preset=lighting_preset,
+            ),
+        )
         planes: list[tuple[np.ndarray, np.ndarray, float]] = []
         for img, depth in create_depth_layers(width, height, num_layers=2, seed=seed, base_rgb=base_rgb):
             haze_a = np.full((height, width), 0.10 * (1.15 - float(depth)), dtype=np.float32)
@@ -671,6 +743,7 @@ def render_frame(
             fg_rgb, fg_a = _render_layers_rgba(
                 group, t, width, height,
                 composition_balance=composition_balance,
+                composition_symmetry=composition_symmetry,
                 lighting_preset=lighting_preset,
                 texture=texture,
             )
@@ -680,6 +753,7 @@ def render_frame(
         frame = _composite_scene_layers(
             background, scene_layers, t, width, height,
             composition_balance=composition_balance,
+            composition_symmetry=composition_symmetry,
             lighting_preset=lighting_preset,
             texture=texture,
         )

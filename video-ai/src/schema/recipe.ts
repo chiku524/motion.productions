@@ -45,10 +45,13 @@ export const VideoRecipeSchema = z.object({
      * Render engine:
      * - recipe (default): Node/FFmpeg solid scenes + captions
      * - procedural: Python generate_full_video via PROCEDURAL_RENDER_URL
+     * - enhanced|photoreal: same Python path with film_look + depth + 720p defaults
      */
-    engine: z.enum(["recipe", "procedural"]).optional(),
-    /** Required when engine=procedural (prompt for the procedural pipeline). */
+    engine: z.enum(["recipe", "procedural", "enhanced", "photoreal"]).optional(),
+    /** Required when engine is procedural/enhanced/photoreal (prompt for the Python pipeline). */
     prompt: z.string().min(1).max(2000).optional(),
+    /** Optional quality preset for procedural/enhanced (draft|standard|high). */
+    quality: z.enum(["draft", "standard", "high"]).optional(),
     seed: z.number().int().optional(),
     /** Optional audio bed + voiceover (render service needs OPENAI_API_KEY for narration). */
     audio: z
@@ -74,12 +77,13 @@ export const VideoRecipeSchema = z.object({
   }),
   scenes: z.array(SceneSchema).min(1).max(80),
 }).superRefine((recipe, ctx) => {
-  if ((recipe.meta.engine || "recipe") === "procedural") {
+  const engine = recipe.meta.engine || "recipe";
+  if (engine === "procedural" || engine === "enhanced" || engine === "photoreal") {
     const p = (recipe.meta.prompt || recipe.meta.title || "").trim();
     if (!p) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "meta.prompt (or meta.title) is required when engine=procedural",
+        message: `meta.prompt (or meta.title) is required when engine=${engine}`,
         path: ["meta", "prompt"],
       });
     }

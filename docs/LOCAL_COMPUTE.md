@@ -38,7 +38,7 @@ docker compose -f docker-compose.local.yml up -d --build
 | Service | Host port | Role |
 |---------|-----------|------|
 | `webjobs` | `8081` | Polls pending jobs → procedural generate → upload |
-| `procedural-render` | `8082` | `POST /render` for Video AI `engine=procedural` |
+| `procedural-render` | `8082` | `POST /render` for Video AI `engine=procedural\|enhanced\|photoreal` |
 
 Health checks:
 

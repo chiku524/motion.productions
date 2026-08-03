@@ -436,6 +436,25 @@ def composition_balance_offset(balance: str | None) -> tuple[float, float]:
     }.get(b, (0.0, 0.0))
 
 
+def apply_composition_symmetry_x(x: float, symmetry: str | None) -> float:
+    """
+    Adjust normalized x by composition_symmetry.
+    bilateral → pull toward center; asymmetric → push outward; slight → unchanged.
+    """
+    s = (symmetry or "slight").strip().lower().replace(" ", "_")
+    d = float(x) - 0.5
+    if s in ("bilateral", "symmetric", "mirror"):
+        x2 = 0.5 + d * 0.55
+    elif s == "asymmetric":
+        if abs(d) < 0.04:
+            x2 = 0.5 + (0.14 if d >= 0 else -0.14)
+        else:
+            x2 = 0.5 + d * 1.28
+    else:
+        x2 = float(x)
+    return max(0.05, min(0.95, x2))
+
+
 def apply_composition_balance_to_graph(graph: SceneGraph, balance: str | None) -> SceneGraph:
     """Shift all layer keyframes by composition_balance so framing matches interpretation."""
     dx, dy = composition_balance_offset(balance)

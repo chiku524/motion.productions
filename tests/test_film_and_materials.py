@@ -17,7 +17,7 @@ from src.procedural.film import (
     estimate_depth_map,
 )
 from src.procedural.parser import SceneSpec
-from src.procedural.renderer import _contact_shadow_mask, _render_layers_rgba, render_frame
+from src.procedural.renderer import render_frame
 from src.lighting.grading import get_lighting_model
 
 
@@ -32,6 +32,8 @@ class TestFilmAndMaterials(unittest.TestCase):
         self.assertGreater(int(blurred[9, 11, 0]), 0)
 
     def test_contact_shadow_exists(self):
+        from src.procedural.renderer import _contact_shadow_mask
+
         h = w = 48
         yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
         xx /= w - 1
@@ -43,7 +45,9 @@ class TestFilmAndMaterials(unittest.TestCase):
         cy = float((shadow.sum(axis=1) * ys).sum() / (shadow.sum() + 1e-6))
         self.assertGreater(cy, h * 0.5)
 
-    def test_shadow_darkens_layer_canvas(self):
+    def test_shadow_darkens_background(self):
+        from src.procedural.renderer import _accumulate_contact_shadows, _darken_with_shadows
+
         layers = [{
             "kind": "circle",
             "color": [255, 40, 40],
@@ -53,10 +57,11 @@ class TestFilmAndMaterials(unittest.TestCase):
                 {"t": 1, "x": 0.5, "y": 0.5, "scale": 1.3, "rot": 0, "opacity": 1},
             ],
         }]
-        rgb, _a = _render_layers_rgba(layers, 0.0, 64, 64, lighting_preset="noir")
-        # Some near-black shadow pixels present under the ball
-        dark = (rgb[:, :, 0] < 40) & (rgb[:, :, 1] < 40) & (rgb[:, :, 2] < 50)
-        self.assertGreater(int(dark.sum()), 10)
+        shadow = _accumulate_contact_shadows(layers, 0.0, 64, 64, lighting_preset="noir")
+        self.assertGreater(float(shadow.max()), 0.15)
+        bg = np.full((64, 64, 3), 180.0, dtype=np.float32)
+        darkened = _darken_with_shadows(bg, shadow)
+        self.assertLess(float(darkened.min()), 180.0)
 
     def test_dof_and_grain(self):
         frame = np.full((48, 48, 3), 120, dtype=np.uint8)
@@ -141,6 +146,40 @@ class TestFilmAndMaterials(unittest.TestCase):
         frame = render_frame(spec, 0.3, 72, 72, seed=9)
         self.assertEqual(frame.shape, (72, 72, 3))
         self.assertGreater(int(frame.std()), 3)
+
+    def test_composition_symmetry_pulls_center(self):
+        from src.creation.scene_graph import apply_composition_symmetry_x
+
+        self.assertAlmostEqual(apply_composition_symmetry_x(0.8, "bilateral"), 0.5 + 0.3 * 0.55, places=5)
+        self.assertGreater(abs(apply_composition_symmetry_x(0.65, "asymmetric") - 0.5), abs(0.65 - 0.5))
+
+    def test_enhanced_engine_config_sets_flags(self):
+        from src.procedural.generator import ProceduralVideoGenerator
+        from pathlib import Path
+        import tempfile
+
+        gen = ProceduralVideoGenerator(config={
+            "output": {"width": 512, "height": 512, "fps": 24, "quality": "draft"},
+            "render": {"engine": "enhanced", "upgrade_resolution": False},
+        })
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "t.mp4"
+            # Short clip; draft quality keeps 512
+            gen.generate_clip(
+                "a red ball bouncing left in a forest",
+                out,
+                0.5,
+                seed=1,
+                config={
+                    "output": {"width": 512, "height": 512, "fps": 12, "quality": "draft", "dir": tmp},
+                    "render": {"engine": "enhanced", "upgrade_resolution": False},
+                },
+            )
+            spec = gen._last_spec
+            self.assertEqual(spec.render_engine, "enhanced")
+            self.assertTrue(spec.film_look)
+            self.assertTrue(spec.depth_parallax)
+            self.assertTrue(out.exists() and out.stat().st_size > 100)
 
 
 if __name__ == "__main__":

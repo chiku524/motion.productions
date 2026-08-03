@@ -122,6 +122,8 @@ Video generation software that can utilize any aspect within the movie industry 
 - A: `composition_balance` offsets layer framing; lighting `key/fill/rim/ambient` shades layers via fake normals
 - C: soft contact shadows under props; material-specific texture/rim for tree/building/character/cloud
 - E: `film_look` stack — depth map DoF, lighting-preset grain, camera motion smear (`src/procedural/film.py`); auto-on for `style=realistic|photoreal` or `depth_parallax`
+- Enhanced HTTP path: `POST /render` accepts `engine=enhanced|photoreal` (720p + film/depth); Video AI lab select option **Enhanced**
+- `composition_symmetry` now adjusts layer x (bilateral pulls center; asymmetric pushes out); contact shadows darken the background plane under props
 
 
 **Success criteria:** More realistic or asset-driven visuals when enabled; photoreal path uses the same prompt → registries → render contract.

@@ -106,6 +106,29 @@ class ProceduralVideoGenerator(VideoGenerator):
         )
         knowledge = get_knowledge_for_creation(config)
         base_spec = build_spec_from_instruction(instruction, knowledge=knowledge)
+
+        # Optional render overrides from config / HTTP render service
+        render_cfg = (config or {}).get("render") or {}
+        engine_override = (render_cfg.get("engine") or render_cfg.get("render_engine") or "").strip().lower()
+        if engine_override:
+            base_spec.render_engine = engine_override
+        if render_cfg.get("film_look") is True or engine_override in ("enhanced", "photoreal", "realistic"):
+            base_spec.film_look = True
+            base_spec.depth_parallax = True
+            if not engine_override and base_spec.render_engine == "procedural":
+                base_spec.render_engine = "enhanced"
+        # Enhanced path defaults to 720p unless draft quality is forced or size already larger
+        out_cfg = (config or {}).get("output") or {}
+        if (
+            base_spec.render_engine in ("enhanced", "photoreal", "realistic")
+            and render_cfg.get("upgrade_resolution", True)
+            and out_cfg.get("quality") != "draft"
+            and width <= 512
+            and height <= 512
+        ):
+            width, height = 1280, 720
+            fps = max(float(fps), 24.0)
+
         scene_script = build_scene_script_from_instruction(
             instruction,
             duration_seconds=duration_seconds,

@@ -142,7 +142,8 @@ async function notifyRenderServiceEnqueue(
 function isProceduralRecipe(recipe: unknown): boolean {
   if (!recipe || typeof recipe !== "object") return false;
   const meta = (recipe as { meta?: { engine?: string } }).meta;
-  return (meta?.engine || "recipe") === "procedural";
+  const engine = meta?.engine || "recipe";
+  return engine === "procedural" || engine === "enhanced" || engine === "photoreal";
 }
 
 function proceduralPromptFromRecipe(recipe: unknown): string {
@@ -175,7 +176,7 @@ async function proxyProceduralRender(
   }
   const prompt = proceduralPromptFromRecipe(recipe);
   if (!prompt) {
-    return json({ error: "meta.prompt is required when engine=procedural" }, 400);
+    return json({ error: "meta.prompt is required when engine=procedural|enhanced|photoreal" }, 400);
   }
   const meta =
     recipe && typeof recipe === "object"
@@ -187,6 +188,7 @@ async function proxyProceduralRender(
     headers["Authorization"] = `Bearer ${secret}`;
     headers["X-Motion-Api-Key"] = secret;
   }
+  const engine = String(meta.engine || "procedural");
   const payload = {
     prompt,
     duration_seconds: proceduralDurationFromRecipe(recipe),
@@ -194,6 +196,9 @@ async function proxyProceduralRender(
     height: meta.height,
     fps: meta.fps,
     seed: meta.seed,
+    engine,
+    quality: meta.quality,
+    film_look: engine === "enhanced" || engine === "photoreal" ? true : undefined,
     recipe,
   };
   const url = `${base}/render`;
@@ -345,7 +350,7 @@ export async function handleVideoAiApi(
       return json(
         {
           error:
-            "engine=procedural does not support async R2 jobs yet. Use POST /video-ai/api/render (sync) with PROCEDURAL_RENDER_URL configured.",
+            "Python procedural/enhanced render does not support async R2 jobs yet. Use POST /video-ai/api/render (sync) with PROCEDURAL_RENDER_URL configured.",
         },
         501,
       );
