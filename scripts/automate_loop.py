@@ -689,9 +689,8 @@ def run() -> None:
                     linguistic_registry=linguistic_registry,
                 )
             if spec is None:
-                from src.knowledge import get_knowledge_for_creation
                 spec = build_spec_from_instruction(
-                    instruction, knowledge=get_knowledge_for_creation(config),
+                    instruction, knowledge=knowledge,
                     creation_seed=run_seed,
                 )
             # Record interpretation first (so it's never skipped by later errors); visible in worker logs
