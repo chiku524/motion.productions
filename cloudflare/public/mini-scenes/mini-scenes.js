@@ -1,7 +1,6 @@
 /**
  * Mini-scenes gallery: recent short completed jobs for human review.
- * Thumbs up promotes the prompt into loop good_prompts (exploit pool).
- * Thumbs down demotes into bad_prompts. Filter "Liked" shows rating=2 only.
+ * Thumbs up/down store a rating on the job. Filter "Liked" shows rating=2 only.
  */
 const API_BASE = "";
 const LIMIT = 24;

@@ -62,7 +62,7 @@ class TestDiscoveryContract(unittest.TestCase):
             "learned_motion",
             "learned_entities",
             "interpretation_prompts",
-            "good_prompts",
+            "color_by_name",
         }
         # Documented contract — Worker may return a subset; consumers use .get
         sample = {
@@ -71,7 +71,7 @@ class TestDiscoveryContract(unittest.TestCase):
             "learned_motion": {},
             "learned_entities": [],
             "interpretation_prompts": [{"prompt": "ocean sunset", "instruction": {}}],
-            "good_prompts": ["calm waves"],
+            "color_by_name": {},
         }
         for k in expected:
             self.assertIn(k, sample)

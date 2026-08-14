@@ -161,16 +161,33 @@ class TestMiniSceneFidelity(unittest.TestCase):
         self.assertEqual(spec.creation_mode, "blended")
         self.assertIn(spec.setting, ("city", "neon"))
 
-    def test_mutate_liked_prompt(self):
-        from src.automation.prompt_gen import mutate_liked_prompt
-        base = "a red ball bouncing left with deep house beat"
-        variant = mutate_liked_prompt(base, avoid=set())
-        self.assertIsNotNone(variant)
-        self.assertNotEqual(variant, base)
-        # Avoiding the produced variant should not return that same string
-        again = mutate_liked_prompt(base, avoid={variant})
+    def test_abstract_mesh_prompt(self):
+        from src.automation.prompt_gen import generate_abstract_mesh_prompt
+        knowledge = {
+            "color_by_name": {
+                "amber veil": {"key": "a", "r": 200, "g": 140, "b": 40},
+                "teal mist": {"key": "b", "r": 20, "g": 160, "b": 170},
+            }
+        }
+        prompt = generate_abstract_mesh_prompt(knowledge=knowledge, avoid=set())
+        self.assertIsNotNone(prompt)
+        low = prompt.lower()
+        self.assertTrue(
+            any(cue in low for cue in ("color mesh", "pixel field", "pixel wash", "pure mesh", "abstract mesh", "rainbow mesh")),
+            prompt,
+        )
+        self.assertFalse(any(obj in low for obj in ("person", "ball", "tree", "fish", "car")), prompt)
+        again = generate_abstract_mesh_prompt(knowledge=knowledge, avoid={prompt})
         if again is not None:
-            self.assertNotEqual(again, variant)
+            self.assertNotEqual(again, prompt)
+
+    def test_abstract_mesh_stays_pure_no_layers(self):
+        prompt = "pure color mesh of amber and teal pulsing with calm ambient music"
+        instruction = interpret_user_prompt(prompt)
+        instruction.duration_seconds = 5.0
+        spec = build_spec_from_instruction(instruction, knowledge={})
+        self.assertEqual(spec.creation_mode, "pure_per_frame")
+        self.assertFalse(spec.scene_layers)
 
     def test_setting_props_forest_trees(self):
         prompt = "a person walking left in a forest with soft vocals"
@@ -246,6 +263,16 @@ class TestMiniSceneFidelity(unittest.TestCase):
                 fixed = generate_targeted_entity_prompt(knowledge)
                 self.assertIsNotNone(fixed)
                 self.assertIsNone(generate_targeted_entity_prompt(knowledge, avoid={fixed}))
+
+    def test_pure_per_frame_meshes_registry_colors(self):
+        import numpy as np
+        from src.procedural.renderer import _render_pure_per_frame
+
+        xx, yy = np.meshgrid(np.linspace(0, 1, 48), np.linspace(0, 1, 48))
+        colors = [(255, 0, 0), (0, 0, 255)]
+        r, g, b = _render_pure_per_frame(xx, yy, colors, 0.4, 42, 1.0, motion_level=2.0)
+        mixed = (r > 30) & (b > 30)
+        self.assertGreater(int(np.sum(mixed)), 20, "expected interpolated pixels, not hard color cells")
 
 
 if __name__ == "__main__":

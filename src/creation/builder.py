@@ -162,6 +162,26 @@ def _intensity_from_learned_motion(knowledge: dict[str, Any] | None) -> float | 
     return max(0.15, min(1.0, avg / 20.0))
 
 
+_PURE_MESH_PHRASES = (
+    "pure mesh",
+    "pure color",
+    "color mesh",
+    "per-frame pure",
+    "rainbow mesh",
+    "pixel field",
+    "pixel mesh",
+    "pixel wash",
+    "color field",
+    "abstract mesh",
+    "abstract pixel",
+)
+
+
+def _wants_pure_mesh(prompt: str) -> bool:
+    low = (prompt or "").lower()
+    return any(p in low for p in _PURE_MESH_PHRASES)
+
+
 def build_spec_from_instruction(
     instruction: InterpretedInstruction,
     *,
@@ -339,13 +359,17 @@ def build_spec_from_instruction(
     )
 
     duration_hint = float(getattr(instruction, "duration_seconds", None) or 4.0)
-    entities = list(getattr(instruction, "entities", None) or [])
+    raw_prompt = getattr(instruction, "raw_prompt", "") or ""
+    wants_pure = _wants_pure_mesh(raw_prompt)
+    entities = [] if wants_pure else list(getattr(instruction, "entities", None) or [])
+    if wants_pure:
+        instruction.entities = []
     script_beats: list[dict] | None = None
     music_sections: list[str] | None = None
 
     # Phase 5 / Roadmap B: educational template → multi-beat entities + SFX
     # Always build beats/music when a template is set — merge prompt entities as subject look.
-    if getattr(instruction, "educational_template", None):
+    if not wants_pure and getattr(instruction, "educational_template", None):
         topic = (getattr(instruction, "text_overlay", None) or "the topic").strip()
         narr = build_educational_script(
             topic,
@@ -374,7 +398,7 @@ def build_spec_from_instruction(
 
     # Phase E: free-form "then" mini-scripts override single-entity expansion
     freeform_applied = False
-    if duration_hint <= 12.0 and not getattr(instruction, "educational_template", None):
+    if duration_hint <= 12.0 and not wants_pure and not getattr(instruction, "educational_template", None):
         from .script_parse import (
             freeform_entities_from_prompt,
             parse_freeform_mini_script,
@@ -407,7 +431,8 @@ def build_spec_from_instruction(
     if entities and isinstance(entities[0], dict):
         seed_gag = str(entities[0].get("gag") or "").lower()
     if (
-        not freeform_applied
+        not wants_pure
+        and not freeform_applied
         and entities
         and duration_hint <= 8.0
         and len(entities) == 1
@@ -454,8 +479,8 @@ def build_spec_from_instruction(
         if isinstance(ent, dict) and ent.get("kind") == "character" and not ent.get("trajectory"):
             ent["trajectory"] = "left" if motion_directionality == "horizontal" else "right"
 
-    # Setting props: trees/fish/waves/buildings/clouds behind foreground entities
-    if setting and (entities or duration_hint <= 8.0):
+    # Setting props: trees/fish/waves/buildings/clouds behind named foreground subjects
+    if setting and entities and not wants_pure:
         from .props import merge_setting_props
         entities = merge_setting_props(
             entities,
@@ -509,20 +534,17 @@ def build_spec_from_instruction(
             isinstance(e, dict) and e.get("bounce") for e in entities
         ):
             sfx_events = infer_bounce_events(duration_hint)
-    # Weather SFX for rain/snow/forest settings
-    try:
-        from ..audio.event_sfx import infer_weather_events
-        weather_ev = infer_weather_events(setting, duration_hint)
-        if weather_ev:
-            sfx_events = list(sfx_events) + weather_ev
-    except ImportError:
-        pass
+    # Weather SFX for rain/snow/forest settings (skip abstract mesh clips)
+    if not wants_pure:
+        try:
+            from ..audio.event_sfx import infer_weather_events
+            weather_ev = infer_weather_events(setting, duration_hint)
+            if weather_ev:
+                sfx_events = list(sfx_events) + weather_ev
+        except ImportError:
+            pass
 
     # Mini-scenes with entities: blended palette gradients (setting themes), not rainbow mesh
-    wants_pure = any(
-        w in (getattr(instruction, "raw_prompt", "") or "").lower()
-        for w in ("pure mesh", "pure color", "color mesh", "per-frame pure", "rainbow mesh")
-    )
     if (entities or scene_layers) and not wants_pure:
         creation_mode = "blended"
         pure_colors = None

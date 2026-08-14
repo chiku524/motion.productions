@@ -1,4 +1,4 @@
-# Explorer loop — 100% explore, frame extraction. Deploy from repository root:
+# Explorer loop — frame extraction. Deploy from repository root:
 #   fly apps create motion-loop-explorer   # first time only
 #   fly deploy --config fly.loop-explorer.toml
 #
@@ -19,7 +19,6 @@ kill_timeout = 120
 [env]
   API_BASE = "https://motion.productions"
   LOOP_EXTRACTION_FOCUS = "frame"
-  LOOP_EXPLOIT_RATIO_OVERRIDE = "0"
   LOOP_WORKFLOW_TYPE = "explorer"
   LOOP_WORKER_OFFSET_SECONDS = "0"
   HEALTH_PORT = "8080"

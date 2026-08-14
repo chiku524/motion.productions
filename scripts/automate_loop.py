@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Self-feeding learning loop: each output triggers the next run.
-70% exploit (good outcomes) / 30% explore (new combos).
+Always explores a new prompt (abstract color/sound mesh by default).
 State is persisted to the API (KV) so it survives restarts.
 
 Usage:
@@ -21,13 +21,7 @@ from src.random_utils import secure_choice, secure_random
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_EXPLOIT_RATIO = 0.70
 DEFAULT_DELAY_SECONDS = 30
-
-# "Good" outcome thresholds (from analysis)
-CONSISTENCY_MAX = 20.0  # brightness_std_over_time lower = more consistent
-MOTION_MIN = 1.0
-MOTION_MAX = 25.0
 
 
 def _loop_extraction_focus() -> str:
@@ -46,25 +40,12 @@ def baseline_state() -> dict:
     """Fresh state on each restart."""
     return {
         "run_count": 0,
-        "good_prompts": [],
-        "bad_prompts": [],
         "recent_prompts": [],
         "duration_base": 6.0,
-        "exploit_count": 0,
         "explore_count": 0,
         "interpretation_streak": 0,
         "interpretation_recent_buckets": [],
     }
-
-
-def is_good_outcome(analysis: dict) -> bool:
-    """True if output meets quality thresholds."""
-    consistency = analysis.get("brightness_std_over_time", 999)
-    motion = analysis.get("motion_level", 0)
-    return (
-        consistency <= CONSISTENCY_MAX
-        and MOTION_MIN <= motion <= MOTION_MAX
-    )
 
 
 def _interpretation_bucket(item: dict) -> str:
@@ -92,28 +73,23 @@ def _pick_interpretation_diverse(candidates: list[dict], state: dict) -> dict:
 
 def pick_prompt(
     state: dict,
-    exploit_ratio: float = DEFAULT_EXPLOIT_RATIO,
     knowledge: dict | None = None,
     coverage: dict | None = None,
-) -> tuple[str, bool, dict]:
+) -> tuple[str, dict]:
     """
-    Exploit (good prompts) vs explore (new) based on exploit_ratio.
-    Returns (prompt, is_exploit, meta) where meta includes source and optional interpretation_bucket.
+    Always compose a new prompt. Default is an abstract pixel/color mesh from
+    named registry colors — no object catalog, no replay of past strings.
+    Returns (prompt, meta) where meta includes source.
     """
     from src.automation import generate_procedural_prompt
     from src.automation.prompt_gen import (
-        generate_mini_scene_prompt,
+        generate_abstract_mesh_prompt,
         generate_targeted_blended_prompt,
         generate_targeted_color_family_prompt,
-        generate_targeted_entity_prompt,
         generate_targeted_narrative_prompt,
-        mutate_liked_prompt,
     )
 
-    good = state.get("good_prompts", [])
-    bad = set(state.get("bad_prompts", []) or [])
     recent = set(state.get("recent_prompts", [])[-150:])
-    interpretation_prompts = (knowledge or {}).get("interpretation_prompts", [])
     api_base_for_mission = (os.environ.get("API_BASE") or "").rstrip("/")
     mission_cache = state.get("_mission_cache")
     mission_age = float(state.get("_mission_cache_at") or 0)
@@ -127,46 +103,24 @@ def pick_prompt(
             mission_cache = state.get("_mission_cache")
 
     narr = (coverage or {}).get("narrative") or {}
-    p_cov = float((narr.get("plots") or {}).get("coverage_pct") or 100)
-    s_cov = float((narr.get("style") or {}).get("coverage_pct") or 100)
     g_cov = float((narr.get("genre") or {}).get("coverage_pct") or 100)
-    ps_min = float((coverage or {}).get("narrative_plots_style_min_coverage_pct") or min(p_cov, s_cov))
     narr_min = float((coverage or {}).get("narrative_min_coverage_pct") or 100)
     color_pct = float((coverage or {}).get("static_colors_coverage_pct") or 100)
-    entity_pct = float((coverage or {}).get("learned_entities_coverage_pct") or 0)
-    thin_plots_style = ps_min < 85
     thin_narrative = narr_min < 90 or g_cov < 90
-    # Color is the bottleneck until explorer findability rises — keep threshold generous
     thin_color = color_pct < 12
     critical_color = color_pct < 5
-    thin_entities = entity_pct < 40
-    # Mission: 5s mini-scenes that sound like real user asks — dominate when registries are dense
-    dense_enough = narr_min >= 90 and color_pct >= 50
-    mini_rate = 0.55 if dense_enough else 0.28
-    if thin_entities and not critical_color:
-        mini_rate = max(mini_rate, 0.48)
-    if critical_color:
-        # Starve mini-scenes until hue families have a foothold
-        mini_rate = min(mini_rate, 0.12)
 
     findability = float((mission_cache or {}).get("findability_pct") or 100)
     thin_families = findability < 85 or thin_color
     static_focus = (os.environ.get("LOOP_STATIC_FOCUS") or "both").strip().lower()
     extraction_focus = _loop_extraction_focus()
     workflow_type = (os.environ.get("LOOP_WORKFLOW_TYPE") or "").strip().lower()
-    # Balanced / window worker owns narrative fidelity — don't let color targeting starve it
     prefer_fidelity = (
         extraction_focus == "window"
         or workflow_type in ("main", "balanced")
         or static_focus in ("none", "off", "narrative")
     )
-    if prefer_fidelity:
-        mini_rate = max(mini_rate, 0.55)
-        if critical_color:
-            mini_rate = max(mini_rate, 0.48)
 
-    # When color coverage is tiny, bias to underfilled hue families BEFORE mini-scenes/exploit
-    # (explorer / color-focus workers only — balanced skips this)
     color_target_rate = 0.72 if critical_color else (0.48 if thin_color else 0.28)
     if (
         not prefer_fidelity
@@ -177,112 +131,38 @@ def pick_prompt(
         color_prompt = generate_targeted_color_family_prompt(
             api_base=api_base_for_mission,
             mission=mission_cache if isinstance(mission_cache, dict) else None,
-            avoid=recent | bad,
+            avoid=recent,
         )
         if color_prompt:
             logger.info("Targeted color-family prompt: %s", color_prompt[:60] + ("..." if len(color_prompt) > 60 else ""))
-            return (color_prompt, False, {"source": "targeted_color_family"})
+            return (color_prompt, {"source": "targeted_color_family"})
 
-    # Prefer everyday mini-scenes before exploit/registry jargon
-    if secure_random() < mini_rate:
-        mini = generate_mini_scene_prompt(avoid=recent | bad, fidelity_bias=prefer_fidelity)
-        if mini:
-            logger.info("Mini-scene prompt: %s", mini[:70] + ("..." if len(mini) > 70 else ""))
-            return (mini, False, {"source": "mini_scene"})
+    if secure_random() < 0.78:
+        mesh = generate_abstract_mesh_prompt(knowledge=knowledge, avoid=recent)
+        if mesh:
+            logger.info("Abstract mesh prompt: %s", mesh[:70] + ("..." if len(mesh) > 70 else ""))
+            return (mesh, {"source": "abstract_mesh"})
 
-    # Soften exploit when dense; still prefer human-liked good prompts strongly
-    effective_exploit = exploit_ratio * (0.55 if dense_enough else 1.0)
-    if critical_color:
-        effective_exploit *= 0.35
-    if secure_random() < effective_exploit and good:
-        # Prefer short, natural good prompts over instructive registry phrasing
-        natural = [
-            p
-            for p in good
-            if p not in recent
-            and p not in bad
-            and len(p) < 120
-            and not p.lower().startswith("create a")
-            and not p.lower().startswith("make a")
-            and not p.lower().startswith("show ")
-            and not p.lower().startswith("render ")
-            and not p.lower().startswith("compose ")
-            and not p.lower().startswith("build ")
-            and not p.lower().startswith("give me ")
-            and not p.lower().startswith("shoot ")
-        ]
-        pool = natural or [p for p in good if p not in recent and p not in bad] or [p for p in good if p not in bad] or good
-        chosen = secure_choice(pool)
-        if chosen and chosen not in bad:
-            # Prefer mutating liked prompts (~65%) so exploit still discovers new settings/axes
-            if secure_random() < 0.65:
-                variant = mutate_liked_prompt(chosen, avoid=recent | bad)
-                if variant:
-                    logger.info("Liked-prompt variant: %s", variant[:70] + ("..." if len(variant) > 70 else ""))
-                    return (variant, True, {"source": "exploit_good_variant", "parent": chosen[:80]})
-            return (chosen, True, {"source": "exploit_good"})
-
-    # Fill thin entity space with targeted entity mini-scenes (scenic props when thin)
-    if thin_entities and secure_random() < (0.22 if critical_color else 0.35):
-        targeted_ent = generate_targeted_entity_prompt(knowledge, coverage=coverage, avoid=recent | bad)
-        if targeted_ent:
-            logger.info("Targeted entity prompt: %s", targeted_ent[:60] + ("..." if len(targeted_ent) > 60 else ""))
-            return (targeted_ent, False, {"source": "targeted_entity"})
-
-    targeted_rate = 0.12 if dense_enough else 0.20
-    if thin_plots_style:
-        targeted_rate = 0.34
-    if thin_narrative:
-        targeted_rate = max(targeted_rate, 0.40)
-    if thin_color:
-        targeted_rate = max(targeted_rate, 0.28)
-    if coverage and secure_random() < targeted_rate:
-        targeted = generate_targeted_narrative_prompt(coverage, avoid=recent | bad)
+    if coverage and thin_narrative and secure_random() < 0.22:
+        targeted = generate_targeted_narrative_prompt(coverage, avoid=recent)
         if targeted:
             logger.info("Targeted narrative prompt (fill gaps): %s", targeted[:60] + ("..." if len(targeted) > 60 else ""))
-            return (targeted, False, {"source": "targeted_narrative"})
-    # Blended axes (motion/audio/composition) — prefer when narrative is already dense
-    blended_rate = 0.18 if dense_enough else (0.28 if narr_min >= 90 else 0.14)
-    if secure_random() < blended_rate:
-        blended = generate_targeted_blended_prompt(knowledge, avoid=recent | bad)
+            return (targeted, {"source": "targeted_narrative"})
+
+    if secure_random() < 0.14:
+        blended = generate_targeted_blended_prompt(knowledge, avoid=recent)
         if blended:
             logger.info("Targeted blended prompt: %s", blended[:60] + ("..." if len(blended) > 60 else ""))
-            return (blended, False, {"source": "targeted_blended"})
-    # When color coverage is tiny, prefer procedural prompts (palette/lighting bias) over exploit
-    if thin_color and secure_random() < 0.55:
-        fallback = generate_procedural_prompt(
-            avoid=recent | bad, knowledge=knowledge, coverage=coverage, instructive_ratio=0.75
-        )
-        if fallback:
-            return (fallback, False, {"source": "procedural_color_bias"})
-    interp_streak = int(state.get("interpretation_streak", 0))
-    max_interp_streak = int(os.environ.get("LOOP_INTERPRETATION_STREAK_MAX", "5"))
-    interp_rate = 0.12 if dense_enough else 0.35
-    if (
-        interpretation_prompts
-        and secure_random() < interp_rate
-        and interp_streak < max(1, max_interp_streak)
-    ):
-        candidates = [
-            p for p in interpretation_prompts
-            if isinstance(p, dict) and p.get("prompt") and p["prompt"] not in recent and p["prompt"] not in bad
-        ]
-        if candidates:
-            chosen = _pick_interpretation_diverse(candidates, state)
-            bucket = _interpretation_bucket(chosen)
-            return (chosen["prompt"], False, {"source": "interpretation", "interpretation_bucket": bucket})
-    # Second chance at mini-scenes before generic procedural
-    second_mini = 0.62 if prefer_fidelity else (0.55 if dense_enough else 0.35)
-    if secure_random() < second_mini:
-        mini = generate_mini_scene_prompt(avoid=recent | bad, fidelity_bias=prefer_fidelity)
-        if mini:
-            logger.info("Mini-scene prompt: %s", mini[:70] + ("..." if len(mini) > 70 else ""))
-            return (mini, False, {"source": "mini_scene"})
-    fallback = (
-        generate_procedural_prompt(avoid=recent | bad, knowledge=knowledge, coverage=coverage, instructive_ratio=0.65)
-        or (secure_choice([p for p in good if p not in bad]) if good else generate_procedural_prompt(knowledge=knowledge, coverage=coverage, instructive_ratio=0.65))
+            return (blended, {"source": "targeted_blended"})
+
+    mesh = generate_abstract_mesh_prompt(knowledge=knowledge, avoid=recent)
+    if mesh:
+        logger.info("Abstract mesh prompt: %s", mesh[:70] + ("..." if len(mesh) > 70 else ""))
+        return (mesh, {"source": "abstract_mesh"})
+    fallback = generate_procedural_prompt(
+        avoid=recent, knowledge=knowledge, coverage=coverage, instructive_ratio=0.2
     )
-    return (fallback or "", False, {"source": "procedural"})
+    return (fallback or "", {"source": "procedural"})
 
 
 def _load_coverage(api_base: str) -> dict | None:
@@ -301,35 +181,10 @@ def _load_state(api_base: str) -> dict:
             api_base, "GET", f"/api/loop/state?worker={_loop_state_worker()}", timeout=15
         )
         s = data.get("state", {})
-        good = list(s.get("good_prompts", []))[-200:]
-        bad = list(s.get("bad_prompts", []))[-100:]
-        # Merge human thumbs-up prompts from feedback so gallery review teaches exploit
-        try:
-            fb = api_request_with_retry(api_base, "GET", "/api/feedback?limit=40", timeout=15)
-            for row in fb.get("feedback") or []:
-                rating = int(row.get("rating") or 0)
-                p = (row.get("prompt") or "").strip()
-                if not p:
-                    continue
-                if rating == 2:
-                    if p not in good:
-                        good.append(p)
-                    bad = [x for x in bad if x != p]
-                elif rating == 1:
-                    good = [x for x in good if x != p]
-                    if p not in bad:
-                        bad.append(p)
-            good = good[-200:]
-            bad = bad[-100:]
-        except Exception:
-            pass
         return {
             "run_count": int(s.get("run_count", 0)),
-            "good_prompts": good,
-            "bad_prompts": bad,
             "recent_prompts": list(s.get("recent_prompts", []))[-200:],
             "duration_base": float(s.get("duration_base", 6.0)),
-            "exploit_count": int(s.get("exploit_count", 0)),
             "explore_count": int(s.get("explore_count", 0)),
             "interpretation_streak": int(s.get("interpretation_streak", 0)),
             "interpretation_recent_buckets": list(s.get("interpretation_recent_buckets", []))[-12:],
@@ -359,67 +214,6 @@ def _save_state(api_base: str, state: dict, run_count: int) -> None:
     except APIError as e:
         detail = f" {e.body}" if getattr(e, "body", None) else ""
         logger.warning("POST /api/loop/state failed (status=%s, path=%s): %s%s — state not persisted", e.status_code, e.path, e, detail)
-
-
-def _load_progress(api_base: str) -> dict:
-    """Load loop progress (discovery rate, precision) for adaptive exploit ratio."""
-    try:
-        return api_request_with_retry(api_base, "GET", "/api/loop/progress?last=20", timeout=30)
-    except APIError:
-        return {}
-
-
-def _get_discovery_adjusted_exploit_ratio(
-    base_ratio: float,
-    progress: dict,
-    override_active: bool,
-    coverage: dict | None = None,
-) -> float:
-    """When discovery_rate_pct is low, repetition high, or registry coverage low, reduce exploit (§2.2)."""
-    rate = progress.get("discovery_rate_pct")
-    total_runs = progress.get("total_runs", 0)
-    repetition = progress.get("repetition_score")
-
-    # Coverage-based caps (§2.2): when registries are far from complete, bias toward exploration
-    if coverage and total_runs >= 3:
-        static_pct = coverage.get("static_colors_coverage_pct")
-        narrative_min = coverage.get("narrative_min_coverage_pct")
-        sound_pct = coverage.get("static_sound_coverage_pct")
-        sound_missing = coverage.get("static_sound_primitives_missing") or []
-        if static_pct is not None and static_pct < 5 and not override_active:
-            base_ratio = min(base_ratio, 0.15)
-        elif static_pct is not None and static_pct < 10 and not override_active:
-            base_ratio = min(base_ratio, 0.3)
-        elif static_pct is not None and static_pct < 5 and override_active:
-            base_ratio = min(base_ratio, 0.5)
-        if narrative_min is not None and narrative_min < 50 and not override_active:
-            base_ratio = min(base_ratio, 0.5)
-        elif narrative_min is not None and narrative_min < 90 and not override_active:
-            base_ratio = min(base_ratio, 0.55)
-        ps_min = coverage.get("narrative_plots_style_min_coverage_pct")
-        if ps_min is not None and ps_min < 70 and not override_active:
-            base_ratio = min(base_ratio, 0.45)
-        if (sound_missing or (sound_pct is not None and sound_pct < 100)) and not override_active:
-            base_ratio = min(base_ratio, 0.5)
-
-    # High repetition → reduce exploit
-    if repetition is not None and repetition > 0.35 and total_runs >= 5:
-        cap = 0.7 if override_active else 0.5
-        return min(base_ratio, cap)
-
-    if total_runs < 5:
-        return base_ratio
-
-    if override_active:
-        if rate is not None and rate < 10:
-            return min(base_ratio, 0.80)
-        if rate is not None and rate < 20:
-            return min(base_ratio, 0.90)
-        return base_ratio
-
-    if rate is not None and rate < 10:
-        return min(base_ratio, 0.4)
-    return base_ratio
 
 
 def _post_learning_with_retry(
@@ -483,12 +277,11 @@ def _load_loop_config(api_base: str) -> dict:
         return {
             "enabled": data.get("enabled", True),
             "delay_seconds": int(data.get("delay_seconds", DEFAULT_DELAY_SECONDS)),
-            "exploit_ratio": float(data.get("exploit_ratio", DEFAULT_EXPLOIT_RATIO)),
             "duration_seconds": data.get("duration_seconds"),
         }
     except APIError as e:
         logger.warning("GET /api/loop/config failed (status=%s, path=%s): %s — using defaults", e.status_code, e.path, e)
-        return {"enabled": True, "delay_seconds": DEFAULT_DELAY_SECONDS, "exploit_ratio": DEFAULT_EXPLOIT_RATIO, "duration_seconds": None}
+        return {"enabled": True, "delay_seconds": DEFAULT_DELAY_SECONDS, "duration_seconds": None}
 
 
 def duration_for_run(run_count: int, base: float) -> float:
@@ -561,7 +354,7 @@ def run() -> None:
         time.sleep(worker_offset)
 
     print("Starting self-feeding loop (config from API; respects webapp controls)")
-    print(f"State: run_count={state['run_count']}, good_prompts={len(state.get('good_prompts', []))}, recent={len(state.get('recent_prompts', []))}")
+    print(f"State: run_count={state['run_count']}, recent={len(state.get('recent_prompts', []))}")
     print("Each output triggers the next run. Toggle loop in webapp to pause.\n")
 
     while True:
@@ -577,23 +370,8 @@ def run() -> None:
 
         raw_delay = loop_config.get("delay_seconds") or (args.delay if args.delay is not None else float(os.environ.get("LOOP_DELAY_SECONDS", "0")) or 0)
         delay_seconds = max(8, float(raw_delay))  # min 8s to reduce D1 overload with concurrent workers
-        override = os.environ.get("LOOP_EXPLOIT_RATIO_OVERRIDE")
-        override_active = override is not None and override != ""
-        exploit_ratio = float(override) if override_active else loop_config.get("exploit_ratio", DEFAULT_EXPLOIT_RATIO)
-        exploit_ratio = max(0.0, min(1.0, exploit_ratio))
-        progress = _load_progress(args.api_base)
         coverage = _load_coverage(args.api_base) if args.api_base else None
-        prior_exploit = exploit_ratio
-        exploit_ratio = _get_discovery_adjusted_exploit_ratio(exploit_ratio, progress, override_active, coverage=coverage)
-        if coverage and exploit_ratio < prior_exploit:
-            logger.info(
-                "Exploit capped by coverage: %.2f -> %.2f (static_colors %.1f%%, narrative_min %.1f%%)",
-                prior_exploit, exploit_ratio,
-                coverage.get("static_colors_coverage_pct") or 0,
-                coverage.get("narrative_min_coverage_pct") or 0,
-            )
-        # workflow_type for site: explorer | exploiter | main (prompt choice)
-        workflow_type = os.environ.get("LOOP_WORKFLOW_TYPE") or ("explorer" if override == "0" else "exploiter" if override == "1" else "main")
+        workflow_type = (os.environ.get("LOOP_WORKFLOW_TYPE") or "main").strip().lower() or "main"
         # extraction_focus: frame (per-frame / pure static only) | window (per-window blends only) | unset = all
         # Use LOOP_EXTRACTION_FOCUS (not LCXP_EXTRACTION_FOCUS). See docs/DEPLOYMENT.md (Fly.io §8) and REGISTRY_AND_WORKFLOW_IMPROVEMENTS.md Part 0.
         extraction_focus = _loop_extraction_focus()
@@ -616,9 +394,7 @@ def run() -> None:
 
         if coverage is None and args.api_base:
             coverage = _load_coverage(args.api_base)
-        prompt, is_exploit, prompt_meta = pick_prompt(
-            state, exploit_ratio=exploit_ratio, knowledge=knowledge, coverage=coverage
-        )
+        prompt, prompt_meta = pick_prompt(state, knowledge=knowledge, coverage=coverage)
         if prompt_meta.get("source") == "interpretation":
             state["interpretation_streak"] = int(state.get("interpretation_streak", 0)) + 1
             b = prompt_meta.get("interpretation_bucket")
@@ -864,11 +640,7 @@ def run() -> None:
                 logger.warning("Missing learning (job_id=%s): %s", job_id, e)
                 print(f"  (learning log: {e})")
 
-            if is_good_outcome(analysis_dict):
-                state["good_prompts"] = (state.get("good_prompts", []) + [prompt])[-200:]
-                print("✓ good")
-            else:
-                print("✓")
+            print("✓")
 
             if delay_seconds > 0:
                 print(f"  (waiting {delay_seconds:.0f}s before next run — check the library at motion.productions)")
@@ -886,10 +658,7 @@ def run() -> None:
         if run_succeeded:
             state["run_count"] += 1
             state["recent_prompts"] = (state.get("recent_prompts", []) + [prompt])[-200:]
-            if is_exploit:
-                state["exploit_count"] = state.get("exploit_count", 0) + 1
-            else:
-                state["explore_count"] = state.get("explore_count", 0) + 1
+            state["explore_count"] = state.get("explore_count", 0) + 1
             state["last_run_at"] = __import__("datetime").datetime.utcnow().isoformat() + "Z"
             state["last_prompt"] = (prompt or "")[:80] + ("…" if len(prompt or "") > 80 else "")
             state["last_job_id"] = job_id

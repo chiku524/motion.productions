@@ -273,11 +273,8 @@ const loopEnabled = document.getElementById('loop-enabled');
 const loopStatusBadge = document.getElementById('loop-status-badge');
 const loopDuration = document.getElementById('loop-duration');
 const loopDelay = document.getElementById('loop-delay');
-const loopExploit = document.getElementById('loop-exploit');
-const loopExploitLabel = document.getElementById('loop-exploit-label');
 const loopSave = document.getElementById('loop-save');
 const loopRunCount = document.getElementById('loop-run-count');
-const loopGoodCount = document.getElementById('loop-good-count');
 const loopPrecision = document.getElementById('loop-precision');
 const loopLastRun = document.getElementById('loop-last-run');
 const loopLastPrompt = document.getElementById('loop-last-prompt');
@@ -313,12 +310,8 @@ async function loadLoopStatus() {
       if (![1,2,3,5,6,10,15,30].includes(durationSec)) loopDuration.value = '1';
     }
     loopDelay.value = typeof cfg.delay_seconds === 'number' ? cfg.delay_seconds : 30;
-    const ratio = typeof cfg.exploit_ratio === 'number' ? cfg.exploit_ratio : 0.7;
-    loopExploit.value = Math.round(ratio * 100);
-    loopExploitLabel.textContent = `${Math.round(ratio * 100)}% exploit`;
 
     loopRunCount.textContent = `Runs: ${typeof data.run_count === 'number' ? data.run_count : 0}`;
-    loopGoodCount.textContent = `Good prompts: ${typeof data.good_prompts_count === 'number' ? data.good_prompts_count : 0}`;
     loopLastRun.textContent = `Last run: ${formatLoopDate(data.last_run_at)}`;
     try {
       const progRes = await fetch(`${API_BASE}/api/loop/progress?last=20`);
@@ -354,7 +347,6 @@ async function loadLoopStatus() {
     loopStatusBadge.textContent = 'Error';
     loopStatusBadge.className = 'loop-badge error';
     loopRunCount.textContent = '—';
-    loopGoodCount.textContent = '—';
     if (loopPrecision) loopPrecision.textContent = '—';
     loopLastRun.textContent = '—';
     loopLastPrompt.hidden = true;
@@ -380,11 +372,6 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
-loopExploit?.addEventListener('input', () => {
-  const v = parseInt(loopExploit.value, 10);
-  loopExploitLabel.textContent = `${v}% exploit`;
-});
-
 loopSave?.addEventListener('click', async () => {
   if (!PUBLIC_WRITES_ENABLED) {
     alert('Loop settings require an authenticated worker (MOTION_API_SECRET). Public writes are paused.');
@@ -393,7 +380,6 @@ loopSave?.addEventListener('click', async () => {
   const enabled = loopEnabled.checked;
   const duration_seconds = Math.max(1, Math.min(60, parseInt(loopDuration?.value || '1', 10) || 1));
   const delay_seconds = Math.max(0, Math.min(600, parseInt(loopDelay.value, 10) || 30));
-  const exploit_ratio = Math.max(0, Math.min(1, parseInt(loopExploit.value, 10) / 100));
 
   const originalText = loopSave.textContent;
   loopSave.disabled = true;
@@ -408,7 +394,7 @@ loopSave?.addEventListener('click', async () => {
     const res = await fetch(`${API_BASE}/api/loop/config`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled, duration_seconds, delay_seconds, exploit_ratio }),
+      body: JSON.stringify({ enabled, duration_seconds, delay_seconds }),
     });
     const text = await res.text();
     if (text.trimStart().startsWith('<')) throw new Error('Server returned a page instead of data. The API may be misconfigured or the loop config endpoint is not available.');

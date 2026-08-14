@@ -185,11 +185,6 @@
               <label class="label" for="loop-delay">Pace (delay between runs, sec)</label>
               <input type="number" id="loop-delay" min="3" max="600" step="1" value="30" class="loop-input" title="Min 3s for stability with 6 workers">
             </div>
-            <div class="loop-cell">
-              <label class="label" for="loop-exploit">Exploit / Explore (0–100%)</label>
-              <input type="range" id="loop-exploit" min="0" max="100" value="70" class="loop-slider">
-              <span id="loop-exploit-label" class="loop-slider-label">70% exploit</span>
-            </div>
             <div class="loop-cell loop-cell-apply">
               <button type="button" id="loop-save" class="btn btn-secondary btn-sm">Apply settings</button>
             </div>
@@ -198,7 +193,6 @@
         <div class="loop-status">
           <div class="loop-stats">
             <span id="loop-run-count" class="loop-stat">—</span>
-            <span id="loop-good-count" class="loop-stat">—</span>
             <span id="loop-precision" class="loop-stat loop-stat-precision" title="Runs with learning in last 20">—</span>
             <span id="loop-last-run" class="loop-stat loop-stat-muted">—</span>
           </div>

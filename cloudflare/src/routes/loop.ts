@@ -45,8 +45,7 @@ if (path === "/api/loop/state" && request.method === "GET") {
     return json({
       state: {
         ...workerState,
-        good_prompts: Array.isArray(shared.good_prompts) ? shared.good_prompts : workerState.good_prompts,
-        bad_prompts: Array.isArray(shared.bad_prompts) ? shared.bad_prompts : workerState.bad_prompts,
+        recent_prompts: Array.isArray(shared.recent_prompts) ? shared.recent_prompts : workerState.recent_prompts,
       },
     });
   } catch (e) {
@@ -54,7 +53,7 @@ if (path === "/api/loop/state" && request.method === "GET") {
   }
 }
 
-// POST /api/loop/state — save loop state (good_prompts, recent_prompts, run_count)
+// POST /api/loop/state — save loop state (recent_prompts, run_count)
 if (path === "/api/loop/state" && request.method === "POST") {
   const kv = env.MOTION_KV;
   if (!kv) return json({ error: "Loop state unavailable: KV not bound", details: "MOTION_KV undefined" }, 503);
@@ -69,35 +68,18 @@ if (path === "/api/loop/state" && request.method === "POST") {
   // Sanitize: only allow safe JSON; KV has 1 write/sec limit per key — client should space saves
   const counters: Record<string, unknown> = {};
   counters.run_count = typeof raw.run_count === "number" && Number.isFinite(raw.run_count) ? Math.floor(raw.run_count) : 0;
-  const incomingGood = asPromptList(raw.good_prompts, 200);
-  // Merge with existing KV good/bad prompts so gallery feedback survives worker state saves
-  let existingGood: string[] = [];
-  let existingBad: string[] = [];
   let existingShared: Record<string, unknown> = {};
   try {
     const prevRaw = await kv.get("loop_state");
     if (prevRaw) {
       existingShared = JSON.parse(prevRaw) as Record<string, unknown>;
-      existingGood = asPromptList(existingShared.good_prompts, 200);
-      existingBad = asPromptList(existingShared.bad_prompts, 100);
     }
   } catch {
     /* ignore */
   }
-  const mergedGood = [...existingGood];
-  for (const p of incomingGood) {
-    if (!mergedGood.includes(p)) mergedGood.push(p);
-  }
-  const incomingBad = asPromptList(raw.bad_prompts, 100);
-  const mergedBad = [...existingBad];
-  for (const p of incomingBad) {
-    if (!mergedBad.includes(p)) mergedBad.push(p);
-  }
-  // Human demotion wins: never re-promote a bad prompt via loop state save
-  const badSet = new Set(mergedBad);
   const shared: Record<string, unknown> = { ...existingShared };
-  shared.good_prompts = mergedGood.filter((p) => !badSet.has(p)).slice(-200);
-  shared.bad_prompts = mergedBad.slice(-100);
+  delete shared.good_prompts;
+  delete shared.bad_prompts;
   shared.recent_prompts = asPromptList(raw.recent_prompts, 200);
   shared.duration_base = typeof raw.duration_base === "number" && Number.isFinite(raw.duration_base) ? raw.duration_base : 6;
   if (typeof raw.last_run_at === "string") shared.last_run_at = raw.last_run_at.slice(0, 50);
@@ -105,7 +87,6 @@ if (path === "/api/loop/state" && request.method === "POST") {
   if (typeof raw.last_job_id === "string") shared.last_job_id = raw.last_job_id.slice(0, 80);
   counters.recent_prompts = shared.recent_prompts;
   counters.duration_base = shared.duration_base;
-  counters.exploit_count = typeof raw.exploit_count === "number" && Number.isFinite(raw.exploit_count) ? Math.floor(raw.exploit_count) : 0;
   counters.explore_count = typeof raw.explore_count === "number" && Number.isFinite(raw.explore_count) ? Math.floor(raw.explore_count) : 0;
   counters.interpretation_streak = typeof raw.interpretation_streak === "number" && Number.isFinite(raw.interpretation_streak) ? Math.floor(raw.interpretation_streak) : 0;
   counters.interpretation_recent_buckets = Array.isArray(raw.interpretation_recent_buckets)
@@ -116,7 +97,6 @@ if (path === "/api/loop/state" && request.method === "POST") {
   if (typeof raw.last_job_id === "string") counters.last_job_id = raw.last_job_id.slice(0, 80);
   if (!worker) {
     shared.run_count = counters.run_count;
-    shared.exploit_count = counters.exploit_count;
     shared.explore_count = counters.explore_count;
     shared.interpretation_streak = counters.interpretation_streak;
     shared.interpretation_recent_buckets = counters.interpretation_recent_buckets;
@@ -144,13 +124,13 @@ if (path === "/api/loop/state" && request.method === "POST") {
   }
 }
 
-// GET /api/loop/config — user-controlled loop config (enabled, delay, exploit_ratio, duration_seconds)
+// GET /api/loop/config — user-controlled loop config (enabled, delay, duration_seconds)
 if (path === "/api/loop/config" && request.method === "GET") {
   const kv = env.MOTION_KV;
   if (!kv) return json({ error: "Loop config unavailable: KV not bound", details: "MOTION_KV undefined" }, 500);
   try {
     const raw = await kv.get("loop_config");
-    let config: { enabled?: boolean; delay_seconds?: number; exploit_ratio?: number; duration_seconds?: number } = { enabled: true, delay_seconds: 30, exploit_ratio: 0.7, duration_seconds: 5 };
+    let config: { enabled?: boolean; delay_seconds?: number; duration_seconds?: number } = { enabled: true, delay_seconds: 30, duration_seconds: 5 };
     if (raw && raw.length > 0) {
       try {
         config = JSON.parse(raw) as typeof config;
@@ -163,7 +143,6 @@ if (path === "/api/loop/config" && request.method === "GET") {
     return json({
       enabled: config.enabled !== false,
       delay_seconds: Math.max(3, ds),
-      exploit_ratio: typeof config.exploit_ratio === "number" ? config.exploit_ratio : 0.7,
       duration_seconds: Math.max(1, Math.min(60, duration)),
     });
   } catch (e) {
@@ -173,7 +152,7 @@ if (path === "/api/loop/config" && request.method === "GET") {
 
 // POST /api/loop/config — update loop config (controls background workers)
 if (path === "/api/loop/config" && request.method === "POST") {
-  let body: { enabled?: boolean; delay_seconds?: number; exploit_ratio?: number; duration_seconds?: number };
+  let body: { enabled?: boolean; delay_seconds?: number; duration_seconds?: number };
   try {
     body = (await request.json()) as typeof body;
   } catch {
@@ -195,8 +174,8 @@ if (path === "/api/loop/config" && request.method === "POST") {
     }
     if (typeof body.enabled === "boolean") current.enabled = body.enabled;
     if (typeof body.delay_seconds === "number") current.delay_seconds = Math.max(3, Math.min(600, body.delay_seconds));
-    if (typeof body.exploit_ratio === "number") current.exploit_ratio = Math.max(0, Math.min(1, body.exploit_ratio));
     if (typeof body.duration_seconds === "number") current.duration_seconds = Math.max(1, Math.min(60, body.duration_seconds));
+    delete current.exploit_ratio;
     await kv.put("loop_config", JSON.stringify(current));
     return json({ ok: true, config: current });
   } catch (e) {
@@ -210,7 +189,7 @@ if (path === "/api/loop/status" && request.method === "GET") {
   if (!kv) return json({ error: "Loop status unavailable: KV not bound", details: "MOTION_KV undefined" }, 500);
   try {
     const configRaw = await kv.get("loop_config");
-    let config: { enabled?: boolean; delay_seconds?: number; exploit_ratio?: number; duration_seconds?: number } = { enabled: true, delay_seconds: 30, exploit_ratio: 0.7, duration_seconds: 5 };
+    let config: { enabled?: boolean; delay_seconds?: number; duration_seconds?: number } = { enabled: true, delay_seconds: 30, duration_seconds: 5 };
     if (configRaw && configRaw.length > 0) {
       try {
         config = JSON.parse(configRaw) as typeof config;
@@ -244,11 +223,9 @@ if (path === "/api/loop/status" && request.method === "GET") {
       config: {
         enabled: config.enabled !== false,
         delay_seconds: typeof config.delay_seconds === "number" ? config.delay_seconds : 30,
-        exploit_ratio: typeof config.exploit_ratio === "number" ? config.exploit_ratio : 0.7,
         duration_seconds: Math.max(1, Math.min(60, duration)),
       },
       run_count: typeof state.run_count === "number" ? state.run_count : 0,
-      good_prompts_count: Array.isArray(state.good_prompts) ? state.good_prompts.length : 0,
       last_run_at: state.last_run_at ?? null,
       last_prompt: state.last_prompt ?? null,
       last_job_id: state.last_job_id ?? null,

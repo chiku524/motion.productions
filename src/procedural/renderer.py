@@ -214,35 +214,45 @@ def _render_pure_per_frame(
     t: float,
     seed: int,
     intensity: float,
+    motion_level: float = 1.0,
 ) -> tuple["np.ndarray", "np.ndarray", "np.ndarray"]:
     """
-    Pure-per-frame creation (§7): pure values from the registry at random pixel locations.
+    Pure-per-frame creation: registry colors meshed across pixels.
 
-    Within each frame, placement is by pixel (x, y) only; time is not a dimension inside
-    a single frame. Each pixel gets a pure color chosen by a deterministic hash of (x, y)
-    and optionally frame time t so that across frames the pattern varies (temporal
-    variation matters only in windows of multiple frames for extraction).
+    Each pixel interpolates two named registry colors through a smooth spatial
+    field that drifts with time and motion_level — unique combinations, not
+    hard cells or catalog objects.
     """
     n_colors = len(pure_colors)
     if n_colors == 0:
         raise ValueError("pure_colors must be non-empty for pure_per_frame")
-    # Deterministic per-pixel index: hash of position + time + seed
-    h = (
-        np.floor(xx * 997.0).astype(np.int64)
-        + np.floor(yy * 997.0).astype(np.int64) * 1000
-        + int(t * 200.0) * 1000000
-        + seed * 100000000
-    )
-    idx = np.mod(np.abs(h), n_colors)
     R_arr = np.array([c[0] for c in pure_colors], dtype=np.float32)
     G_arr = np.array([c[1] for c in pure_colors], dtype=np.float32)
     B_arr = np.array([c[2] for c in pure_colors], dtype=np.float32)
-    r = R_arr[idx]
-    g = G_arr[idx]
-    b = B_arr[idx]
-    # Cell-stable grain so instanced clips do not shear from float sin-hash
+
+    field_a = _hash_noise(xx, yy, seed, scale=31.0)
+    field_b = _hash_noise(xx + 0.17, yy + 0.13, seed + 19, scale=53.0)
+    speed = 0.35 + 0.85 * float(np.clip(motion_level, 0.2, 8.0)) / 8.0
+    w = 0.5 + 0.5 * np.sin(
+        xx * (2.4 + 3.1 * field_a)
+        + yy * (2.1 + 2.7 * field_b)
+        + t * speed * 6.283185307179586
+        + (seed % 1000) * 0.001
+    )
+    h = (
+        np.floor(xx * 17.0 + field_a * 3.0).astype(np.int64)
+        + np.floor(yy * 13.0 + field_b * 5.0).astype(np.int64) * 31
+        + seed * 17
+    )
+    idx_a = np.mod(np.abs(h), n_colors)
+    step = 1 if n_colors < 2 else 1 + np.mod(np.abs(h // 7), n_colors - 1)
+    idx_b = np.mod(idx_a + step, n_colors)
+    one_minus = 1.0 - w
+    r = R_arr[idx_a] * one_minus + R_arr[idx_b] * w
+    g = G_arr[idx_a] * one_minus + G_arr[idx_b] * w
+    b = B_arr[idx_a] * one_minus + B_arr[idx_b] * w
     n = _hash_noise(xx, yy, seed + int(t * 100.0), scale=97.0)
-    amp = 12 * intensity
+    amp = 8 * intensity
     r = np.clip(r + (n - 0.5) * amp, 0, 255)
     g = np.clip(g + (n - 0.5) * amp, 0, 255)
     b = np.clip(b + (n - 0.5) * amp, 0, 255)
@@ -956,7 +966,8 @@ def render_frame(
     xx, yy = _apply_camera_transform(xx, yy, zoom, pan_x, pan_y, rotate)
 
     if creation_mode == "pure_per_frame" and pure_colors:
-        r, g, b = _render_pure_per_frame(xx, yy, pure_colors, t_abs, seed, intensity)
+        ml = float(getattr(spec, "motion_level", None) or 1.0)
+        r, g, b = _render_pure_per_frame(xx, yy, pure_colors, t_abs, seed, intensity, motion_level=ml)
     else:
         v = _gradient_value(
             xx, yy, gradient_type, motion_val,

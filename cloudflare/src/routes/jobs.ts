@@ -299,38 +299,6 @@ if (feedbackMatch && request.method === "POST") {
     .run();
   await logEvent(env, "feedback", id, { rating });
 
-  // Thumbs-up: promote prompt into loop good_prompts so exploit favors human-liked mini-scenes
-  // Thumbs-down: remove from good_prompts and track as bad so the loop avoids replaying it
-  if (env.MOTION_KV) {
-    try {
-      const job = await db.prepare("SELECT prompt FROM jobs WHERE id = ?").bind(id).first<{ prompt: string }>();
-      const prompt = (job?.prompt || "").trim().slice(0, 500);
-      if (prompt) {
-        const raw = await env.MOTION_KV.get("loop_state");
-        const state = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
-        let good = Array.isArray(state.good_prompts)
-          ? (state.good_prompts as unknown[]).map((p) => String(p ?? "").slice(0, 500))
-          : [];
-        let bad = Array.isArray(state.bad_prompts)
-          ? (state.bad_prompts as unknown[]).map((p) => String(p ?? "").slice(0, 500))
-          : [];
-        if (rating === 2) {
-          good = good.filter((p) => p !== prompt);
-          good.push(prompt);
-          bad = bad.filter((p) => p !== prompt);
-        } else if (rating === 1) {
-          good = good.filter((p) => p !== prompt);
-          if (!bad.includes(prompt)) bad.push(prompt);
-        }
-        state.good_prompts = good.slice(-200);
-        state.bad_prompts = bad.slice(-100);
-        await env.MOTION_KV.put("loop_state", JSON.stringify(state));
-      }
-    } catch (e) {
-      console.error("feedback→good/bad_prompts failed:", e);
-    }
-  }
-
   return json({ id: fid, rating, status: "saved" }, 201);
 }
 

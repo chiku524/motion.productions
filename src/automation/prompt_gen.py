@@ -503,7 +503,7 @@ def generate_targeted_color_family_prompt(
 ) -> str | None:
     """
     Bias prompts toward underfilled hue families (registry explorer mission).
-    Everyday phrasing so creation still reads like a user ask.
+    Abstract mesh phrasing so creation stays a pixel field, not a catalog object.
     """
     from ..knowledge.mission_targets import (
         color_family_prompt_bits,
@@ -518,16 +518,22 @@ def generate_targeted_color_family_prompt(
         target = secure_choice(under) if under else "blue"
     # Prefer light/deep shades randomly to widen shade brackets
     shade = secure_choice(["deep", "mid", "light", "muted"])
-    subject, cue = color_family_prompt_bits(target, shade)
-    setting = secure_choice(_SETTING_PHRASES + ["at dusk", "across a quiet landscape", "over still water"])
+    _subject, cue = color_family_prompt_bits(target, shade)
+    hue = target
+    music = secure_choice([
+        "calm ambient music",
+        "dreamy ambient music",
+        "a playful beat",
+        "dark music",
+        "cinematic music",
+    ])
     templates = [
-        f"a {cue} {subject} scene {setting}",
-        f"{cue} {subject} tones {setting}",
-        f"soft {subject} light, {cue} atmosphere {setting}",
-        f"a {cue} {subject} palette {setting}",
-        f"close-up textures in {cue} {subject} {setting}",
-        f"a {cue} {subject} wash {setting} with calm ambient music",
-        f"{cue} {subject} glow {setting} with a slow drifting orb",
+        f"pure color mesh of {cue} {hue} meshing with {music}",
+        f"pixel field: {cue} {hue} washing",
+        f"color mesh of {cue} {hue} pulsing with {music}",
+        f"abstract pixel wash of {cue} {hue}",
+        f"per-frame pure mesh: {cue} {hue} blooming",
+        f"rainbow mesh of {cue} {hue} drifting with {music}",
     ]
     for _ in range(24):
         prompt = secure_choice(templates)
@@ -960,65 +966,69 @@ def _compose_mini_scene(mode: str) -> str:
     return _finish_mini(f"{art} {color} {label} {verb} {traj}{set_bit}")
 
 
-def mutate_liked_prompt(prompt: str, *, avoid: set[str] | None = None) -> str | None:
+def _named_registry_colors(knowledge: dict[str, Any] | None) -> list[str]:
+    """Named static colors from for-creation knowledge; fall back to hue words."""
+    names: list[str] = []
+    seen: set[str] = set()
+    by_name = (knowledge or {}).get("color_by_name") or {}
+    if isinstance(by_name, dict):
+        for nm in by_name.keys():
+            s = str(nm or "").strip().lower()
+            if s and s not in seen and 1 < len(s) < 40:
+                seen.add(s)
+                names.append(s)
+    static = (knowledge or {}).get("static_colors") or {}
+    if isinstance(static, dict):
+        for data in static.values():
+            if not isinstance(data, dict):
+                continue
+            s = str(data.get("name") or "").strip().lower()
+            if s and s not in seen and 1 < len(s) < 40:
+                seen.add(s)
+                names.append(s)
+    return names or list(_MINI_COLORS)
+
+
+def generate_abstract_mesh_prompt(
+    *,
+    knowledge: dict[str, Any] | None = None,
+    avoid: set[str] | None = None,
+    family: str | None = None,
+) -> str | None:
     """
-    Exploit human-liked prompts by mutating setting / expression / direction
-    instead of replaying the exact string — grows discovery while keeping quality.
+    Unique abstract pixel-mesh prompts from named registry colors.
+    Phrasing includes mesh/pure-color cues so creation stays per-frame mesh
+    instead of injecting catalog objects.
     """
     avoid = avoid or set()
-    base = (prompt or "").strip()
-    if not base or len(base) < 8:
-        return None
-    lower = base.lower()
-    variants: list[str] = []
-
-    # Swap / inject setting
-    setting = secure_choice(_SETTING_PHRASES)
-    replaced = False
-    for phrase in _SETTING_PHRASES:
-        if phrase in lower:
-            variants.append(base.replace(phrase, setting).replace(phrase.title(), setting))
-            # case-insensitive replace once
-            idx = lower.find(phrase)
-            if idx >= 0:
-                variants.append(base[:idx] + setting + base[idx + len(phrase) :])
-            replaced = True
-            break
-    if not replaced:
-        # Insert setting before "with" if present
-        if " with " in lower:
-            i = lower.rfind(" with ")
-            variants.append(base[:i] + f" {setting}" + base[i:])
-        else:
-            variants.append(f"{base} {setting}")
-
-    # Flip left/right
-    if " left" in lower:
-        variants.append(base.replace(" left", " right").replace(" Left", " Right"))
-    elif " right" in lower:
-        variants.append(base.replace(" right", " left").replace(" Right", " Left"))
-
-    # Expression swap for characters
-    for old, new in (("happy", "calm"), ("calm", "playful"), ("playful", "shy"), ("shy", "happy"),
-                     ("sad", "happy"), ("angry", "calm")):
-        if old in lower:
-            variants.append(base.replace(old, new).replace(old.title(), new))
-            break
-
-    candidates = []
-    seen: set[str] = set()
-    for v in variants:
-        v = " ".join(v.split()).strip()
-        if not v or v == base or v in avoid or v in seen:
-            continue
-        # Only reject if too close to *other* avoided prompts (not the parent)
-        if _is_near_duplicate(v, avoid - {base}):
-            continue
-        seen.add(v)
-        candidates.append(v)
-    if not candidates:
-        return None
-    return secure_choice(candidates)
+    names = _named_registry_colors(knowledge)
+    if family:
+        fam = family.strip().lower()
+        biased = [n for n in names if fam in n]
+        if biased:
+            names = biased + [n for n in names if n not in biased]
+    music = secure_choice(_MINI_MUSIC)
+    verbs = ["meshing", "washing", "drifting", "pulsing", "blooming", "folding"]
+    for _ in range(28):
+        a = secure_choice(names)
+        rest = [n for n in names if n != a] or names
+        b = secure_choice(rest)
+        c = secure_choice(names)
+        verb = secure_choice(verbs)
+        templates = [
+            f"pure color mesh of {a} and {b} {verb} with {music}",
+            f"pixel field: {a}, {b}, and {c} meshing",
+            f"color mesh of {a} washing into {b} with {music}",
+            f"abstract pixel wash of {a} and {b} {verb}",
+            f"per-frame pure mesh: {a} folding through {b} and {c}",
+            f"rainbow mesh of {a} and {b} drifting with {music}",
+            f"pixel wash of {a} blooming through {b}",
+            f"abstract mesh of {a}, {b}, and {c} pulsing with {music}",
+        ]
+        prompt = secure_choice(templates)
+        if prompt not in avoid and not _is_near_duplicate(prompt, avoid):
+            return prompt
+    return None
 
 
 def generate_mini_scene_prompt(
