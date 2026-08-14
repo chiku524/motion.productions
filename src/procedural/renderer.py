@@ -843,8 +843,18 @@ def render_frame(
     palette = getattr(spec, "palette_colors", None)
     if not palette:
         palette = PALETTES.get(spec.palette_name, PALETTES["default"])
-    motion_fn = get_motion_func(spec.motion_type)
-    motion_val = motion_fn(t_motion)
+    from .motion import motion_recipe_value
+    recipe_level = getattr(spec, "motion_level", None)
+    if recipe_level is not None:
+        motion_val = motion_recipe_value(
+            t_motion,
+            level=float(recipe_level),
+            std=float(getattr(spec, "motion_std", None) or 0.0),
+            rhythm=getattr(spec, "motion_rhythm", "steady") or "steady",
+            smoothness=getattr(spec, "motion_smoothness", "smooth") or "smooth",
+        )
+    else:
+        motion_val = get_motion_func(spec.motion_type)(t_motion)
     directionality = getattr(spec, "motion_directionality", "none") or "none"
     smoothness = getattr(spec, "motion_smoothness", "smooth") or "smooth"
     intensity = max(0.1, min(1.0, spec.intensity))

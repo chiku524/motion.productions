@@ -13,14 +13,14 @@ export async function handleJobsRoutes(
 ): Promise<Response | null> {
   const db = getDb(env);
 
-  // GET /api/jobs?status=pending|completed — list jobs (pending for worker; completed for library)
+  // GET /api/jobs?status=pending|completed — list jobs (pending for webjobs; loop-owned explorer/exploiter/main stay off this queue)
 if (path === "/api/jobs" && request.method === "GET") {
   const url = new URL(request.url);
   const status = url.searchParams.get("status");
   const limit = Math.min(parseInt(url.searchParams.get("limit") ?? "24", 10) || 24, 100);
   if (status === "pending") {
     const rows = await db.prepare(
-      "SELECT id, prompt, duration_seconds, created_at FROM jobs WHERE status = 'pending' ORDER BY created_at ASC LIMIT ?"
+      "SELECT id, prompt, duration_seconds, created_at FROM jobs WHERE status = 'pending' AND (workflow_type IS NULL OR workflow_type = 'web') ORDER BY created_at ASC LIMIT ?"
     )
       .bind(limit)
       .all<{ id: string; prompt: string; duration_seconds: number | null; created_at: string }>();

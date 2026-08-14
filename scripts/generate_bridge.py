@@ -33,6 +33,8 @@ def _learning_spec_payload(spec) -> dict:
     return {
         "palette_name": getattr(spec, "palette_name", ""),
         "motion_type": getattr(spec, "motion_type", ""),
+        "motion_level": getattr(spec, "motion_level", None),
+        "motion_std": getattr(spec, "motion_std", None),
         "intensity": getattr(spec, "intensity", 1.0),
         "gradient_type": getattr(spec, "gradient_type", None),
         "camera_motion": getattr(spec, "camera_motion", None),

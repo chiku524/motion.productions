@@ -25,18 +25,77 @@ def pulse(t: float, freq: float = 0.5) -> float:
 
 
 def get_motion_func(motion_type: str) -> Callable[[float], float]:
-    """Return a time→value function for the given motion type (our data)."""
-    if motion_type == "slow":
-        return lambda t: ease_in_out((t * 0.2) % 1.0)
-    if motion_type == "wave":
-        return lambda t: 0.5 + 0.5 * wave(t, 0.3)
-    if motion_type == "flow":
-        return lambda t: flow(t, 0.3)
-    if motion_type == "fast":
-        return lambda t: (t * 2.0) % 1.0
-    if motion_type == "pulse":
-        return lambda t: pulse(t, 0.8)
-    return lambda t: flow(t, 0.3)
+    """Legacy label → numeric recipe. Prefer motion_recipe_value when level is known."""
+    level, rhythm = _label_to_level_rhythm(motion_type)
+    return lambda t: motion_recipe_value(t, level=level, rhythm=rhythm)
+
+
+def _label_to_level_rhythm(motion_type: str) -> tuple[float, str]:
+    t = (motion_type or "flow").strip().lower()
+    if t == "slow":
+        return 3.0, "steady"
+    if t == "wave":
+        return 8.0, "wave"
+    if t == "fast":
+        return 18.0, "steady"
+    if t == "pulse":
+        return 10.0, "pulsing"
+    return 6.0, "steady"
+
+
+def label_from_motion_level(level: float, rhythm: str = "steady") -> str:
+    """Display label derived from numeric recipe (not a closed catalog the renderer switches on)."""
+    r = (rhythm or "steady").strip().lower()
+    if r == "pulsing":
+        return "pulse"
+    if r == "wave":
+        return "wave"
+    lv = float(level)
+    if lv < 4.0:
+        return "slow"
+    if lv >= 16.0:
+        return "fast"
+    return "flow"
+
+
+def motion_recipe_value(
+    t: float,
+    *,
+    level: float = 8.0,
+    std: float = 0.0,
+    rhythm: str = "steady",
+    smoothness: str = "smooth",
+) -> float:
+    """
+    Continuous 0–1 motion value from a numeric recipe.
+
+    level: extraction-scale 0–25 (higher = faster / larger).
+    std: motion variance; adds wobble.
+    rhythm / smoothness: MOTION_ORIGINS axes, interpolated rather than enum-switched.
+    """
+    lv = max(0.0, min(25.0, float(level)))
+    speed = max(0.05, min(2.5, lv / 10.0))
+    amp = max(0.15, min(1.0, lv / 20.0))
+    wobble = max(0.0, min(0.35, float(std) / 40.0))
+    r = (rhythm or "steady").strip().lower()
+    if r == "pulsing":
+        base = pulse(t, 0.3 + speed * 0.4)
+    elif r == "wave":
+        base = 0.5 + 0.5 * wave(t, 0.15 + speed * 0.12)
+    elif r == "random":
+        base = 0.5 + 0.5 * math.sin(t * (3.1 + speed) + math.sin(t * 11.0))
+    else:
+        drift = flow(t, 0.15 + speed * 0.1)
+        sine = 0.5 + 0.5 * math.sin(2 * math.pi * speed * 0.15 * t)
+        base = (1.0 - amp) * drift + amp * sine
+    if wobble:
+        base = base * (1.0 - wobble) + wobble * (0.5 + 0.5 * math.sin(t * 7.3 + float(std)))
+    s = (smoothness or "smooth").strip().lower()
+    if s == "jerky":
+        base = round(base * 6) / 6.0
+    elif s == "rough":
+        base = round(base * 12) / 12.0
+    return max(0.0, min(1.0, float(base)))
 
 
 def directionality_offsets(

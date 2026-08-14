@@ -585,7 +585,7 @@ if (path === "/api/knowledge/for-creation" && request.method === "GET") {
   // Single batch reduces D1 round-trips and CPU overhead
   const batchResults = await db.batch([
     db.prepare("SELECT color_key, r, g, b, count, sources_json, name FROM learned_colors ORDER BY count DESC LIMIT ?").bind(limit),
-    db.prepare("SELECT profile_key, motion_level, motion_std, motion_trend, count, sources_json, name FROM learned_motion ORDER BY count DESC LIMIT ?").bind(limit),
+    db.prepare("SELECT profile_key, motion_level, motion_std, motion_trend, motion_direction, motion_rhythm, count, sources_json, name FROM learned_motion ORDER BY count DESC LIMIT ?").bind(limit),
     db.prepare("SELECT domain, inputs_json, output_json, source_prompt, created_at FROM learned_blends WHERE domain = 'audio' ORDER BY created_at DESC LIMIT ?").bind(limit),
     db.prepare("SELECT output_json FROM learned_blends WHERE domain = 'gradient' ORDER BY created_at DESC LIMIT ?").bind(limit),
     db.prepare("SELECT gradient_type FROM learned_gradient ORDER BY count DESC LIMIT ?").bind(limit),
@@ -598,7 +598,7 @@ if (path === "/api/knowledge/for-creation" && request.method === "GET") {
     db.prepare("SELECT aspect, entry_key, value, name, count FROM narrative_entries ORDER BY count DESC LIMIT ?").bind(Math.min(colorScan, 200)),
   ]);
   type ColorRow = { color_key: string; r: number; g: number; b: number; count: number; sources_json: string | null; name: string };
-  type MotionRow = { profile_key: string; motion_level: number; motion_std: number; motion_trend: string; count: number; sources_json: string | null; name: string | null };
+  type MotionRow = { profile_key: string; motion_level: number; motion_std: number; motion_trend: string; motion_direction: string | null; motion_rhythm: string | null; count: number; sources_json: string | null; name: string | null };
   type AudioRow = { domain: string; inputs_json: string; output_json: string; source_prompt: string | null; created_at: string };
   type OutputRow = { output_json: string };
   type GradientRow = { gradient_type: string };
@@ -625,6 +625,8 @@ if (path === "/api/knowledge/for-creation" && request.method === "GET") {
     motion_level: r.motion_level,
     motion_std: r.motion_std,
     motion_trend: r.motion_trend,
+    motion_direction: r.motion_direction ?? "none",
+    motion_rhythm: r.motion_rhythm ?? "steady",
     count: r.count,
     sources: r.sources_json ? (JSON.parse(r.sources_json) as string[]) : [],
     name: r.name,

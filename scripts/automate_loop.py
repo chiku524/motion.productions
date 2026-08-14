@@ -36,6 +36,12 @@ def _loop_extraction_focus() -> str:
     return v if v in ("frame", "window", "all") else "all"
 
 
+def _loop_state_worker() -> str:
+    """Per-worker KV key so explorer/balanced counters are not last-writer-wins on shared loop_state."""
+    w = (os.environ.get("LOOP_WORKFLOW_TYPE") or "").strip().lower()
+    return w if w in ("explorer", "exploiter", "main", "balanced") else "main"
+
+
 def baseline_state() -> dict:
     """Fresh state on each restart."""
     return {
@@ -291,7 +297,9 @@ def _load_coverage(api_base: str) -> dict | None:
 def _load_state(api_base: str) -> dict:
     """Load state from API (KV); falls back to baseline if unavailable. Retries on 5xx/connection."""
     try:
-        data = api_request_with_retry(api_base, "GET", "/api/loop/state", timeout=15)
+        data = api_request_with_retry(
+            api_base, "GET", f"/api/loop/state?worker={_loop_state_worker()}", timeout=15
+        )
         s = data.get("state", {})
         good = list(s.get("good_prompts", []))[-200:]
         bad = list(s.get("bad_prompts", []))[-100:]
@@ -343,7 +351,7 @@ def _save_state(api_base: str, state: dict, run_count: int) -> None:
         # KV 1 write/sec — use extra retries for 429
         api_request(
             api_base, "POST", "/api/loop/state",
-            data={"state": state},
+            data={"state": state, "worker": _loop_state_worker()},
             timeout=15,
             max_retries=5,
             backoff_seconds=2.0,
@@ -429,6 +437,8 @@ def _post_learning_with_retry(
         "spec": {
             "palette_name": getattr(spec, "palette_name", ""),
             "motion_type": getattr(spec, "motion_type", ""),
+            "motion_level": getattr(spec, "motion_level", None),
+            "motion_std": getattr(spec, "motion_std", None),
             "intensity": getattr(spec, "intensity", 1.0),
             "gradient_type": getattr(spec, "gradient_type", None),
             "camera_motion": getattr(spec, "camera_motion", None),

@@ -83,3 +83,64 @@ class TestBuilderAndSync(unittest.TestCase):
         self.assertEqual(m["by_aspect"]["static_colors"], 2)
         self.assertEqual(m["by_aspect"]["dynamic_motion"], 3)
         self.assertNotIn("dynamic_lighting", m["by_aspect"])
+
+
+class TestMotionRecipes(unittest.TestCase):
+    """Numeric motion recipes must not collapse learned_motion onto five enum labels."""
+
+    def test_learned_level_copied_onto_spec(self):
+        from src.creation.builder import build_spec_from_instruction
+        from src.interpretation.schema import InterpretedInstruction
+
+        instruction = InterpretedInstruction(
+            raw_prompt="abstract color field",
+            palette_name="default",
+            motion_type="flow",
+            intensity=0.5,
+        )
+        knowledge = {
+            "learned_motion": [
+                {
+                    "motion_level": 22.4,
+                    "motion_std": 4.1,
+                    "motion_trend": "steady",
+                    "motion_direction": "horizontal",
+                    "motion_rhythm": "pulsing",
+                    "count": 1,
+                },
+            ],
+        }
+        spec = build_spec_from_instruction(instruction, knowledge=knowledge)
+        self.assertAlmostEqual(spec.motion_level, 22.4, places=1)
+        self.assertAlmostEqual(spec.motion_std, 4.1, places=1)
+        self.assertEqual(spec.motion_rhythm, "pulsing")
+        self.assertEqual(spec.motion_directionality, "horizontal")
+        self.assertEqual(spec.motion_type, "pulse")
+
+    def test_explicit_motion_keeps_label_recipe(self):
+        from src.creation.builder import build_spec_from_instruction
+        from src.interpretation.schema import InterpretedInstruction
+
+        instruction = InterpretedInstruction(
+            raw_prompt="slow pulse",
+            palette_name="default",
+            motion_type="pulse",
+            intensity=0.5,
+        )
+        knowledge = {
+            "learned_motion": [{"motion_level": 22.4, "motion_std": 1.0, "motion_trend": "steady", "count": 1}],
+        }
+        spec = build_spec_from_instruction(instruction, knowledge=knowledge)
+        self.assertEqual(spec.motion_type, "pulse")
+        self.assertAlmostEqual(spec.motion_level, 10.0, places=1)
+
+    def test_recipe_value_varies_with_level(self):
+        from src.procedural.motion import get_motion_func, motion_recipe_value
+
+        slow = [motion_recipe_value(t, level=2.0) for t in (0.0, 0.5, 1.0, 2.0)]
+        fast = [motion_recipe_value(t, level=22.0) for t in (0.0, 0.5, 1.0, 2.0)]
+        self.assertNotEqual(slow, fast)
+        pulse = get_motion_func("pulse")(0.25)
+        self.assertGreaterEqual(pulse, 0.0)
+        self.assertLessEqual(pulse, 1.0)
+

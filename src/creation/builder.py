@@ -83,61 +83,65 @@ def _has_subject_look(instruction: InterpretedInstruction) -> bool:
     return False
 
 
-def _profile_key_to_motion_type(profile: dict[str, Any] | str) -> str | None:
-    """
-    Map learned_motion profile (dict or profile_key string) → creation motion_type.
-    profile_key format: level_trend_direction_rhythm (e.g. 5.2_steady_horizontal_steady).
-    """
-    if isinstance(profile, dict):
-        trend = profile.get("motion_trend")
-        key = profile.get("key", "")
-    else:
-        key = str(profile)
-        parts = key.split("_")
-        trend = parts[1] if len(parts) >= 2 else parts[-1]
-    trend = (trend or "").strip().lower() or (key.split("_")[-1] if "_" in key else "")
-    mapping = {
-        "steady": "flow", "pulsing": "pulse", "wave": "wave", "slow": "slow",
-        "fast": "fast", "medium": "flow", "static": "slow", "increasing": "fast",
-        "decreasing": "slow", "neutral": "flow",
-    }
-    motion = mapping.get(trend, trend)
-    return motion if motion in _MOTION_VALID else None
-
-
-def _motion_from_registry(
+def _motion_recipe_from_registry(
     knowledge: dict[str, Any] | None,
     *,
     avoid_motion: list[str] | None = None,
     seed_hint: str | None = None,
-) -> str | None:
-    """
-    Pick a motion type from learned_motion (registry).
-    Excludes avoid_motion. When seed_hint provided, uses deterministic selection.
-    """
+) -> dict[str, Any] | None:
+    """Pick a learned_motion profile as numeric recipe (level/std/rhythm), not a 5-name enum."""
+    from ..procedural.motion import label_from_motion_level
+
     learned = (knowledge or {}).get("learned_motion", []) or []
     avoid = set(avoid_motion or [])
-    valid_profiles = []
-    for m in learned[:30]:
+    valid: list[dict[str, Any]] = []
+    for m in learned[:40]:
         if not isinstance(m, dict):
             continue
-        motion = _profile_key_to_motion_type(m)
-        if motion and motion in _MOTION_VALID and motion not in avoid:
-            valid_profiles.append((m, motion))
-    if not valid_profiles:
+        try:
+            level = float(m.get("motion_level") if m.get("motion_level") is not None else 8.0)
+        except (TypeError, ValueError):
+            continue
+        std = 0.0
+        try:
+            std = float(m.get("motion_std") or 0.0)
+        except (TypeError, ValueError):
+            std = 0.0
+        trend = (m.get("motion_trend") or "steady").strip().lower()
+        rhythm_col = (m.get("motion_rhythm") or "").strip().lower()
+        rhythm = rhythm_col if rhythm_col in ("steady", "pulsing", "wave", "random") else (
+            trend if trend in ("steady", "pulsing", "wave", "random") else "steady"
+        )
+        direction = (m.get("motion_direction") or "none").strip().lower()
+        if direction in ("", "neutral"):
+            direction = "none"
+        if direction not in ("none", "horizontal", "vertical", "diagonal", "radial"):
+            direction = "none"
+        label = label_from_motion_level(level, rhythm)
+        if label in avoid:
+            continue
+        valid.append({
+            "level": level,
+            "std": std,
+            "rhythm": rhythm,
+            "direction": direction,
+            "label": label,
+            "count": m.get("count", 0),
+        })
+    if not valid:
         return None
     if seed_hint:
-        idx = hash(seed_hint) % len(valid_profiles)
+        idx = hash(seed_hint) % len(valid)
         idx = idx if idx >= 0 else -idx
-        _, motion = valid_profiles[idx]
-        return motion
-    # Bias toward underused (lower count) motion profiles
-    picked = weighted_choice_favor_underused(valid_profiles, lambda p: p[0].get("count", 0))
-    if picked is None:
-        _, motion = secure_choice(valid_profiles)
-    else:
-        _, motion = picked
-    return motion
+        return valid[idx]
+    picked = weighted_choice_favor_underused(valid, lambda p: p.get("count", 0))
+    return picked if picked is not None else secure_choice(valid)
+
+
+def _level_from_motion_label(motion: str) -> float:
+    from ..procedural.motion import _label_to_level_rhythm
+    level, _rhythm = _label_to_level_rhythm(motion)
+    return level
 
 
 def _intensity_from_learned_motion(knowledge: dict[str, Any] | None) -> float | None:
@@ -276,20 +280,32 @@ def build_spec_from_instruction(
             gradient = vis["gradient"]
 
     lock_look = _has_subject_look(instruction)
+    motion_level: float | None = None
+    motion_std: float | None = None
     # Registry exploration only when the prompt has no subject/setting look to preserve.
     if gradient == DEFAULT_GRADIENT and not lock_look:
         pool = _pool_from_knowledge(knowledge, "learned_gradient", "origin_gradient", _GRADIENT_VALID)
         gradient = secure_choice(pool) if pool else secure_choice(tuple(GRAPHICS_ORIGINS["gradient_type"]))
-    if motion == DEFAULT_MOTION and not lock_look:
-        motion = _motion_from_registry(
+    if motion == DEFAULT_MOTION:
+        recipe = _motion_recipe_from_registry(
             knowledge,
             avoid_motion=list(avoid_motion),
             seed_hint=instruction.raw_prompt,
         )
-        if not motion:
+        if recipe:
+            motion = recipe["label"]
+            motion_level = float(recipe["level"])
+            motion_std = float(recipe.get("std") or 0.0)
+            if recipe.get("rhythm") and motion_rhythm == "steady":
+                motion_rhythm = str(recipe["rhythm"])
+            if recipe.get("direction") and motion_directionality == "none":
+                motion_directionality = str(recipe["direction"])
+        elif not lock_look:
             origin_m = (knowledge or {}).get("origin_motion") or []
             pool = [v for v in origin_m if isinstance(v, str) and v in _MOTION_VALID and v not in avoid_motion]
             motion = secure_choice(pool) if pool else secure_choice(tuple(v for v in _MOTION_VALID if v not in avoid_motion) or tuple(_MOTION_VALID))
+    if motion_level is None:
+        motion_level = _level_from_motion_label(motion)
     if camera == DEFAULT_CAMERA and not lock_look:
         pool = _pool_from_knowledge(knowledge, "learned_camera", "origin_camera", _CAMERA_VALID)
         camera = secure_choice(pool) if pool else secure_choice([v for v in CAMERA_ORIGINS["motion_type"] if v in _CAMERA_VALID] or list(_CAMERA_VALID))
@@ -556,6 +572,8 @@ def build_spec_from_instruction(
         motion_directionality=motion_directionality,
         motion_smoothness=motion_smoothness,
         motion_rhythm=motion_rhythm,
+        motion_level=motion_level,
+        motion_std=motion_std,
         sfx_events=sfx_events or None,
         scene_layers=scene_layers,
         text_overlay=text_overlay,
@@ -900,10 +918,7 @@ def _build_motion_from_blending(
     avoid_motion: set[str] | None = None,
     seed_hint: str | None = None,
 ) -> str:
-    """
-    Blend motion primitives (and optionally learned) → single motion value.
-    Excludes avoid_motion. Uses deterministic learned selection when seed_hint provided.
-    """
+    """Blend prompt motion_hints only. Learned motion is applied as a numeric recipe, not remapped onto five labels."""
     from ..knowledge.blending import blend_motion_params
 
     avoid = avoid_motion or set()
@@ -915,27 +930,6 @@ def _build_motion_from_blending(
     result = hints[0]
     for hint in hints[1:]:
         result = blend_motion_params(result, hint, weight=0.5)
-
-    # Optionally blend with learned motion — exclude avoid, deterministic by seed_hint
-    learned = (knowledge or {}).get("learned_motion", []) or []
-    valid_learned: list[tuple[dict, str]] = []
-    for m in learned[:20]:
-        if not isinstance(m, dict):
-            continue
-        motion = _profile_key_to_motion_type(m)
-        if motion and motion in _MOTION_VALID and motion not in avoid:
-            valid_learned.append((m, motion))
-    if valid_learned:
-        # Variety: 50% random from registry, 50% deterministic by seed so runs are unpredictable
-        from ..random_utils import secure_random
-        if seed_hint and secure_random() >= 0.5:
-            idx = hash(seed_hint) % len(valid_learned)
-            idx = idx if idx >= 0 else -idx
-        else:
-            idx = int(secure_random() * len(valid_learned)) % len(valid_learned)
-        _, learned_motion = valid_learned[idx]
-        result = blend_motion_params(result, learned_motion, weight=0.35)
-
     return result
 
 

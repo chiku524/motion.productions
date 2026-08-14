@@ -11,6 +11,18 @@ import {
   SOUND_ORIGIN_PRIMARIES,
 } from "../registryConstants.generated";
 
+const LOOP_WORKER_RE = /^[a-z][a-z0-9_-]{0,31}$/;
+
+function sanitizeLoopWorker(raw: unknown): string | null {
+  const w = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+  return LOOP_WORKER_RE.test(w) ? w : null;
+}
+
+function asPromptList(v: unknown, max: number): string[] {
+  if (!Array.isArray(v)) return [];
+  return v.map((p) => String(p ?? "").slice(0, 500)).filter(Boolean).slice(-max);
+}
+
 export async function handleLoopRoutes(
   request: Request,
   env: Env,
@@ -23,9 +35,20 @@ if (path === "/api/loop/state" && request.method === "GET") {
   const kv = env.MOTION_KV;
   if (!kv) return json({ error: "Loop state unavailable: KV not bound", details: "MOTION_KV undefined" }, 503);
   try {
-    const raw = await kv.get("loop_state");
-    const state = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
-    return json({ state });
+    const worker = sanitizeLoopWorker(new URL(request.url).searchParams.get("worker"));
+    const sharedRaw = await kv.get("loop_state");
+    const shared = sharedRaw ? (JSON.parse(sharedRaw) as Record<string, unknown>) : {};
+    if (!worker) return json({ state: shared });
+    const workerRaw = await kv.get(`loop_state:${worker}`);
+    if (!workerRaw) return json({ state: shared });
+    const workerState = JSON.parse(workerRaw) as Record<string, unknown>;
+    return json({
+      state: {
+        ...workerState,
+        good_prompts: Array.isArray(shared.good_prompts) ? shared.good_prompts : workerState.good_prompts,
+        bad_prompts: Array.isArray(shared.bad_prompts) ? shared.bad_prompts : workerState.bad_prompts,
+      },
+    });
   } catch (e) {
     return json({ error: "Failed to load loop state", details: String(e) }, 500);
   }
@@ -35,32 +58,28 @@ if (path === "/api/loop/state" && request.method === "GET") {
 if (path === "/api/loop/state" && request.method === "POST") {
   const kv = env.MOTION_KV;
   if (!kv) return json({ error: "Loop state unavailable: KV not bound", details: "MOTION_KV undefined" }, 503);
-  let body: { state?: Record<string, unknown> };
+  let body: { state?: Record<string, unknown>; worker?: string };
   try {
-    body = (await request.json()) as { state?: Record<string, unknown> };
+    body = (await request.json()) as { state?: Record<string, unknown>; worker?: string };
   } catch {
     return err("Invalid JSON");
   }
+  const worker = sanitizeLoopWorker(body.worker) ?? sanitizeLoopWorker(new URL(request.url).searchParams.get("worker"));
   const raw = body.state && typeof body.state === "object" ? body.state : {};
   // Sanitize: only allow safe JSON; KV has 1 write/sec limit per key — client should space saves
-  const state: Record<string, unknown> = {};
-  state.run_count = typeof raw.run_count === "number" && Number.isFinite(raw.run_count) ? Math.floor(raw.run_count) : 0;
-  const incomingGood = Array.isArray(raw.good_prompts)
-    ? raw.good_prompts.map((p) => String(p ?? "").slice(0, 500)).filter(Boolean)
-    : [];
+  const counters: Record<string, unknown> = {};
+  counters.run_count = typeof raw.run_count === "number" && Number.isFinite(raw.run_count) ? Math.floor(raw.run_count) : 0;
+  const incomingGood = asPromptList(raw.good_prompts, 200);
   // Merge with existing KV good/bad prompts so gallery feedback survives worker state saves
   let existingGood: string[] = [];
   let existingBad: string[] = [];
+  let existingShared: Record<string, unknown> = {};
   try {
     const prevRaw = await kv.get("loop_state");
     if (prevRaw) {
-      const prev = JSON.parse(prevRaw) as { good_prompts?: unknown; bad_prompts?: unknown };
-      if (Array.isArray(prev.good_prompts)) {
-        existingGood = prev.good_prompts.map((p) => String(p ?? "").slice(0, 500)).filter(Boolean);
-      }
-      if (Array.isArray(prev.bad_prompts)) {
-        existingBad = prev.bad_prompts.map((p) => String(p ?? "").slice(0, 500)).filter(Boolean);
-      }
+      existingShared = JSON.parse(prevRaw) as Record<string, unknown>;
+      existingGood = asPromptList(existingShared.good_prompts, 200);
+      existingBad = asPromptList(existingShared.bad_prompts, 100);
     }
   } catch {
     /* ignore */
@@ -69,30 +88,48 @@ if (path === "/api/loop/state" && request.method === "POST") {
   for (const p of incomingGood) {
     if (!mergedGood.includes(p)) mergedGood.push(p);
   }
-  const incomingBad = Array.isArray(raw.bad_prompts)
-    ? raw.bad_prompts.map((p) => String(p ?? "").slice(0, 500)).filter(Boolean)
-    : [];
+  const incomingBad = asPromptList(raw.bad_prompts, 100);
   const mergedBad = [...existingBad];
   for (const p of incomingBad) {
     if (!mergedBad.includes(p)) mergedBad.push(p);
   }
   // Human demotion wins: never re-promote a bad prompt via loop state save
   const badSet = new Set(mergedBad);
-  state.good_prompts = mergedGood.filter((p) => !badSet.has(p)).slice(-200);
-  state.bad_prompts = mergedBad.slice(-100);
-  state.recent_prompts = Array.isArray(raw.recent_prompts)
-    ? raw.recent_prompts.slice(-200).map((p) => String(p ?? "").slice(0, 500))
+  const shared: Record<string, unknown> = { ...existingShared };
+  shared.good_prompts = mergedGood.filter((p) => !badSet.has(p)).slice(-200);
+  shared.bad_prompts = mergedBad.slice(-100);
+  shared.recent_prompts = asPromptList(raw.recent_prompts, 200);
+  shared.duration_base = typeof raw.duration_base === "number" && Number.isFinite(raw.duration_base) ? raw.duration_base : 6;
+  if (typeof raw.last_run_at === "string") shared.last_run_at = raw.last_run_at.slice(0, 50);
+  if (typeof raw.last_prompt === "string") shared.last_prompt = raw.last_prompt.slice(0, 100);
+  if (typeof raw.last_job_id === "string") shared.last_job_id = raw.last_job_id.slice(0, 80);
+  counters.recent_prompts = shared.recent_prompts;
+  counters.duration_base = shared.duration_base;
+  counters.exploit_count = typeof raw.exploit_count === "number" && Number.isFinite(raw.exploit_count) ? Math.floor(raw.exploit_count) : 0;
+  counters.explore_count = typeof raw.explore_count === "number" && Number.isFinite(raw.explore_count) ? Math.floor(raw.explore_count) : 0;
+  counters.interpretation_streak = typeof raw.interpretation_streak === "number" && Number.isFinite(raw.interpretation_streak) ? Math.floor(raw.interpretation_streak) : 0;
+  counters.interpretation_recent_buckets = Array.isArray(raw.interpretation_recent_buckets)
+    ? raw.interpretation_recent_buckets.slice(-12).map((b) => String(b ?? "").slice(0, 80))
     : [];
-  state.duration_base = typeof raw.duration_base === "number" && Number.isFinite(raw.duration_base) ? raw.duration_base : 6;
-  state.exploit_count = typeof raw.exploit_count === "number" && Number.isFinite(raw.exploit_count) ? Math.floor(raw.exploit_count) : 0;
-  state.explore_count = typeof raw.explore_count === "number" && Number.isFinite(raw.explore_count) ? Math.floor(raw.explore_count) : 0;
-  if (typeof raw.last_run_at === "string") state.last_run_at = raw.last_run_at.slice(0, 50);
-  if (typeof raw.last_prompt === "string") state.last_prompt = raw.last_prompt.slice(0, 100);
-  if (typeof raw.last_job_id === "string") state.last_job_id = raw.last_job_id.slice(0, 80);
+  if (typeof raw.last_run_at === "string") counters.last_run_at = raw.last_run_at.slice(0, 50);
+  if (typeof raw.last_prompt === "string") counters.last_prompt = raw.last_prompt.slice(0, 100);
+  if (typeof raw.last_job_id === "string") counters.last_job_id = raw.last_job_id.slice(0, 80);
+  if (!worker) {
+    shared.run_count = counters.run_count;
+    shared.exploit_count = counters.exploit_count;
+    shared.explore_count = counters.explore_count;
+    shared.interpretation_streak = counters.interpretation_streak;
+    shared.interpretation_recent_buckets = counters.interpretation_recent_buckets;
+  }
   try {
-    const payload = JSON.stringify(state);
-    if (payload.length > 25 * 1024 * 1024) return json({ error: "State too large for KV (max 25MB)" }, 413);
-    await kv.put("loop_state", payload);
+    const sharedPayload = JSON.stringify(shared);
+    if (sharedPayload.length > 25 * 1024 * 1024) return json({ error: "State too large for KV (max 25MB)" }, 413);
+    await kv.put("loop_state", sharedPayload);
+    if (worker) {
+      const workerPayload = JSON.stringify(counters);
+      if (workerPayload.length > 25 * 1024 * 1024) return json({ error: "State too large for KV (max 25MB)" }, 413);
+      await kv.put(`loop_state:${worker}`, workerPayload);
+    }
     return json({ ok: true });
   } catch (e) {
     const msg = String(e);

@@ -79,6 +79,9 @@ class SceneSpec:
     motion_directionality: str = "none"
     motion_smoothness: str = "smooth"
     motion_rhythm: str = "steady"
+    # Numeric motion recipe (extraction-scale 0–25). Renderer interpolates; motion_type is a label.
+    motion_level: float | None = None
+    motion_std: float | None = None
     sfx_events: list[dict] | None = None
     # Scene graph layers (Phase 2+): list of LayerSpec-like dicts
     scene_layers: list[dict] | None = None
@@ -259,6 +262,9 @@ def parse_prompt_to_spec(prompt: str, *, seed: int | None = None) -> SceneSpec:
 
     depth_parallax = any(w in KEYWORD_TO_DEPTH and KEYWORD_TO_DEPTH[w] for w in words)
 
+    from .motion import _label_to_level_rhythm
+    motion_level, _rhythm = _label_to_level_rhythm(motion)
+
     return SceneSpec(
         palette_name=palette,
         motion_type=motion,
@@ -281,6 +287,7 @@ def parse_prompt_to_spec(prompt: str, *, seed: int | None = None) -> SceneSpec:
         audio_tempo=audio_t,
         audio_mood=audio_m,
         audio_presence=audio_p,
+        motion_level=motion_level,
         text_overlay=None,
         text_position="center",
         educational_template=None,
