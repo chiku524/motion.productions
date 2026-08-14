@@ -30,9 +30,16 @@ class TestPhotorealismFoundation(unittest.TestCase):
         self.assertEqual(tex.shape, (32, 32, 3))
 
     def test_composition_balance_offset(self):
-        self.assertEqual(composition_balance_offset("left_heavy")[0], -0.14)
+        dx, dy = composition_balance_offset("left_heavy")
+        self.assertAlmostEqual(dx, -1.0 / 6.0, places=3)
+        self.assertEqual(dy, 0.0)
         self.assertGreater(composition_balance_offset("right_heavy")[0], 0)
         self.assertEqual(composition_balance_offset("balanced"), (0.0, 0.0))
+        # Close-ups scale the thirds offset down so the subject stays readable
+        self.assertLess(
+            abs(composition_balance_offset("left_heavy", "close_up")[0]),
+            abs(composition_balance_offset("left_heavy", "wide")[0]),
+        )
 
     def test_composition_shifts_layer_in_frame(self):
         from src.procedural.renderer import _render_layers_rgba

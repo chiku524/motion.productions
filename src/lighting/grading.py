@@ -115,32 +115,38 @@ def apply_style_look(
     frame: "np.ndarray",
     style: str,
 ) -> "np.ndarray":
-    """Light NumPy grades for anime / minimal / abstract styles."""
+    """NumPy grades so anime / minimal / abstract actually read as those looks."""
     import numpy as np
 
     s = (style or "cinematic").lower()
     if s in ("cinematic", "realistic", "photoreal", ""):
         return frame
     out = frame.astype(np.float32)
+    gray = 0.299 * out[..., 0] + 0.587 * out[..., 1] + 0.114 * out[..., 2]
+    gray3 = gray[..., None]
     if s == "anime":
-        # Boost saturation + mild posterize
-        gray = 0.299 * out[..., 0] + 0.587 * out[..., 1] + 0.114 * out[..., 2]
-        gray3 = gray[..., None]
-        out = gray3 + (out - gray3) * 1.35
-        out = np.round(out / 24.0) * 24.0
+        # Harder chroma, posterize, ink-line edges
+        out = gray3 + (out - gray3) * 1.55
+        out = np.round(out / 32.0) * 32.0
+        gy, gx = np.gradient(gray)
+        edge = np.clip(np.sqrt(gx * gx + gy * gy) / 18.0, 0.0, 1.0)
+        out = out * (1.0 - 0.55 * edge[..., None])
+        # Mild cel highlight on bright regions
+        hi = np.clip((gray - 160.0) / 80.0, 0.0, 1.0)
+        out = out + (18.0 * hi)[..., None]
     elif s == "minimal":
-        # Flatten contrast / desaturate slightly
-        gray = 0.299 * out[..., 0] + 0.587 * out[..., 1] + 0.114 * out[..., 2]
-        gray3 = gray[..., None]
-        out = gray3 + (out - gray3) * 0.55
-        out = (out - 128.0) * 0.85 + 128.0
+        out = gray3 + (out - gray3) * 0.35
+        out = (out - 128.0) * 0.7 + 140.0
     elif s in ("abstract", "experimental"):
-        # Chroma noise push
-        n = np.sin(out[..., 0] * 0.07 + out[..., 2] * 0.05) * 18.0
+        n = np.sin(out[..., 0] * 0.07 + out[..., 2] * 0.05) * 28.0
         out[..., 0] = out[..., 0] + n
-        out[..., 2] = out[..., 2] - n * 0.6
-        gray = 0.299 * out[..., 0] + 0.587 * out[..., 1] + 0.114 * out[..., 2]
-        out = gray[..., None] + (out - gray[..., None]) * 1.25
+        out[..., 2] = out[..., 2] - n * 0.7
+        out = gray3 + (out - gray3) * 1.45
+        # Hue-rotate-ish channel swap on a slice of luma
+        mask = (gray > 90) & (gray < 180)
+        swapped = out.copy()
+        swapped[..., 0], swapped[..., 2] = out[..., 2], out[..., 0]
+        out = np.where(mask[..., None], swapped * 0.55 + out * 0.45, out)
     if frame.dtype == np.uint8:
         return np.clip(out, 0, 255).astype(np.uint8)
     return np.clip(out, 0, 255)

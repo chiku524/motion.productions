@@ -404,6 +404,8 @@ def _accumulate_contact_shadows(
     composition_balance: str = "balanced",
     composition_symmetry: str = "slight",
     lighting_preset: str = "neutral",
+    smoothness: str = "smooth",
+    shot_type: str = "medium",
 ) -> "np.ndarray":
     """HxW soft contact-shadow alpha to darken the background before layer over."""
     from ..creation.scene_graph import (
@@ -418,7 +420,7 @@ def _accumulate_contact_shadows(
     yy, xx = np.mgrid[0:height, 0:width].astype(np.float32)
     xx = xx / max(1, width - 1)
     yy = yy / max(1, height - 1)
-    dx, dy = composition_balance_offset(composition_balance)
+    dx, dy = composition_balance_offset(composition_balance, shot_type)
     lighting_model = get_lighting_model(lighting_preset)
     for layer in layers:
         if not isinstance(layer, dict):
@@ -426,7 +428,7 @@ def _accumulate_contact_shadows(
         kind = str(layer.get("kind") or "circle")
         if kind == "cloud":
             continue
-        pose = sample_layer_at(layer, t)
+        pose = sample_layer_at(layer, t, smoothness=smoothness)
         cx = max(0.02, min(0.98, float(pose["x"]) + dx))
         cx = apply_composition_symmetry_x(cx, composition_symmetry)
         cy = max(0.02, min(0.98, float(pose["y"]) + dy))
@@ -477,6 +479,8 @@ def _render_layers_rgba(
     composition_symmetry: str = "slight",
     lighting_preset: str = "neutral",
     texture: "np.ndarray | None" = None,
+    smoothness: str = "smooth",
+    shot_type: str = "medium",
 ) -> tuple["np.ndarray", "np.ndarray"]:
     """
     Render stylized layers onto a transparent canvas.
@@ -497,7 +501,7 @@ def _render_layers_rgba(
     yy, xx = np.mgrid[0:height, 0:width].astype(np.float32)
     xx = xx / max(1, width - 1)
     yy = yy / max(1, height - 1)
-    dx, dy = composition_balance_offset(composition_balance)
+    dx, dy = composition_balance_offset(composition_balance, shot_type)
     lighting_model = get_lighting_model(lighting_preset)
     texture_mod = _sample_texture_mod(texture, xx, yy)
 
@@ -505,7 +509,7 @@ def _render_layers_rgba(
     for layer in sorted_layers:
         if not isinstance(layer, dict):
             continue
-        pose = sample_layer_at(layer, t)
+        pose = sample_layer_at(layer, t, smoothness=smoothness)
         kind = pose.get("kind") or layer.get("kind") or "circle"
         cx = max(0.02, min(0.98, float(pose["x"]) + dx))
         cx = apply_composition_symmetry_x(cx, composition_symmetry)
@@ -797,6 +801,8 @@ def _composite_scene_layers(
     composition_symmetry: str = "slight",
     lighting_preset: str = "neutral",
     texture: "np.ndarray | None" = None,
+    smoothness: str = "smooth",
+    shot_type: str = "medium",
 ) -> "np.ndarray":
     """Composite keyframed stylized layers onto an RGB float frame (over)."""
     bg = frame.astype(np.float32)
@@ -805,6 +811,8 @@ def _composite_scene_layers(
         composition_balance=composition_balance,
         composition_symmetry=composition_symmetry,
         lighting_preset=lighting_preset,
+        smoothness=smoothness,
+        shot_type=shot_type,
     )
     bg = _darken_with_shadows(bg, shadow_a)
     fg_rgb, fg_a = _render_layers_rgba(
@@ -813,6 +821,8 @@ def _composite_scene_layers(
         composition_symmetry=composition_symmetry,
         lighting_preset=lighting_preset,
         texture=texture,
+        smoothness=smoothness,
+        shot_type=shot_type,
     )
     a = fg_a[..., None]
     out = bg * (1.0 - a) + fg_rgb * a
@@ -935,17 +945,19 @@ def render_frame(
         i0 = np.clip(np.floor(idx).astype(np.int32), 0, len(palette) - 2)
         i1 = i0 + 1
         frac = idx - i0
-
-        r0 = np.array([palette[i][0] for i in i0.flat]).reshape(i0.shape)
-        g0 = np.array([palette[i][1] for i in i0.flat]).reshape(i0.shape)
-        b0 = np.array([palette[i][2] for i in i0.flat]).reshape(i0.shape)
-        r1 = np.array([palette[i][0] for i in i1.flat]).reshape(i1.shape)
-        g1 = np.array([palette[i][1] for i in i1.flat]).reshape(i1.shape)
-        b1 = np.array([palette[i][2] for i in i1.flat]).reshape(i1.shape)
-
-        r = r0 * (1 - frac) + r1 * frac
-        g = g0 * (1 - frac) + g1 * frac
-        b = b0 * (1 - frac) + b1 * frac
+        try:
+            from ..knowledge.color_space import lerp_palette_oklab_arrays
+            r, g, b = lerp_palette_oklab_arrays(palette, i0, i1, frac)
+        except ImportError:
+            r0 = np.array([palette[i][0] for i in i0.flat]).reshape(i0.shape)
+            g0 = np.array([palette[i][1] for i in i0.flat]).reshape(i0.shape)
+            b0 = np.array([palette[i][2] for i in i0.flat]).reshape(i0.shape)
+            r1 = np.array([palette[i][0] for i in i1.flat]).reshape(i1.shape)
+            g1 = np.array([palette[i][1] for i in i1.flat]).reshape(i1.shape)
+            b1 = np.array([palette[i][2] for i in i1.flat]).reshape(i1.shape)
+            r = r0 * (1 - frac) + r1 * frac
+            g = g0 * (1 - frac) + g1 * frac
+            b = b0 * (1 - frac) + b1 * frac
 
         n = np.sin(xx * 12.9898 + yy * 78.233 + (seed + t_abs * 100) * 43758.5453) * 43758.5453
         n = n - np.floor(n)
@@ -1000,6 +1012,8 @@ def render_frame(
                 composition_balance=composition_balance,
                 composition_symmetry=composition_symmetry,
                 lighting_preset=lighting_preset,
+                smoothness=smoothness,
+                shot_type=shot_type,
             ),
         )
         planes: list[tuple[np.ndarray, np.ndarray, float]] = []
@@ -1017,6 +1031,8 @@ def render_frame(
                 composition_symmetry=composition_symmetry,
                 lighting_preset=lighting_preset,
                 texture=texture,
+                smoothness=smoothness,
+                shot_type=shot_type,
             )
             planes.append((fg_rgb, fg_a, depth))
         frame = composite_depth_planes(
@@ -1032,6 +1048,8 @@ def render_frame(
             composition_symmetry=composition_symmetry,
             lighting_preset=lighting_preset,
             texture=texture,
+            smoothness=smoothness,
+            shot_type=shot_type,
         )
     elif shape_overlay in ("circle", "rect") and overlay_palette:
         frame = background.copy()
@@ -1043,7 +1061,7 @@ def render_frame(
         from .motion import directionality_offsets
         from ..creation.scene_graph import composition_balance_offset
         odx, ody = directionality_offsets(directionality, motion_val, smoothness=smoothness)
-        cdx, cdy = composition_balance_offset(composition_balance)
+        cdx, cdy = composition_balance_offset(composition_balance, shot_type)
         cx = (cx + odx + cdx) % 1.0
         cy = (cy + ody + cdy) % 1.0
         if shape_overlay == "circle":
@@ -1113,8 +1131,8 @@ def render_frame(
                     target = layer
                     break
             if target is not None:
-                pose = sample_layer_at(target, t_abs)
-                cdx, cdy = composition_balance_offset(composition_balance)
+                pose = sample_layer_at(target, t_abs, smoothness=smoothness)
+                cdx, cdy = composition_balance_offset(composition_balance, shot_type)
                 px = apply_composition_symmetry_x(
                     max(0.02, min(0.98, float(pose["x"]) + cdx)),
                     composition_symmetry,

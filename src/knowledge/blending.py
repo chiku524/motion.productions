@@ -104,7 +104,11 @@ def blend_colors(
     weight: float = 0.5,
     approach: BlendApproach = "linear",
 ) -> tuple[int, int, int]:
-    """Blend two RGB colors."""
+    """Blend two RGB colors. Linear/average mix in Oklab so hues stay intended."""
+    if approach in ("linear", "average"):
+        from .color_space import lerp_rgb_oklab
+        w = 0.5 if approach == "average" else weight
+        return lerp_rgb_oklab(rgb_a, rgb_b, w)
     r = _numeric_blend(rgb_a[0], rgb_b[0], weight, approach)
     g = _numeric_blend(rgb_a[1], rgb_b[1], weight, approach)
     b = _numeric_blend(rgb_a[2], rgb_b[2], weight, approach)

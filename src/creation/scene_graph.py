@@ -57,14 +57,23 @@ def _lerp(a: float, b: float, u: float) -> float:
     return a + (b - a) * u
 
 
-def sample_layer_at(layer: SceneLayer | dict[str, Any], t: float) -> dict[str, float]:
-    """Interpolate layer pose at time t (seconds)."""
+def sample_layer_at(
+    layer: SceneLayer | dict[str, Any],
+    t: float,
+    *,
+    smoothness: str = "smooth",
+) -> dict[str, float]:
+    """Interpolate layer pose at time t (seconds), eased by motion_smoothness."""
+    from ..procedural.look import ease_unit
+
     if isinstance(layer, dict):
         kfs = layer.get("keyframes") or []
         kind = layer.get("kind", "circle")
+        bounce = bool(layer.get("bounce"))
     else:
         kfs = [asdict(k) if hasattr(k, "__dataclass_fields__") else k for k in layer.keyframes]
         kind = layer.kind
+        bounce = bool(getattr(layer, "bounce", False))
     if not kfs:
         return {"x": 0.5, "y": 0.5, "scale": 1.0, "rot": 0.0, "opacity": 1.0, "kind": kind}
     kfs = sorted(kfs, key=lambda k: float(k.get("t", 0)))
@@ -93,13 +102,19 @@ def sample_layer_at(layer: SceneLayer | dict[str, Any], t: float) -> dict[str, f
         t1 = float(kfs[i + 1].get("t", 0))
         if t0 <= t <= t1:
             u = 0.0 if t1 <= t0 else (t - t0) / (t1 - t0)
-            # Bounce easing: ease toward floor contacts
             a, b = kfs[i], kfs[i + 1]
+            y0 = float(a.get("y", 0.5))
+            y1 = float(b.get("y", 0.5))
+            falling = bounce and y1 > y0
+            # Bounce y/scale stay on authored samples (already a gravity arc);
+            # travel/rotation still ease so walks and pans match smoothness.
+            ux = ease_unit(u, smoothness, bounce=bounce, falling=falling) if bounce else ease_unit(u, smoothness)
+            uy = u if bounce else ux
             return {
-                "x": _lerp(float(a.get("x", 0.5)), float(b.get("x", 0.5)), u),
-                "y": _lerp(float(a.get("y", 0.5)), float(b.get("y", 0.5)), u),
-                "scale": _lerp(float(a.get("scale", 1.0)), float(b.get("scale", 1.0)), u),
-                "rot": _lerp(float(a.get("rot", 0.0)), float(b.get("rot", 0.0)), u),
+                "x": _lerp(float(a.get("x", 0.5)), float(b.get("x", 0.5)), ux),
+                "y": _lerp(y0, y1, uy),
+                "scale": _lerp(float(a.get("scale", 1.0)), float(b.get("scale", 1.0)), uy),
+                "rot": _lerp(float(a.get("rot", 0.0)), float(b.get("rot", 0.0)), ux),
                 "opacity": _lerp(float(a.get("opacity", 1.0)), float(b.get("opacity", 1.0)), u),
                 "kind": kind,
             }
@@ -276,7 +291,14 @@ def _color_from_hint(
         "warm_sunset": (240, 120, 50),
     }
     if hint and hint in named:
-        return named[hint]
+        target = named[hint]
+        if palette_colors:
+            from ..knowledge.color_space import nearest_palette_color, oklab_distance
+            near = nearest_palette_color(target, palette_colors)
+            # Snap to palette only when the swatch is already that hue
+            if oklab_distance(target, near) < 0.12:
+                return near
+        return target
     if palette_colors:
         mid = palette_colors[len(palette_colors) // 2]
         return (int(mid[0]), int(mid[1]), int(mid[2]))
@@ -480,19 +502,16 @@ def sfx_events_from_scene_graph(
     return deduped
 
 
-def composition_balance_offset(balance: str | None) -> tuple[float, float]:
+def composition_balance_offset(
+    balance: str | None,
+    shot_type: str | None = "medium",
+) -> tuple[float, float]:
     """
-    Normalized (dx, dy) bias for composition_balance.
+    Normalized (dx, dy) bias for composition_balance (rule of thirds).
     Positive x = right, positive y = down (screen space).
     """
-    b = (balance or "balanced").strip().lower().replace(" ", "_")
-    return {
-        "left_heavy": (-0.14, 0.0),
-        "right_heavy": (0.14, 0.0),
-        "top_heavy": (0.0, -0.12),
-        "bottom_heavy": (0.0, 0.12),
-        "balanced": (0.0, 0.0),
-    }.get(b, (0.0, 0.0))
+    from ..procedural.look import composition_offset
+    return composition_offset(balance, shot_type)
 
 
 def apply_composition_symmetry_x(x: float, symmetry: str | None) -> float:

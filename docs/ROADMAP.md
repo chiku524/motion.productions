@@ -132,6 +132,7 @@ Video generation software that can utilize any aspect within the movie industry 
 - Multi-shot time base: motion uses per-shot `t`, content (beats/entities/tension/weather) uses clip-global `t_content`; `spec_from_shot` keeps setting; beat-timed faces; adaptive transition length; music sections weighted by beat durations
 - Balanced loops: skip color-family starvation; fidelity-weighted mini-scenes (setting/weather/educational/multi-beat); walk bob preserved (no auto spin/double_take on walks); melancholy→dark audio mood; compose bind-mounts `./src`+`./scripts`
 - Continuous beat subjects (no fade-teleports); stable rain/snow particles; short educational teach copy; character walk limbs; ambient/cinematic section dynamics; text legibility plates
+- Look-matching algorithms: Oklab palette blend/gradient lerp; keyframe easing from `motion_smoothness`; rule-of-thirds composition (shot-scaled); subject-locked camera (tracking/dolly vs random whip-pan); stronger anime/minimal/abstract grades
 
 
 **Success criteria:** More realistic or asset-driven visuals when enabled; photoreal path uses the same prompt → registries → render contract.

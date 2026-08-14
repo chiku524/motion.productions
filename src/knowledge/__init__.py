@@ -12,6 +12,7 @@ from .blending import (
     BLEND_APPROACHES,
     BLEND_FUNCTIONS_BY_DOMAIN,
 )
+from .color_space import lerp_rgb_oklab, nearest_palette_color, rgb_to_oklab
 from .registry import (
     load_registry,
     save_registry,
@@ -40,6 +41,9 @@ __all__ = [
     "blend_lighting_presets",
     "BLEND_APPROACHES",
     "BLEND_FUNCTIONS_BY_DOMAIN",
+    "lerp_rgb_oklab",
+    "nearest_palette_color",
+    "rgb_to_oklab",
     "generate_blend_name",
     "generate_sensible_name",
     "narrative_display_name",

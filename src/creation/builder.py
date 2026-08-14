@@ -70,6 +70,17 @@ def _pool_from_knowledge(
     return pool
 
 
+def _has_subject_look(instruction: InterpretedInstruction) -> bool:
+    """True when the prompt already specifies a scene (don't randomize camera/gradient)."""
+    if getattr(instruction, "entities", None):
+        return True
+    if getattr(instruction, "setting", None):
+        return True
+    if getattr(instruction, "educational_template", None):
+        return True
+    return False
+
+
 def _profile_key_to_motion_type(profile: dict[str, Any] | str) -> str | None:
     """
     Map learned_motion profile (dict or profile_key string) → creation motion_type.
@@ -226,25 +237,7 @@ def build_spec_from_instruction(
     composition_balance = _build_composition_balance_from_blending(instruction, composition_balance)
     composition_symmetry = _build_composition_symmetry_from_blending(instruction, composition_symmetry)
 
-    # Registry-only: no fixed lists — use learned_* or origin_* (excluding avoid_motion/avoid_palette)
-    if gradient == DEFAULT_GRADIENT:
-        pool = _pool_from_knowledge(knowledge, "learned_gradient", "origin_gradient", _GRADIENT_VALID)
-        gradient = secure_choice(pool) if pool else secure_choice(tuple(GRAPHICS_ORIGINS["gradient_type"]))
-    if motion == DEFAULT_MOTION:
-        motion = _motion_from_registry(
-            knowledge,
-            avoid_motion=list(avoid_motion),
-            seed_hint=instruction.raw_prompt,
-        )
-        if not motion:
-            origin_m = (knowledge or {}).get("origin_motion") or []
-            pool = [v for v in origin_m if isinstance(v, str) and v in _MOTION_VALID and v not in avoid_motion]
-            motion = secure_choice(pool) if pool else secure_choice(tuple(v for v in _MOTION_VALID if v not in avoid_motion) or tuple(_MOTION_VALID))
-    if camera == DEFAULT_CAMERA:
-        pool = _pool_from_knowledge(knowledge, "learned_camera", "origin_camera", _CAMERA_VALID)
-        camera = secure_choice(pool) if pool else secure_choice([v for v in CAMERA_ORIGINS["motion_type"] if v in _CAMERA_VALID] or list(_CAMERA_VALID))
-
-    # Setting → themed palette / lighting / gradient (before pure-pool decision)
+    # Setting look first so forest/ocean/night aren't overwritten by registry random.
     setting = getattr(instruction, "setting", None)
     if setting:
         vis = SETTING_VISUAL_DEFAULTS.get(setting) or {}
@@ -256,6 +249,25 @@ def build_spec_from_instruction(
             lighting = vis["lighting"]
         if vis.get("gradient") and gradient == DEFAULT_GRADIENT:
             gradient = vis["gradient"]
+
+    lock_look = _has_subject_look(instruction)
+    # Registry exploration only when the prompt has no subject/setting look to preserve.
+    if gradient == DEFAULT_GRADIENT and not lock_look:
+        pool = _pool_from_knowledge(knowledge, "learned_gradient", "origin_gradient", _GRADIENT_VALID)
+        gradient = secure_choice(pool) if pool else secure_choice(tuple(GRAPHICS_ORIGINS["gradient_type"]))
+    if motion == DEFAULT_MOTION and not lock_look:
+        motion = _motion_from_registry(
+            knowledge,
+            avoid_motion=list(avoid_motion),
+            seed_hint=instruction.raw_prompt,
+        )
+        if not motion:
+            origin_m = (knowledge or {}).get("origin_motion") or []
+            pool = [v for v in origin_m if isinstance(v, str) and v in _MOTION_VALID and v not in avoid_motion]
+            motion = secure_choice(pool) if pool else secure_choice(tuple(v for v in _MOTION_VALID if v not in avoid_motion) or tuple(_MOTION_VALID))
+    if camera == DEFAULT_CAMERA and not lock_look:
+        pool = _pool_from_knowledge(knowledge, "learned_camera", "origin_camera", _CAMERA_VALID)
+        camera = secure_choice(pool) if pool else secure_choice([v for v in CAMERA_ORIGINS["motion_type"] if v in _CAMERA_VALID] or list(_CAMERA_VALID))
 
     # Pure-per-frame pool built early; mode finalized after entities (mini-scenes → blended)
     pure_colors = _build_pure_color_pool(knowledge, instruction, avoid_palette=avoid_palette)
@@ -478,6 +490,11 @@ def build_spec_from_instruction(
     if (entities or scene_layers) and not wants_pure:
         creation_mode = "blended"
         pure_colors = None
+
+    # Match camera to subject motion when the prompt never named a move
+    if camera == DEFAULT_CAMERA and entities:
+        from ..procedural.look import camera_for_subject_motion
+        camera = camera_for_subject_motion(entities)
 
     spec = SceneSpec(
         palette_name=palette,
