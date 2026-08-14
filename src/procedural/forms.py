@@ -116,10 +116,7 @@ def fish_mask(
         r * float(form.get("pectoral_ry", 0.10)),
         soft=0.014,
     )
-    return np.clip(
-        np.maximum.reduce([body, snout, tail_u, tail_d, neck, dorsal, pectoral]),
-        0, 1,
-    )
+    return union_masks(body, snout, tail_u, tail_d, neck, dorsal, pectoral, k=0.022)
 
 
 def fish_eye(
@@ -162,7 +159,7 @@ def tree_parts(
     for br in form.get("branches") or []:
         if not isinstance(br, dict):
             continue
-        branches = np.maximum(
+        branches = union_masks(
             branches,
             _soft_segment(
                 xx, yy,
@@ -172,6 +169,7 @@ def tree_parts(
                 cy + r * float(br.get("y1", -0.25)),
                 r * float(br.get("w", 0.035)),
             ),
+            k=0.016,
         )
 
     canopy = np.zeros_like(xx, dtype=np.float32)
@@ -184,16 +182,17 @@ def tree_parts(
             layer_apex = apex_y + height * (0.08 + 0.18 * u)
             layer_h = height * float(form.get("pine_layer_h", 0.42)) * (1.0 - 0.12 * u)
             base = r * (0.38 + 0.42 * u) * float(form.get("pine_flare", 1.0))
-            canopy = np.maximum(
+            canopy = union_masks(
                 canopy,
                 _soft_cone(xx, yy, cx, layer_apex, layer_h, base, soft=0.02),
+                k=0.022,
             )
     elif species == "palm":
         crown_y = cy - r * 0.55
         for fr in form.get("fronds") or []:
             if not isinstance(fr, dict):
                 continue
-            canopy = np.maximum(
+            canopy = union_masks(
                 canopy,
                 _soft_ellipse(
                     xx, yy,
@@ -203,22 +202,21 @@ def tree_parts(
                     r * float(fr.get("ry", 0.12)),
                     soft=0.02,
                 ),
+                k=0.02,
             )
-        canopy = np.maximum(canopy, _soft_disk(xx, yy, cx, crown_y, r * 0.18, soft=0.02))
+        canopy = union_masks(canopy, _soft_disk(xx, yy, cx, crown_y, r * 0.18, soft=0.02), k=0.02)
     else:
         for blob in form.get("blobs") or []:
             if not isinstance(blob, dict):
                 continue
-            canopy = np.maximum(
-                canopy,
-                _soft_disk(
-                    xx, yy,
-                    cx + r * float(blob.get("dx", 0.0)),
-                    cy + r * float(blob.get("dy", -0.35)),
-                    r * float(blob.get("s", 0.45)),
-                    soft=0.03,
-                ),
+            blob_m = _soft_disk(
+                xx, yy,
+                cx + r * float(blob.get("dx", 0.0)),
+                cy + r * float(blob.get("dy", -0.35)),
+                r * float(blob.get("s", 0.45)),
+                soft=0.03,
             )
+            canopy = blob_m if float(np.max(canopy)) < 0.05 else union_masks(canopy, blob_m, k=0.03)
         if float(np.max(canopy)) < 0.05:
             canopy = _soft_disk(xx, yy, cx, cy - r * 0.35, r * 0.7, soft=0.04)
 
@@ -490,7 +488,7 @@ def _character_form(rng: random.Random, text: str) -> dict[str, Any]:
     }
 
 
-# --- SDF primitives (kept here so renderer can import without a cycle) ------
+# --- SDF primitives (single source for renderer + forms) -------------------
 
 def _soft_disk(xx, yy, cx, cy, radius, soft=0.03):
     dist = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
@@ -520,6 +518,34 @@ def _soft_ellipse_local(lx, ly, ox, oy, rx, ry, soft=0.03):
     dist = np.sqrt(nx * nx + ny * ny)
     band = max(1e-5, float(soft) / max(min(rx, ry), 1e-6))
     return np.clip((1.0 + band - dist) / band, 0.0, 1.0)
+
+
+def smooth_max(a: np.ndarray, b: np.ndarray, k: float = 0.028) -> np.ndarray:
+    """Polynomial smooth-max so silhouettes join without a hard crease or gap."""
+    kk = max(1e-6, float(k))
+    h = np.clip(0.5 + 0.5 * (a - b) / kk, 0.0, 1.0)
+    return a * h + b * (1.0 - h) + kk * h * (1.0 - h)
+
+
+def union_masks(*masks: np.ndarray, k: float = 0.028) -> np.ndarray:
+    acc = masks[0]
+    for m in masks[1:]:
+        acc = smooth_max(acc, m, k)
+    return np.clip(acc, 0.0, 1.0)
+
+
+def rotate_into_local(xx, yy, cx: float, cy: float, rot: float):
+    """
+    Inverse-rotate world samples into object space.
+
+    Authored keyframe rot is the object's heading; sampling must use R(-rot)
+    or the silhouette shears against the motion.
+    """
+    c = float(np.cos(rot))
+    s = float(np.sin(rot))
+    dx = xx - cx
+    dy = yy - cy
+    return cx + dx * c + dy * s, cy - dx * s + dy * c
 
 
 def _tapered_trunk(xx, yy, cx, y_top, y_bot, w_top, w_bot, soft=0.012):
@@ -555,10 +581,17 @@ def _soft_segment(xx, yy, x0, y0, x1, y1, thickness):
 
 
 def _hash_noise(xx, yy, seed: int, scale: float = 42.0) -> np.ndarray:
-    gx = np.floor(xx * scale)
-    gy = np.floor(yy * scale)
-    n = np.sin(gx * 127.1 + gy * 311.7 + float(seed) * 0.013) * 43758.5453
-    return n - np.floor(n)
+    """Integer hash 0–1 (stable per cell). Sin-hash banding distorts leaf detail."""
+    gx = np.floor(xx * scale).astype(np.int64)
+    gy = np.floor(yy * scale).astype(np.int64)
+    n = (
+        gx * np.int64(374761393)
+        + gy * np.int64(668265263)
+        + np.int64(int(seed) & 0x7FFFFFFF) * np.int64(1274126177)
+    ) & np.int64(0x7FFFFFFF)
+    n = n ^ (n >> np.int64(13))
+    n = (n * np.int64(1274126177)) & np.int64(0x7FFFFFFF)
+    return n.astype(np.float32) / np.float32(0x7FFFFFFF)
 
 
 def layer_form(layer: dict[str, Any], kind: str) -> dict[str, Any]:

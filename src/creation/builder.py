@@ -495,7 +495,6 @@ def build_spec_from_instruction(
 
     from ..procedural.scene_instance import instantiate_scene
 
-    color_temperature = _resolve_color_temperature(instruction, lighting)
     instance = instantiate_scene(
         prompt=instruction.raw_prompt or "",
         setting=setting,
@@ -505,12 +504,6 @@ def build_spec_from_instruction(
         shot_type=shot,
         default_shot=DEFAULT_SHOT,
     )
-    if instance.get("palette_colors"):
-        palette_colors = instance["palette_colors"]
-    intensity = float(instance.get("intensity") or intensity)
-    shot = str(instance.get("shot_type") or shot)
-    if color_temperature == "neutral":
-        color_temperature = str(instance.get("color_temperature") or color_temperature)
 
     spec = SceneSpec(
         palette_name=palette,
@@ -561,7 +554,7 @@ def build_spec_from_instruction(
         creation_mode=creation_mode,
         pure_sounds=pure_sounds,
         camera_steadiness=_resolve_camera_steadiness(instruction, camera, shot),
-        color_temperature=color_temperature,
+        color_temperature=_resolve_color_temperature(instruction, lighting),
         instance=instance,
     )
 

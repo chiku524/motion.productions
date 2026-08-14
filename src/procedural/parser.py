@@ -107,7 +107,7 @@ class SceneSpec:
     camera_steadiness: str = "stable"
     # Color temperature grade: warm | neutral | cool
     color_temperature: str = "neutral"
-    # Per-video look instance (horizon, palette RGB, composition jitter, …)
+    # Per-video scenery instance (horizon, tex_salt, beat_weights)
     instance: dict | None = None
 
 

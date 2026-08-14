@@ -137,6 +137,7 @@ def _trajectory_path(
     bounce: bool,
     gag: str = "none",
     pacing: float = 1.0,
+    kind: str = "circle",
 ) -> list[LayerKeyframe]:
     """Build keyframes for a simple directional path (optional gag + pacing)."""
     duration = max(0.35, float(duration or 4.0))
@@ -172,10 +173,11 @@ def _trajectory_path(
     elif traj == "none" and bounce:
         kfs: list[LayerKeyframe] = []
         n_bounces = max(2, int(motion_dur / 0.7))
+        squash = kind in ("circle", "rect") or gag == "squash"
         for i in range(n_bounces + 1):
             t = motion_dur * (i / n_bounces)
             y = 0.75 if i % 2 == 0 else 0.35
-            scale = 0.75 if (i % 2 == 0 and gag in ("squash", "none") and bounce) else (1.12 if i % 2 else 1.0)
+            scale = 0.75 if (i % 2 == 0 and squash) else (1.12 if (i % 2 and squash) else 1.0)
             kfs.append(LayerKeyframe(t=t, x=0.5, y=y, scale=scale))
         return kfs
 
@@ -192,8 +194,9 @@ def _trajectory_path(
             floor = i % 2 == 0
             if floor:
                 y = max(y_base, 0.72)
-            # Phase F: squash on floor contact, stretch at apex
-            if gag in ("squash", "none") or bounce:
+            # Squash is a ball algorithm — figures keep constant scale
+            squash = kind in ("circle", "rect") or gag == "squash"
+            if squash:
                 scale = 0.72 if floor else 1.15
             else:
                 scale = 1.0
@@ -443,6 +446,7 @@ def build_scene_graph_from_instruction(
                 else:
                     local_kfs = _trajectory_path(
                         seg_traj, duration=local_dur, bounce=seg_bounce, gag=seg_gag, pacing=seg_pace,
+                        kind=kind,
                     )
                 piece = _offset_keyframes(local_kfs, seg_start, seg_end, fade_edges=False)
                 stitched.extend(piece)
@@ -470,11 +474,11 @@ def build_scene_graph_from_instruction(
                     personality=str(ent.get("personality") or "neutral"),
                 )
             else:
-                local_kfs = _trajectory_path(traj, duration=local_dur, bounce=bounce, gag=gag, pacing=pacing)
+                local_kfs = _trajectory_path(traj, duration=local_dur, bounce=bounce, gag=gag, pacing=pacing, kind=kind)
             kfs = _offset_keyframes(local_kfs, float(t_start), float(t_end))
             z = i + 1
         else:
-            kfs = _trajectory_path(traj, duration=duration, bounce=bounce, gag=gag, pacing=pacing)
+            kfs = _trajectory_path(traj, duration=duration, bounce=bounce, gag=gag, pacing=pacing, kind=kind)
             z = i + 1
 
         sfx_on = list(ent.get("sfx_on") or [])

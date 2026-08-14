@@ -70,7 +70,6 @@ def generate_full_video(
     segment_duration = min(max_clip, duration_seconds)  # could split evenly
     total = 0.0
     index = 0
-    conditioning_path: Path | None = None
 
     import math
     total_segments = max(1, math.ceil(duration_seconds / segment_duration))
@@ -80,10 +79,9 @@ def generate_full_video(
         seg_dur = min(segment_duration, remaining)
         seg_path = out_dir / f"_seg_{index:04d}.mp4"
         generator.generate_clip(
-            effective_prompt if conditioning_path is None else "[continuation from previous frames]",
+            effective_prompt,
             seg_path,
             seg_dur,
-            conditioning_image_path=conditioning_path,
             seed=seed,
             config=config,
             segment_index=index,
@@ -91,8 +89,6 @@ def generate_full_video(
         )
         segment_paths.append(seg_path)
         total += seg_dur
-        # In a real impl, extract last frame from seg_path and set conditioning_path for next segment
-        conditioning_path = None  # TODO: extract last frame when you have a real backend
 
     if output_path is None:
         output_path = out_dir / _next_filename(config, "video")

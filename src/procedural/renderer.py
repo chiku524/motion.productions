@@ -2,10 +2,18 @@
 Procedural frame renderer: spec + time → pixels. Our algorithms only — no external model.
 Supports gradients, camera motion, shot types, lighting presets.
 """
-from typing import TYPE_CHECKING
-
 import numpy as np
 
+from ..cinematography.shot_types import get_shot_params
+from ..depth.assets import get_asset_texture, texture_for_setting
+from ..knowledge.color_space import lerp_palette_oklab_arrays
+from ..lighting.grading import (
+    apply_color_temperature,
+    apply_lighting_preset,
+    apply_spatial_layer_lighting,
+    apply_style_look,
+    get_lighting_model,
+)
 from .data.palettes import PALETTES
 from .forms import (
     building_parts,
@@ -13,46 +21,17 @@ from .forms import (
     fish_eye,
     fish_mask,
     layer_form,
+    rotate_into_local,
     tree_parts,
+    union_masks,
     wave_mask,
+    _hash_noise,
+    _soft_box,
+    _soft_disk,
 )
+from .look import primary_subject, tracking_pan_x
 from .motion import get_camera_params, get_motion_func, rhythm_modulation, steadiness_shake
 from .parser import SceneSpec
-
-if TYPE_CHECKING:
-    pass
-
-try:
-    from ..cinematography.shot_types import get_shot_params
-except ImportError:
-    def get_shot_params(_: str):
-        return 1.0, 0.1, 0.0
-
-try:
-    from ..lighting.grading import (
-        apply_color_temperature,
-        apply_lighting_preset,
-        apply_spatial_layer_lighting,
-        apply_style_look,
-        get_lighting_model,
-    )
-except ImportError:
-    def apply_lighting_preset(fr: "np.ndarray", _: str):
-        return fr
-
-    def apply_color_temperature(fr: "np.ndarray", _: str):
-        return fr
-
-    def apply_style_look(fr: "np.ndarray", _: str):
-        return fr
-
-    def get_lighting_model(_: str):
-        return (1.0, 0.5, 0.2, 0.3)
-
-    def apply_spatial_layer_lighting(color_rgb, mask, xx, yy, cx, cy, radius, lighting_model):
-        cr, cg, cb = float(color_rgb[0]), float(color_rgb[1]), float(color_rgb[2])
-        ones = np.ones_like(mask, dtype=np.float32)
-        return np.stack([cr * ones, cg * ones, cb * ones], axis=-1)
 
 
 def _apply_camera_transform(
@@ -70,6 +49,18 @@ def _apply_camera_transform(
     x_scaled = x_centered / zoom + cx + pan_x
     y_scaled = y_centered / zoom + cy + pan_y
     return x_scaled, y_scaled
+
+
+def _world_to_screen(
+    wx: float, wy: float, zoom: float, pan_x: float, pan_y: float, rotate: float
+) -> tuple[float, float]:
+    """Inverse of `_apply_camera_transform` for a single world point."""
+    x_c = (float(wx) - 0.5 - float(pan_x)) * float(zoom)
+    y_c = (float(wy) - 0.5 - float(pan_y)) * float(zoom)
+    if abs(rotate) > 1e-9:
+        c, s = float(np.cos(-rotate)), float(np.sin(-rotate))
+        x_c, y_c = x_c * c - y_c * s, x_c * s + y_c * c
+    return x_c + 0.5, y_c + 0.5
 
 
 def _gradient_value(
@@ -172,11 +163,11 @@ def _apply_setting_backdrop(
 ) -> tuple["np.ndarray", "np.ndarray", "np.ndarray"]:
     """
     Soft horizon / ground / sky bands for setting-themed mini-scene backgrounds.
-    Per-video instance supplies unique horizon and tint deltas.
+    Per-video instance may shift the horizon line; setting tint deltas stay exact.
     """
     s = (setting or "").strip().lower()
     inst = instance if isinstance(instance, dict) else {}
-    amp = float(inst.get("backdrop_amp") or (0.22 * max(0.3, min(1.0, intensity))))
+    amp = 0.22 * max(0.3, min(1.0, intensity))
     horizon = float(inst.get("horizon") or 0.62)
     sky_h = max(0.18, horizon - 0.24)
     ground = np.clip((yy - horizon) / max(0.12, 1.0 - horizon), 0, 1) ** 1.4
@@ -206,10 +197,6 @@ def _apply_setting_backdrop(
         "abstract": ((20, -10, 35), (10, 15, 40)),
     }
     ground_d, sky_d = deltas.get(s, ((10, 10, 10), (8, 12, 20)))
-    if inst.get("ground_d"):
-        ground_d = tuple(float(v) for v in inst["ground_d"])  # type: ignore[assignment]
-    if inst.get("sky_d"):
-        sky_d = tuple(float(v) for v in inst["sky_d"])  # type: ignore[assignment]
     r = np.clip(r + ground * (ground_d[0] * amp) + sky * (sky_d[0] * amp), 0, 255)
     g = np.clip(g + ground * (ground_d[1] * amp) + sky * (sky_d[1] * amp), 0, 255)
     b = np.clip(b + ground * (ground_d[2] * amp) + sky * (sky_d[2] * amp), 0, 255)
@@ -249,9 +236,8 @@ def _render_pure_per_frame(
     r = R_arr[idx]
     g = G_arr[idx]
     b = B_arr[idx]
-    # Light noise so extraction still sees local variation (emergent blends)
-    n = np.sin(xx * 12.9898 + yy * 78.233 + (seed + t * 100) * 43758.5453) * 43758.5453
-    n = n - np.floor(n)
+    # Cell-stable grain so instanced clips do not shear from float sin-hash
+    n = _hash_noise(xx, yy, seed + int(t * 100.0), scale=97.0)
     amp = 12 * intensity
     r = np.clip(r + (n - 0.5) * amp, 0, 255)
     g = np.clip(g + (n - 0.5) * amp, 0, 255)
@@ -271,54 +257,6 @@ def _sample_texture_mod(
     yi = np.clip((yy * (h - 1)).astype(np.int32), 0, h - 1)
     tex = texture[yi, xi].astype(np.float32) / 255.0
     return 0.299 * tex[:, :, 0] + 0.587 * tex[:, :, 1] + 0.114 * tex[:, :, 2]
-
-
-def _soft_disk(
-    xx: "np.ndarray",
-    yy: "np.ndarray",
-    cx: float,
-    cy: float,
-    radius: float,
-    soft: float = 0.03,
-) -> "np.ndarray":
-    """Anti-aliased disk mask (1 inside, soft falloff over soft band)."""
-    dist = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
-    band = max(1e-5, float(soft))
-    return np.clip((float(radius) + band - dist) / band, 0.0, 1.0)
-
-
-def _soft_box(
-    xx: "np.ndarray",
-    yy: "np.ndarray",
-    cx: float,
-    cy: float,
-    half_w: float,
-    half_h: float,
-    soft: float = 0.025,
-) -> "np.ndarray":
-    """Anti-aliased axis-aligned box via max-norm distance."""
-    dx = np.abs(xx - cx) / max(1e-6, float(half_w))
-    dy = np.abs(yy - cy) / max(1e-6, float(half_h))
-    m = np.maximum(dx, dy)
-    band = max(1e-5, float(soft) / max(min(half_w, half_h), 1e-6))
-    return np.clip((1.0 + band - m) / band, 0.0, 1.0)
-
-
-def _soft_ellipse(
-    xx: "np.ndarray",
-    yy: "np.ndarray",
-    cx: float,
-    cy: float,
-    rx: float,
-    ry: float,
-    soft: float = 0.03,
-) -> "np.ndarray":
-    """Anti-aliased ellipse mask."""
-    nx = (xx - cx) / max(1e-6, float(rx))
-    ny = (yy - cy) / max(1e-6, float(ry))
-    dist = np.sqrt(nx * nx + ny * ny)
-    band = max(1e-5, float(soft) / max(min(rx, ry), 1e-6))
-    return np.clip((1.0 + band - dist) / band, 0.0, 1.0)
 
 
 def _blend_shaded_layer(
@@ -422,8 +360,10 @@ def _accumulate_contact_shadows(
     lighting_preset: str = "neutral",
     smoothness: str = "smooth",
     shot_type: str = "medium",
-    extra_dx: float = 0.0,
-    extra_dy: float = 0.0,
+    zoom: float = 1.0,
+    pan_x: float = 0.0,
+    pan_y: float = 0.0,
+    rotate: float = 0.0,
 ) -> "np.ndarray":
     """HxW soft contact-shadow alpha to darken the background before layer over."""
     from ..creation.scene_graph import (
@@ -438,9 +378,8 @@ def _accumulate_contact_shadows(
     yy, xx = np.mgrid[0:height, 0:width].astype(np.float32)
     xx = xx / max(1, width - 1)
     yy = yy / max(1, height - 1)
+    xx, yy = _apply_camera_transform(xx, yy, zoom, pan_x, pan_y, rotate)
     dx, dy = composition_balance_offset(composition_balance, shot_type)
-    dx += float(extra_dx)
-    dy += float(extra_dy)
     lighting_model = get_lighting_model(lighting_preset)
     for layer in layers:
         if not isinstance(layer, dict):
@@ -501,8 +440,10 @@ def _render_layers_rgba(
     texture: "np.ndarray | None" = None,
     smoothness: str = "smooth",
     shot_type: str = "medium",
-    extra_dx: float = 0.0,
-    extra_dy: float = 0.0,
+    zoom: float = 1.0,
+    pan_x: float = 0.0,
+    pan_y: float = 0.0,
+    rotate: float = 0.0,
 ) -> tuple["np.ndarray", "np.ndarray"]:
     """
     Render stylized layers onto a transparent canvas.
@@ -523,9 +464,8 @@ def _render_layers_rgba(
     yy, xx = np.mgrid[0:height, 0:width].astype(np.float32)
     xx = xx / max(1, width - 1)
     yy = yy / max(1, height - 1)
+    xx, yy = _apply_camera_transform(xx, yy, zoom, pan_x, pan_y, rotate)
     dx, dy = composition_balance_offset(composition_balance, shot_type)
-    dx += float(extra_dx)
-    dy += float(extra_dy)
     lighting_model = get_lighting_model(lighting_preset)
     texture_mod = _sample_texture_mod(texture, xx, yy)
 
@@ -546,12 +486,9 @@ def _render_layers_rgba(
         cr, cg, cb = float(color[0]), float(color[1]), float(color[2])
         radius = 0.12 * scale
         rot = float(pose.get("rot") or 0.0)
-        if abs(rot) > 1e-4:
-            cos_r, sin_r = float(np.cos(rot)), float(np.sin(rot))
-            dxr = xx - cx
-            dyr = yy - cy
-            xx_l = cx + dxr * cos_r - dyr * sin_r
-            yy_l = cy + dxr * sin_r + dyr * cos_r
+        # Character rot is gait phase, not body heading — rotating it shears the figure.
+        if kind != "character" and abs(rot) > 1e-4:
+            xx_l, yy_l = rotate_into_local(xx, yy, cx, cy, rot)
         else:
             xx_l, yy_l = xx, yy
 
@@ -574,7 +511,7 @@ def _render_layers_rgba(
                 & (np.abs(dyv) < (radius - dxv) * 0.95 + 0.02)
             ).astype(np.float32)
             head_soft = head_m * np.clip(1.0 - np.abs(dyv) / max(1e-6, (radius - dxv) * 0.95 + 0.02), 0, 1)
-            mask = np.clip(np.maximum(body_m, head_soft), 0, 1)
+            mask = union_masks(body_m, head_soft, k=0.018)
             out_rgb, out_a = _blend_shaded_layer(
                 out_rgb, out_a, mask, (cr, cg, cb), xx_l, yy_l, cx, cy, radius,
                 lighting_model, texture_mod, opacity, material=kind,
@@ -622,8 +559,7 @@ def _render_layers_rgba(
                 shoulder_y + arm_len * 0.35,
                 radius * 0.1, arm_len * 0.5, soft=0.02,
             )
-            limbs = np.clip(left_leg + right_leg + left_arm + right_arm, 0, 1)
-            mask = np.clip(np.maximum(np.maximum(head_m, body_m), limbs), 0, 1)
+            mask = union_masks(head_m, body_m, left_leg, right_leg, left_arm, right_arm, k=0.02)
             # Inter-layer soft AO under this character onto existing draw
             if float(np.max(out_a)) > 0.05:
                 ao = np.clip(np.roll(mask, max(1, int(0.018 * height)), axis=0) * 0.28, 0, 1)
@@ -822,8 +758,10 @@ def _composite_scene_layers(
     texture: "np.ndarray | None" = None,
     smoothness: str = "smooth",
     shot_type: str = "medium",
-    extra_dx: float = 0.0,
-    extra_dy: float = 0.0,
+    zoom: float = 1.0,
+    pan_x: float = 0.0,
+    pan_y: float = 0.0,
+    rotate: float = 0.0,
 ) -> "np.ndarray":
     """Composite keyframed stylized layers onto an RGB float frame (over)."""
     bg = frame.astype(np.float32)
@@ -834,8 +772,10 @@ def _composite_scene_layers(
         lighting_preset=lighting_preset,
         smoothness=smoothness,
         shot_type=shot_type,
-        extra_dx=extra_dx,
-        extra_dy=extra_dy,
+        zoom=zoom,
+        pan_x=pan_x,
+        pan_y=pan_y,
+        rotate=rotate,
     )
     bg = _darken_with_shadows(bg, shadow_a)
     fg_rgb, fg_a = _render_layers_rgba(
@@ -846,8 +786,10 @@ def _composite_scene_layers(
         texture=texture,
         smoothness=smoothness,
         shot_type=shot_type,
-        extra_dx=extra_dx,
-        extra_dy=extra_dy,
+        zoom=zoom,
+        pan_x=pan_x,
+        pan_y=pan_y,
+        rotate=rotate,
     )
     a = fg_a[..., None]
     out = bg * (1.0 - a) + fg_rgb * a
@@ -927,18 +869,13 @@ def render_frame(
     composition_symmetry = getattr(spec, "composition_symmetry", "slight") or "slight"
     setting = getattr(spec, "setting", None)
     instance = getattr(spec, "instance", None) if isinstance(getattr(spec, "instance", None), dict) else {}
-    extra_dx = float(instance.get("comp_dx") or 0.0)
-    extra_dy = float(instance.get("comp_dy") or 0.0)
     tex_salt = int(instance.get("tex_salt") or 0)
+    scene_layers = getattr(spec, "scene_layers", None) or []
 
     texture = None
-    try:
-        from ..depth.assets import get_asset_texture, texture_for_setting
-        tex_name = texture_for_setting(setting)
-        if tex_name:
-            texture = get_asset_texture(tex_name, width, height, seed=seed + tex_salt)
-    except ImportError:
-        texture = None
+    tex_name = texture_for_setting(setting)
+    if tex_name:
+        texture = get_asset_texture(tex_name, width, height, seed=seed + tex_salt)
 
     y = np.linspace(0, 1, height, dtype=np.float32)
     x = np.linspace(0, 1, width, dtype=np.float32)
@@ -947,15 +884,26 @@ def render_frame(
     shot_type = getattr(spec, "shot_type", "medium") or "medium"
     shot_zoom, pan_range, handheld = get_shot_params(shot_type)
     zoom, pan_x, pan_y, rotate = get_camera_params(camera_motion, t_motion)
-    # Shot pan_range scales camera pans (wide = more roam, close = locked)
-    pan_scale = 0.5 + 5.0 * float(pan_range)
-    pan_x *= pan_scale
-    pan_y *= pan_scale
+    zoom = zoom * shot_zoom
+    if camera_motion == "tracking":
+        from ..creation.scene_graph import sample_layer_at
+        subject = primary_subject(scene_layers)
+        if subject is not None:
+            pose = sample_layer_at(subject, t_abs, smoothness=smoothness)
+            pan_x = tracking_pan_x(float(pose["x"]))
+            pan_y = 0.0
+        else:
+            pan_scale = 0.5 + 5.0 * float(pan_range)
+            pan_x *= pan_scale
+            pan_y *= pan_scale
+    else:
+        pan_scale = 0.5 + 5.0 * float(pan_range)
+        pan_x *= pan_scale
+        pan_y *= pan_scale
     sx, sy, srot = steadiness_shake(getattr(spec, "camera_steadiness", "stable") or "stable", t_motion)
     pan_x += sx
     pan_y += sy
     rotate += srot
-    zoom = zoom * shot_zoom
     if handheld > 0:
         shake = np.sin(t_motion * 23.7) * handheld * 0.02
         pan_x += shake
@@ -974,22 +922,9 @@ def render_frame(
         i0 = np.clip(np.floor(idx).astype(np.int32), 0, len(palette) - 2)
         i1 = i0 + 1
         frac = idx - i0
-        try:
-            from ..knowledge.color_space import lerp_palette_oklab_arrays
-            r, g, b = lerp_palette_oklab_arrays(palette, i0, i1, frac)
-        except ImportError:
-            r0 = np.array([palette[i][0] for i in i0.flat]).reshape(i0.shape)
-            g0 = np.array([palette[i][1] for i in i0.flat]).reshape(i0.shape)
-            b0 = np.array([palette[i][2] for i in i0.flat]).reshape(i0.shape)
-            r1 = np.array([palette[i][0] for i in i1.flat]).reshape(i1.shape)
-            g1 = np.array([palette[i][1] for i in i1.flat]).reshape(i1.shape)
-            b1 = np.array([palette[i][2] for i in i1.flat]).reshape(i1.shape)
-            r = r0 * (1 - frac) + r1 * frac
-            g = g0 * (1 - frac) + g1 * frac
-            b = b0 * (1 - frac) + b1 * frac
+        r, g, b = lerp_palette_oklab_arrays(palette, i0, i1, frac)
 
-        n = np.sin(xx * 12.9898 + yy * 78.233 + (seed + t_abs * 100) * 43758.5453) * 43758.5453
-        n = n - np.floor(n)
+        n = _hash_noise(xx, yy, seed + int(t_abs * 100.0), scale=97.0)
         amp = 20 * intensity
         r = np.clip(r + (n - 0.5) * amp, 0, 255)
         g = np.clip(g + (n - 0.5) * amp, 0, 255)
@@ -1003,7 +938,6 @@ def render_frame(
 
     shape_overlay = getattr(spec, "shape_overlay", "none") or "none"
     overlay_palette = pure_colors if (creation_mode == "pure_per_frame" and pure_colors) else palette
-    scene_layers = getattr(spec, "scene_layers", None) or []
     # Apply active-beat expression onto character layers (timed faces)
     beat_expression = None
     depth_parallax = bool(getattr(spec, "depth_parallax", False))
@@ -1043,8 +977,10 @@ def render_frame(
                 lighting_preset=lighting_preset,
                 smoothness=smoothness,
                 shot_type=shot_type,
-                extra_dx=extra_dx,
-                extra_dy=extra_dy,
+                zoom=zoom,
+                pan_x=pan_x,
+                pan_y=pan_y,
+                rotate=rotate,
             ),
         )
         planes: list[tuple[np.ndarray, np.ndarray, float]] = []
@@ -1064,15 +1000,17 @@ def render_frame(
                 texture=texture,
                 smoothness=smoothness,
                 shot_type=shot_type,
-                extra_dx=extra_dx,
-                extra_dy=extra_dy,
+                zoom=zoom,
+                pan_x=pan_x,
+                pan_y=pan_y,
+                rotate=rotate,
             )
             planes.append((fg_rgb, fg_a, depth))
         frame = composite_depth_planes(
             background, planes, t_motion,
             motion_scale=0.06,
-            camera_pan_x=float(pan_x),
-            camera_pan_y=float(pan_y),
+            camera_pan_x=0.0,
+            camera_pan_y=0.0,
         )
     elif scene_layers:
         frame = _composite_scene_layers(
@@ -1083,8 +1021,10 @@ def render_frame(
             texture=texture,
             smoothness=smoothness,
             shot_type=shot_type,
-            extra_dx=extra_dx,
-            extra_dy=extra_dy,
+            zoom=zoom,
+            pan_x=pan_x,
+            pan_y=pan_y,
+            rotate=rotate,
         )
     elif shape_overlay in ("circle", "rect") and overlay_palette:
         frame = background.copy()
@@ -1173,10 +1113,11 @@ def render_frame(
                     composition_symmetry,
                 )
                 py = max(0.02, min(0.98, float(pose["y"]) + cdy))
+                px, py = _world_to_screen(px, py, zoom, pan_x, pan_y, rotate)
                 scale = max(0.15, float(pose["scale"]))
-                cx_px = int(px * (width - 1))
-                cy_px = int(py * (height - 1))
-                rad = max(12, int(0.14 * scale * min(width, height)))
+                cx_px = int(max(0.0, min(1.0, px)) * (width - 1))
+                cy_px = int(max(0.0, min(1.0, py)) * (height - 1))
+                rad = max(12, int(0.14 * scale * float(zoom) * min(width, height)))
                 if want_callout:
                     frame = draw_spotlight(frame, (cx_px, cy_px), radius=int(rad * 1.6), darkness=0.4)
                     frame = draw_callout(frame, (cx_px, cy_px), radius=rad)

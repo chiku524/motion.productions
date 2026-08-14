@@ -12,6 +12,7 @@ from src.procedural.forms import (
     create_form,
     fish_mask,
     form_seed,
+    rotate_into_local,
     tree_parts,
 )
 
@@ -61,10 +62,7 @@ class TestProceduralForms(unittest.TestCase):
         )
         rot = 0.35
         cx, cy, radius = 0.5, 0.5, 0.16
-        cos_r, sin_r = float(np.cos(rot)), float(np.sin(rot))
-        dxr, dyr = xx - cx, yy - cy
-        xx_l = cx + dxr * cos_r - dyr * sin_r
-        yy_l = cy + dxr * sin_r + dyr * cos_r
+        xx_l, yy_l = rotate_into_local(xx, yy, cx, cy, rot)
         mask = fish_mask(xx_l, yy_l, cx, cy, radius, form)
         binary = (mask > 0.35).astype(np.uint8)
         self.assertGreater(int(binary.sum()), 40)
@@ -128,7 +126,6 @@ class TestProceduralForms(unittest.TestCase):
         self.assertIsNotNone(a.instance)
         self.assertIsNotNone(b.instance)
         self.assertNotEqual(a.instance.get("horizon"), b.instance.get("horizon"))
-        self.assertNotEqual(a.palette_colors, b.palette_colors)
         trees_a = [l["form"]["species"] for l in (a.scene_layers or []) if l.get("kind") == "tree"]
         trees_b = [l["form"]["species"] for l in (b.scene_layers or []) if l.get("kind") == "tree"]
         self.assertTrue(trees_a)
@@ -146,6 +143,19 @@ class TestProceduralForms(unittest.TestCase):
         self.assertEqual(a.instance.get("horizon"), b.instance.get("horizon"))
         self.assertEqual(a.palette_colors, b.palette_colors)
         self.assertEqual(a.shot_type, b.shot_type)
+
+    def test_same_prompt_different_seeds_keep_named_look(self):
+        prompt = "waves in the ocean with a jumping fish"
+        instruction = interpret_user_prompt(prompt)
+        instruction.duration_seconds = 4.0
+        a = build_spec_from_instruction(instruction, knowledge={}, creation_seed=21)
+        b = build_spec_from_instruction(instruction, knowledge={}, creation_seed=99)
+        self.assertEqual(a.palette_colors, b.palette_colors)
+        self.assertEqual(a.shot_type, b.shot_type)
+        self.assertEqual(a.intensity, b.intensity)
+        self.assertEqual(a.lighting_preset, b.lighting_preset)
+        self.assertNotEqual(a.instance.get("horizon"), b.instance.get("horizon"))
+        self.assertNotEqual(a.instance.get("tex_salt"), b.instance.get("tex_salt"))
 
     def test_ocean_keeps_named_look_family(self):
         instruction = interpret_user_prompt("waves in the ocean")

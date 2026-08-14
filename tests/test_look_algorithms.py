@@ -11,7 +11,12 @@ from src.interpretation.parser import interpret_user_prompt
 from src.knowledge.blending import blend_colors
 from src.knowledge.color_space import lerp_rgb_oklab, nearest_palette_color
 from src.lighting.grading import apply_style_look
-from src.procedural.look import camera_for_subject_motion, composition_offset, ease_unit
+from src.procedural.look import (
+    camera_for_subject_motion,
+    composition_offset,
+    ease_unit,
+    tracking_pan_x,
+)
 
 
 class TestLookAlgorithms(unittest.TestCase):
@@ -106,6 +111,69 @@ class TestLookAlgorithms(unittest.TestCase):
         center = int(anime[12, 12].mean())
         edge = int(anime[8, 12].mean())
         self.assertLess(edge, center)
+
+    def test_tracking_pan_centers_subject(self):
+        self.assertAlmostEqual(tracking_pan_x(0.8), 0.3)
+        self.assertAlmostEqual(tracking_pan_x(0.2), -0.3)
+        self.assertAlmostEqual(tracking_pan_x(0.5), 0.0)
+
+    def test_tracking_render_keeps_subject_on_center(self):
+        from src.procedural.parser import SceneSpec
+        from src.procedural.renderer import render_frame
+
+        spec = SceneSpec(
+            palette_name="default",
+            motion_type="slow",
+            intensity=0.5,
+            raw_prompt="walk",
+            palette_colors=[(20, 20, 20), (40, 40, 40), (60, 60, 60)],
+            camera_motion="tracking",
+            camera_steadiness="locked",
+            shot_type="medium",
+            composition_balance="balanced",
+            composition_symmetry="none",
+            scene_layers=[{
+                "id": "walker",
+                "kind": "character",
+                "color": [255, 0, 0],
+                "z": 2,
+                "keyframes": [
+                    {"t": 0.0, "x": 0.8, "y": 0.5, "scale": 1.6, "rot": 0.0, "opacity": 1.0},
+                    {"t": 1.0, "x": 0.8, "y": 0.5, "scale": 1.6, "rot": 0.0, "opacity": 1.0},
+                ],
+            }],
+        )
+        frame = render_frame(spec, 0.0, 48, 48, seed=1)
+        ys, xs = np.where(frame[:, :, 0] > 140)
+        self.assertGreater(len(xs), 8)
+        cx = float(xs.mean()) / 47.0
+        self.assertAlmostEqual(cx, 0.5, delta=0.12)
+
+    def test_character_gait_rot_does_not_tilt_body(self):
+        from src.procedural.renderer import _render_layers_rgba
+
+        def _layer(rot: float):
+            return [{
+                "kind": "character",
+                "color": [200, 80, 80],
+                "z": 1,
+                "keyframes": [
+                    {"t": 0, "x": 0.5, "y": 0.5, "scale": 1.4, "rot": rot, "opacity": 1},
+                    {"t": 1, "x": 0.5, "y": 0.5, "scale": 1.4, "rot": rot, "opacity": 1},
+                ],
+            }]
+
+        _, a0 = _render_layers_rgba(_layer(0.0), 0.2, 64, 64)
+        _, a1 = _render_layers_rgba(_layer(0.4), 0.2, 64, 64)
+        ys, xs = np.where(a1 > 0.5)
+        self.assertGreater(len(ys), 10)
+        top = int(ys.min())
+        top_xs = xs[ys == top]
+        mean_x = float(top_xs.mean()) / 63.0
+        self.assertAlmostEqual(mean_x, 0.5, delta=0.08)
+        # Gait changes limb coverage but the head stays centered
+        ys0, xs0 = np.where(a0 > 0.5)
+        self.assertAlmostEqual(float(xs0[ys0 == int(ys0.min())].mean()) / 63.0, mean_x, delta=0.05)
 
     def test_oklab_palette_lerp_vectorized(self):
         from src.knowledge.color_space import lerp_palette_oklab_arrays

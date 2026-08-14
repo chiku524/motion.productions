@@ -21,7 +21,6 @@ from .registry import (
     list_all_registry_values,
     REGISTRY_DOMAINS,
 )
-from .growth import grow_from_extract, grow_from_analysis
 from .lookup import get_knowledge_for_creation
 from .blend_names import generate_blend_name, generate_sensible_name, narrative_display_name
 from .domain_extraction import extract_to_domains, analysis_dict_to_domains
@@ -53,8 +52,6 @@ __all__ = [
     "load_registry_manifest",
     "list_all_registry_values",
     "REGISTRY_DOMAINS",
-    "grow_from_extract",
-    "grow_from_analysis",
     "get_knowledge_for_creation",
     "extract_to_domains",
     "analysis_dict_to_domains",

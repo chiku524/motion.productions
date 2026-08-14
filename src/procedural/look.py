@@ -133,3 +133,31 @@ def camera_for_subject_motion(
     if any(t in ("left", "right") for t in trajs):
         return "tracking"
     return "static"
+
+
+def primary_subject(layers: list[dict] | None) -> dict | None:
+    """Foreground subject for tracking — skip setting scenery."""
+    scored: list[tuple[int, int, dict]] = []
+    for layer in layers or []:
+        if not isinstance(layer, dict):
+            continue
+        kind = str(layer.get("kind") or "")
+        if kind in ("tree", "cloud", "building", "wave"):
+            continue
+        lid = str(layer.get("id") or "")
+        prompt_ent = 0 if lid.startswith("prop_") else 1
+        z = int(layer.get("z") or 0)
+        scored.append((prompt_ent, z, layer))
+    if not scored:
+        return None
+    scored.sort(key=lambda t: (t[0], t[1]), reverse=True)
+    return scored[0][2]
+
+
+def tracking_pan_x(subject_x: float) -> float:
+    """
+    Camera pan so scene coordinate subject_x samples at screen center.
+
+    Inverse of `_apply_camera_transform` pan: pixel 0.5 looks up `0.5 + pan_x`.
+    """
+    return float(subject_x) - 0.5

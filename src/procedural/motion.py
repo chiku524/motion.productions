@@ -6,13 +6,7 @@ import math
 from typing import Callable
 
 
-def ease_in_out(t: float) -> float:
-    """Smooth 0→1 over 0→1 (ease in-out)."""
-    if t <= 0:
-        return 0.0
-    if t >= 1:
-        return 1.0
-    return 3 * t * t - 2 * t * t * t  # smoothstep
+from .look import ease_in_out
 
 
 def wave(t: float, freq: float = 1.0, phase: float = 0.0) -> float:
