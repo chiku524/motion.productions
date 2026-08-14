@@ -10,6 +10,7 @@ into the library and is not replayed.
 Usage:
   python scripts/ingest_reference.py path/to/clip.mp4 --loop cartoon
   python scripts/ingest_reference.py path/to/clip.mp4 --loop cartoon --api-base https://motion.productions
+  python scripts/ingest_reference.py path/to/clip.mp4 --loop cartoon --max-frames 72
 
 Drop convention: references/cartoon.mp4
 """
@@ -32,6 +33,7 @@ def main() -> int:
     parser.add_argument("--loop", default="cartoon", help="Loop name (default cartoon)")
     parser.add_argument("--api-base", default=None, help="POST discoveries to this API (D1)")
     parser.add_argument("--local-only", action="store_true", help="Grow local registries only; skip API")
+    parser.add_argument("--max-frames", type=int, default=72, help="Sample this many frames across the clip")
     args = parser.parse_args()
 
     video = Path(args.video) if args.video else REPO_ROOT / "references" / f"{args.loop}.mp4"
@@ -52,6 +54,7 @@ def main() -> int:
         loop=args.loop,
         api_base=api_base or None,
         config=load_config(),
+        max_frames=max(8, int(args.max_frames)),
     )
     print(json.dumps({k: recipe[k] for k in recipe if k != "growth_added"}, indent=2))
     added = recipe.get("growth_added") or {}

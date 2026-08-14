@@ -464,6 +464,13 @@ class TestMiniSceneFidelity(unittest.TestCase):
         self.assertEqual(recipe["render_engine"], "cel")
         self.assertNotIn("frames", recipe)
 
+    def test_reference_origin_spreads_samples_across_clip(self):
+        from src.knowledge.reference_origin import stride_for_clip
+
+        # 68s @ 30fps with a 72-frame cap must not sample every frame (opening only).
+        self.assertEqual(stride_for_clip(30.0, 68.27, 72), 28)
+        self.assertEqual(stride_for_clip(24.0, 0.0, 72), 1)
+
     def test_cartoon_prompt_and_spec_use_loop_origin(self):
         from src.automation.prompt_gen import generate_cartoon_prompt
 

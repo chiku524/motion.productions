@@ -153,22 +153,56 @@ def measure_frames(
     }
 
 
+def _spread_sample_params(
+    video_path: Path,
+    *,
+    max_frames: int = 72,
+) -> tuple[int, int, float, float]:
+    """Pick sample_every so max_frames spans the whole clip, not only the opening."""
+    try:
+        import imageio
+        reader = imageio.get_reader(str(video_path))
+        try:
+            meta = reader.get_meta_data() or {}
+        finally:
+            try:
+                reader.close()
+            except Exception:
+                pass
+        fps = float(meta.get("fps") or 24.0) or 24.0
+        duration = float(meta.get("duration") or 0.0) or 0.0
+    except Exception:
+        fps, duration = 24.0, 0.0
+    sample_every = stride_for_clip(fps, duration, max_frames)
+    return max(8, int(max_frames)), sample_every, fps, duration
+
+
+def stride_for_clip(fps: float, duration: float, max_frames: int) -> int:
+    """Frame stride so max_frames samples span the whole clip."""
+    n = int(float(fps) * float(duration)) if duration > 0 else max(1, int(max_frames))
+    return max(1, n // max(1, int(max_frames)))
+
+
 def measure_reference_video(
     video_path: str | Path,
     *,
     loop: str = "cartoon",
     max_frames: int = 72,
-    sample_every: int = 1,
+    sample_every: int | None = None,
 ) -> dict[str, Any]:
     from .extractor_per_instance import _read_frames
 
     path = Path(video_path)
+    if sample_every is None:
+        max_frames, sample_every, _fps, _dur = _spread_sample_params(path, max_frames=max_frames)
     frames, fps, _w, _h = _read_frames(path, max_frames=max_frames, sample_every=sample_every)
     digest = hashlib.sha256(path.read_bytes()[: 1024 * 256]).hexdigest()[:16]
     source = {
         "filename": path.name,
         "bytes": path.stat().st_size,
         "sha256_head": digest,
+        "sample_every": sample_every,
+        "max_frames": max_frames,
     }
     return measure_frames(frames, fps=fps, loop=loop, source=source)
 
@@ -197,6 +231,8 @@ def ingest_reference_video(
     api_base: str | None = None,
     config: dict[str, Any] | None = None,
     prompt: str | None = None,
+    max_frames: int = 72,
+    sample_every: int | None = None,
 ) -> dict[str, Any]:
     """
     Measure a reference clip, grow registries from it, save the loop origin recipe.
@@ -209,14 +245,21 @@ def ingest_reference_video(
     if loop not in _VALID_LOOPS:
         loop = "cartoon"
     label = prompt or f"reference origin for {loop} loop"
-    recipe = measure_reference_video(path, loop=loop)
+    if sample_every is None:
+        max_frames, sample_every, _fps, _dur = _spread_sample_params(path, max_frames=max_frames)
+    recipe = measure_reference_video(
+        path, loop=loop, max_frames=max_frames, sample_every=sample_every
+    )
+    recipe["sample_every"] = sample_every
+    recipe["max_frames"] = max_frames
     from .growth_per_instance import grow_all_from_video
 
     added, novel = grow_all_from_video(
         path,
         prompt=label,
         config=config,
-        sample_every=1,
+        max_frames=max_frames,
+        sample_every=sample_every,
         window_seconds=1.0,
         collect_novel_for_sync=True,
         extraction_focus="all",
