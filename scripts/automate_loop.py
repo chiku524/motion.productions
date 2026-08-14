@@ -30,6 +30,12 @@ MOTION_MIN = 1.0
 MOTION_MAX = 25.0
 
 
+def _loop_extraction_focus() -> str:
+    """frame | window | all. Unset means all (local one-process default). Compose/Fly set this per worker."""
+    v = (os.environ.get("LOOP_EXTRACTION_FOCUS") or "").strip().lower()
+    return v if v in ("frame", "window", "all") else "all"
+
+
 def baseline_state() -> dict:
     """Fresh state on each restart."""
     return {
@@ -140,7 +146,7 @@ def pick_prompt(
     findability = float((mission_cache or {}).get("findability_pct") or 100)
     thin_families = findability < 85 or thin_color
     static_focus = (os.environ.get("LOOP_STATIC_FOCUS") or "both").strip().lower()
-    extraction_focus = (os.environ.get("LOOP_EXTRACTION_FOCUS") or "frame").strip().lower()
+    extraction_focus = _loop_extraction_focus()
     workflow_type = (os.environ.get("LOOP_WORKFLOW_TYPE") or "").strip().lower()
     # Balanced / window worker owns narrative fidelity — don't let color targeting starve it
     prefer_fidelity = (
@@ -580,9 +586,7 @@ def run() -> None:
         workflow_type = os.environ.get("LOOP_WORKFLOW_TYPE") or ("explorer" if override == "0" else "exploiter" if override == "1" else "main")
         # extraction_focus: frame (per-frame / pure static only) | window (per-window blends only) | unset = all
         # Use LOOP_EXTRACTION_FOCUS (not LCXP_EXTRACTION_FOCUS). See docs/DEPLOYMENT.md (Fly.io §8) and REGISTRY_AND_WORKFLOW_IMPROVEMENTS.md Part 0.
-        extraction_focus = (os.environ.get("LOOP_EXTRACTION_FOCUS") or "").strip().lower() or "all"
-        if extraction_focus not in ("frame", "window", "all"):
-            extraction_focus = "all"
+        extraction_focus = _loop_extraction_focus()
         if extraction_focus == "all" and state.get("run_count", 0) == 0:
             logger.info(
                 "LOOP_EXTRACTION_FOCUS is unset → Growth [all]. For split workers set LOOP_EXTRACTION_FOCUS=frame or =window (see docs/DEPLOYMENT.md Fly.io §8)."
