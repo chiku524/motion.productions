@@ -85,7 +85,7 @@ docker compose -f docker-compose.local.yml --profile cartoon up -d --build
 
 | Service | Host port | Role | Delay |
 |---------|-----------|------|--------|
-| cartoon | `8088` | Modern-day cartoon discovery + generation (~2.5s hold-then-snap shots) | 120s |
+| cartoon | `8088` | Modern-day cartoon discovery + generation (Pillow cel kit: inked rooms + TV-cartoon figure, ~2.5s hold-then-snap) | 120s |
 
 This worker never uses pixel-pairing prompts. Explorer / balanced / sound stay on their own missions. Jobs show a **Cartoon** badge. Requires the Worker to accept `workflow_type=cartoon` (deployed with this change).
 

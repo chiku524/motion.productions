@@ -119,10 +119,11 @@ class ProceduralVideoGenerator(VideoGenerator):
         if engine_override:
             base_spec.render_engine = engine_override
         if render_cfg.get("film_look") is True or engine_override in ("enhanced", "photoreal", "realistic"):
-            base_spec.film_look = True
-            base_spec.depth_parallax = True
-            if not engine_override and base_spec.render_engine == "procedural":
-                base_spec.render_engine = "enhanced"
+            if base_spec.render_engine != "cel":
+                base_spec.film_look = True
+                base_spec.depth_parallax = True
+                if not engine_override and base_spec.render_engine == "procedural":
+                    base_spec.render_engine = "enhanced"
         # Enhanced path defaults to 720p unless draft quality is forced or size already larger
         out_cfg = (config or {}).get("output") or {}
         if (

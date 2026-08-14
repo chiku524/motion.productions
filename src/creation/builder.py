@@ -759,9 +759,13 @@ def build_spec_from_instruction(
             or (style_val or "").lower() in ("realistic", "photoreal")
         ) and not wants_cartoon,
         render_engine=(
-            "enhanced"
-            if (style_val or "").lower() in ("realistic", "photoreal")
-            else "procedural"
+            "cel"
+            if wants_cartoon
+            else (
+                "enhanced"
+                if (style_val or "").lower() in ("realistic", "photoreal")
+                else "procedural"
+            )
         ),
         pure_colors=pure_colors,
         creation_mode=creation_mode,

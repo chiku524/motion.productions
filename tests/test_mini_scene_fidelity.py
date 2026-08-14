@@ -386,6 +386,7 @@ class TestMiniSceneFidelity(unittest.TestCase):
         instruction.duration_seconds = 2.5
         spec = build_spec_from_instruction(instruction, knowledge={})
         self.assertEqual(spec.creation_mode, "blended")
+        self.assertEqual(spec.render_engine, "cel")
         self.assertIn(spec.style, ("cartoon", "anime"))
         self.assertFalse(spec.film_look)
         self.assertEqual(spec.camera_motion, "static")
@@ -401,6 +402,29 @@ class TestMiniSceneFidelity(unittest.TestCase):
         xs = [float(k.get("x")) for k in kfs]
         self.assertEqual(xs[0], xs[1])
         self.assertNotEqual(xs[1], xs[2])
+
+    def test_cel_frame_is_inked_modern_interior(self):
+        import numpy as np
+        from src.procedural.renderer import render_frame
+
+        prompt = (
+            "cel cartoon: a teal person holds still then turns in a kitchen, "
+            "amber walls, cartoon hold then snap, anime look"
+        )
+        instruction = interpret_user_prompt(prompt)
+        instruction.duration_seconds = 2.5
+        spec = build_spec_from_instruction(instruction, knowledge={})
+        self.assertEqual(spec.render_engine, "cel")
+        frame = render_frame(spec, 0.2, 256, 256, seed=7)
+        self.assertEqual(frame.shape, (256, 256, 3))
+        luma = frame.astype(np.float32).mean(axis=2)
+        ink = luma < 50
+        self.assertGreater(float(ink.mean()), 0.01, "expected ink outlines")
+        top = frame[:70].astype(np.float32).mean()
+        bottom = frame[190:].astype(np.float32).mean()
+        self.assertGreater(abs(top - bottom), 12.0, "expected a wall/floor split, not a blob wash")
+        unique = len(np.unique(frame.reshape(-1, 3), axis=0))
+        self.assertLess(unique, 8000, "cel fills should be flatter than shaded blobs")
 
     def test_cartoon_workflow_pick_prompt_never_pairing(self):
         import importlib.util

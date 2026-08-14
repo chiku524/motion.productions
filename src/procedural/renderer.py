@@ -919,6 +919,11 @@ def render_frame(
     """
     t_motion = float(t)
     t_abs = float(t if t_content is None else t_content)
+    render_engine = (getattr(spec, "render_engine", None) or "procedural").lower()
+    style_name = (getattr(spec, "style", None) or "").lower()
+    if render_engine == "cel" or style_name == "cartoon":
+        from .cel import render_cel_frame
+        return render_cel_frame(spec, t_abs, width, height, seed=seed)
     creation_mode = getattr(spec, "creation_mode", "blended") or "blended"
     pure_colors = getattr(spec, "pure_colors", None) or []
 

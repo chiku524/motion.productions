@@ -53,7 +53,7 @@ These can still exist as **named readings** after the field has done the work, o
 - Premade object layers (tree, person, car) as the default clip
 - Keyword motion catalogs (`wave`, `pulse`, `fast`) as the generator switch
 
-For **pairing clips** (the default loop): the renderer changes pixel colors; it does not pan the field. Named-subject prompts (`a person walking in a forest`) still use the object path. The **cartoon loop** (`LOOP_WORKFLOW_TYPE=cartoon`) is that named-subject path with cel grade and hold-then-snap timing — it does not replace pairing as the Core 4 default.
+For **pairing clips** (the default loop): the renderer changes pixel colors; it does not pan the field. Named-subject prompts (`a person walking in a forest`) still use the object path. The **cartoon loop** (`LOOP_WORKFLOW_TYPE=cartoon`) starts from a Pillow **cel kit** (`render_engine=cel`): inked rooms and a TV-cartoon figure, not a grade on the blob renderer.
 
 ---
 
