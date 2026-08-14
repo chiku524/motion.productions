@@ -10,7 +10,7 @@ This document describes how Motion implements the [core foundation and loop](INT
 
 **Product goal:** A **photoreal engine** that generates any sort of video from arbitrary user instruction, **resorting to the registries** for the values the prompt controls. The current shipped path is **procedural** (parser → renderer → FFmpeg) on that same foundation; photoreal is the destination, not a separate catalog of fixed templates.
 
-See [INTENDED_LOOP.md](INTENDED_LOOP.md) and [WORKFLOWS_AND_REGISTRIES.md](WORKFLOWS_AND_REGISTRIES.md).
+See [INTENDED_LOOP.md](INTENDED_LOOP.md), [WORKFLOWS_AND_REGISTRIES.md](WORKFLOWS_AND_REGISTRIES.md), and [PIXEL_FIELD.md](PIXEL_FIELD.md) (motion is pixel color-change; synchronized change forms objects).
 
 ---
 

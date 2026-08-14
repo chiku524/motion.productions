@@ -216,14 +216,14 @@ def _render_pure_per_frame(
     intensity: float,
     motion_level: float = 1.0,
     motion_val: float | None = None,
+    motion_sync: float = 1.0,
 ) -> tuple["np.ndarray", "np.ndarray", "np.ndarray"]:
     """
     Each pixel independently pairs two colors from the registry pool.
 
-    A slower spatial field groups nearby pixels so those pairings can mass into
-    objects, settings, and scenery — without drawing premade layers. Low
-    motion_level holds the field still (static frames). High motion_level plus
-    motion_val rematches pairings over time (dynamic windows).
+    Motion is those pairings changing color over time. motion_sync (0–1) is how
+    locked neighboring pixels are: 1 = a mass changes together (object / motion),
+    0 = each pixel changes on its own (flicker). See docs/PIXEL_FIELD.md.
     """
     n_colors = len(pure_colors)
     if n_colors == 0:
@@ -235,32 +235,51 @@ def _render_pure_per_frame(
     t_amt = (float(np.clip(motion_level, 0.0, 25.0)) / 25.0) ** 2
     mv = 0.0 if motion_val is None else float(motion_val)
     t_shift = t * t_amt * 1.8 + mv * t_amt
+    sync = float(np.clip(motion_sync, 0.0, 1.0))
     field = _hash_noise(xx, yy, seed, scale=41.0)
     layout = int(abs(seed)) % 4
     if layout == 0:
-        w = 0.5 + 0.5 * np.sin((yy + t_shift * 0.35) * (1.6 + 0.8 * field) * np.pi)
+        w_space = 0.5 + 0.5 * np.sin(yy * (1.6 + 0.8 * field) * np.pi)
     elif layout == 1:
-        w = 0.5 + 0.5 * np.sin((xx + t_shift * 0.35) * (1.6 + 0.8 * field) * np.pi)
+        w_space = 0.5 + 0.5 * np.sin(xx * (1.6 + 0.8 * field) * np.pi)
     elif layout == 2:
         cx = 0.32 + 0.36 * ((abs(seed) % 17) / 17.0)
         cy = 0.32 + 0.36 * ((abs(seed) % 13) / 13.0)
         dist = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
-        w = 0.5 + 0.5 * np.sin((dist * 4.0 + t_shift) * np.pi + field * 0.5)
+        w_space = 0.5 + 0.5 * np.sin((dist * 4.0) * np.pi + field * 0.5)
     else:
-        w = 0.5 + 0.5 * np.sin((xx + yy + t_shift) * (1.4 + 0.5 * field) * np.pi)
+        w_space = 0.5 + 0.5 * np.sin((xx + yy) * (1.4 + 0.5 * field) * np.pi)
 
     h_pix, w_pix = xx.shape
     px = np.floor(xx * max(w_pix, 2)).astype(np.int64)
     py = np.floor(yy * max(h_pix, 2)).astype(np.int64)
     pix = (px * np.int64(73856093)) ^ (py * np.int64(19349663)) ^ (np.int64(seed) * np.int64(83492791))
-    # Coarse region: nearby pixels share a local pairing family so masses can form
     region = (
         np.floor(xx * 5.0 + field * 2.0).astype(np.int64)
         + np.floor(yy * 4.0).astype(np.int64) * 17
     )
-    pair_drift = np.floor(t_shift * 5.0).astype(np.int64) if t_amt > 0.12 else 0
-    idx_a = np.mod(np.abs(pix + region * 13 + pair_drift), n_colors)
-    idx_b = np.mod(np.abs((pix // 3) + region * 29 + pair_drift * 2), n_colors)
+    # Spatial pairing (the still field). Time only adds color-change on top.
+    idx_a0 = np.mod(np.abs(pix + region * 13), n_colors)
+    idx_b0 = np.mod(np.abs((pix // 3) + region * 29), n_colors)
+
+    change = t_amt > 0.12
+    if change:
+        # Masses share one color-change (objects / motion). Independent pixels each change alone (flicker).
+        mass = np.floor(xx * 3.0).astype(np.int64) + np.floor(yy * 3.0).astype(np.int64) * 3
+        shared_drift = np.floor(t_shift * 8.0 + mass.astype(np.float32) * 2.0).astype(np.int64)
+        pix_drift = np.floor(t_shift * 8.0 + (np.abs(pix) % 997).astype(np.float32) * 0.2).astype(np.int64)
+        drift = np.floor(
+            sync * shared_drift.astype(np.float32) + (1.0 - sync) * pix_drift.astype(np.float32)
+        ).astype(np.int64)
+        shared_w = 0.18 * np.sin(t_shift * np.pi + mass.astype(np.float32) * 0.7)
+        pix_w = 0.18 * np.sin(t_shift * np.pi + (np.abs(pix) % 997).astype(np.float32) * 0.05)
+        w = np.clip(w_space + sync * shared_w + (1.0 - sync) * pix_w, 0.0, 1.0)
+    else:
+        drift = 0
+        w = w_space
+
+    idx_a = np.mod(idx_a0 + drift, n_colors)
+    idx_b = np.mod(idx_b0 + drift * 2, n_colors)
     if n_colors > 1:
         same = idx_a == idx_b
         idx_b = np.where(same, np.mod(idx_a + 1, n_colors), idx_b)
@@ -274,6 +293,7 @@ def _render_pure_per_frame(
     g = np.clip(g + (n - 0.5) * amp, 0, 255)
     b = np.clip(b + (n - 0.5) * amp, 0, 255)
     return r, g, b
+
 
 def _sample_texture_mod(
     texture: "np.ndarray | None",
@@ -980,14 +1000,19 @@ def render_frame(
         shake = np.sin(t_motion * 23.7) * handheld * 0.02
         pan_x += shake
         pan_y += np.sin(t_motion * 17.3) * handheld * 0.02
-    xx, yy = _apply_camera_transform(xx, yy, zoom, pan_x, pan_y, rotate)
+    # Pairing field: motion is pixel color-change, not camera catalog motion.
+    if not (creation_mode == "pure_per_frame" and pure_colors):
+        xx, yy = _apply_camera_transform(xx, yy, zoom, pan_x, pan_y, rotate)
 
     if creation_mode == "pure_per_frame" and pure_colors:
         ml = float(getattr(spec, "motion_level", None) or 1.0)
+        sync_raw = getattr(spec, "motion_sync", None)
+        sync = 1.0 if sync_raw is None else float(sync_raw)
         r, g, b = _render_pure_per_frame(
             xx, yy, pure_colors, t_abs, seed, intensity,
             motion_level=ml,
             motion_val=float(motion_val),
+            motion_sync=sync,
         )
     else:
         v = _gradient_value(

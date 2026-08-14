@@ -69,6 +69,8 @@ This document is the **authoritative foundation** for all registries. Everything
 - **Pure:** Elements from **singular frames** (one frame → one pixel/sample or one pure blend).
 - **Blended & Semantic:** Elements from **windows** (multiple frames) or **connection over distance** (e.g. gradient in one frame). These are **non-pure blends**.
 
+**Motion and objects are not a separate primitive.** Motion is pixels changing color from frame to frame. Objects and perceived motion form the more those color changes are **synchronized** across neighboring pixels as time passes. Unsynchronized change is flicker; synchronized change is form plus motion. A window is that dynamicity over ~1s — not a catalog of motion types. Full statement and loop rules: [PIXEL_FIELD.md](PIXEL_FIELD.md).
+
 ---
 
 ## 8. Summary table
@@ -92,4 +94,4 @@ This document is the **authoritative foundation** for all registries. Everything
 - [x] Name generator: semantic/meaningful only; precise algorithms for undiscovered elements.
 - [x] Interpretation: program deals with unknown until user input; registry prepares for everything.
 
-See also: [WORKFLOWS_AND_REGISTRIES.md](WORKFLOWS_AND_REGISTRIES.md) (Part I: registries), [MP4_ASPECTS.md](MP4_ASPECTS.md), [NAME_GENERATOR.md](NAME_GENERATOR.md).
+See also: [WORKFLOWS_AND_REGISTRIES.md](WORKFLOWS_AND_REGISTRIES.md) (Part I: registries), [PIXEL_FIELD.md](PIXEL_FIELD.md), [MP4_ASPECTS.md](MP4_ASPECTS.md), [NAME_GENERATOR.md](NAME_GENERATOR.md).

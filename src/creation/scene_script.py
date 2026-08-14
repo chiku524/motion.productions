@@ -197,6 +197,7 @@ def spec_from_shot(
         motion_rhythm=getattr(base_spec, "motion_rhythm", "steady") or "steady",
         motion_level=getattr(base_spec, "motion_level", None),
         motion_std=getattr(base_spec, "motion_std", None),
+        motion_sync=getattr(base_spec, "motion_sync", None),
         sfx_events=getattr(base_spec, "sfx_events", None),
         scene_layers=getattr(base_spec, "scene_layers", None),
         text_overlay=getattr(base_spec, "text_overlay", None),

@@ -198,6 +198,9 @@ class TestMiniSceneFidelity(unittest.TestCase):
         self.assertTrue(spec.pure_sounds)
         self.assertEqual(len(spec.pure_sounds), 2)
         self.assertGreaterEqual(len(spec.pure_colors or []), 16)
+        self.assertEqual(float(spec.motion_sync or 0), 1.0)
+        self.assertEqual(spec.camera_motion, "static")
+        self.assertEqual(spec.camera_steadiness, "locked")
 
     def test_motion_window_stays_pure_higher_motion(self):
         prompt = "motion window: amber paired with teal in slow drift"
@@ -212,6 +215,9 @@ class TestMiniSceneFidelity(unittest.TestCase):
         self.assertTrue(spec.pure_sounds)
         self.assertEqual(len(spec.pure_sounds), 4)
         self.assertGreaterEqual(len(spec.pure_colors or []), 16)
+        self.assertGreaterEqual(float(spec.motion_sync or 0), 0.5)
+        self.assertEqual(spec.camera_motion, "static")
+        self.assertEqual(spec.camera_steadiness, "locked")
 
     def test_setting_props_forest_trees(self):
         prompt = "a person walking left in a forest with soft vocals"
@@ -221,6 +227,7 @@ class TestMiniSceneFidelity(unittest.TestCase):
         spec = build_spec_from_instruction(instruction, knowledge={})
         self.assertEqual(spec.creation_mode, "blended")
         self.assertIsNone(spec.sound_pairing)
+        self.assertIsNone(spec.motion_sync)
         kinds = {l.get("kind") for l in (spec.scene_layers or [])}
         self.assertIn("tree", kinds)
         self.assertIn("character", kinds)
@@ -323,6 +330,33 @@ class TestMiniSceneFidelity(unittest.TestCase):
         neighbor = float(np.mean(np.abs(r[:, 1:] - r[:, :-1])))
         self.assertGreater(neighbor, 4.0)
         self.assertGreater(float(np.std(r)), 20.0)
+
+    def test_synchronized_color_change_is_more_coherent_than_independent(self):
+        import numpy as np
+        from src.procedural.renderer import _render_pure_per_frame
+
+        xx, yy = np.meshgrid(np.linspace(0, 1, 32), np.linspace(0, 1, 32))
+        colors = [(255, 0, 0), (0, 0, 255)]
+        kwargs = dict(motion_level=16.0, motion_val=0.6)
+        r0, _, _ = _render_pure_per_frame(xx, yy, colors, 0.0, 11, 1.0, **kwargs, motion_sync=1.0)
+        r1, _, _ = _render_pure_per_frame(xx, yy, colors, 0.7, 11, 1.0, **kwargs, motion_sync=1.0)
+        u0, _, _ = _render_pure_per_frame(xx, yy, colors, 0.0, 11, 1.0, **kwargs, motion_sync=0.0)
+        u1, _, _ = _render_pure_per_frame(xx, yy, colors, 0.7, 11, 1.0, **kwargs, motion_sync=0.0)
+        changed_sync = (np.abs(r1 - r0) > 20).astype(np.float32)
+        changed_indep = (np.abs(u1 - u0) > 20).astype(np.float32)
+
+        def _patch_coherence(mask: np.ndarray, size: int = 8) -> float:
+            # |patch mean - 0.5|: masses that flip together sit near 0 or 1.
+            vals = []
+            h, w = mask.shape
+            for y in range(0, h - size + 1, size):
+                for x in range(0, w - size + 1, size):
+                    m = float(mask[y : y + size, x : x + size].mean())
+                    vals.append(abs(m - 0.5))
+            return float(np.mean(vals)) if vals else 0.0
+
+        self.assertGreater(_patch_coherence(changed_sync), _patch_coherence(changed_indep))
+        self.assertGreater(float(np.mean(np.abs(r1 - r0))), 0.5)
 
 
 if __name__ == "__main__":

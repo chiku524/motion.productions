@@ -13,6 +13,8 @@ Each generated video is:
 
 So: **static elements live inside each frame; dynamic elements are what appear when those frames are merged/combined over time.**
 
+**Motion primitive:** a pixel changing color in the next frame. **Objects and motion** form the more neighboring pixels make that change **in sync**. Unsynchronized change is flicker. See [PIXEL_FIELD.md](PIXEL_FIELD.md).
+
 ---
 
 ## 2. What a complete MP4 is (technical)

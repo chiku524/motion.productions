@@ -10,6 +10,7 @@ User instruction drives generation; registries supply the named values that prom
 **End goal** — a **photoreal engine** that can generate any sort of video from arbitrary user input, resorting to the registries for the values the prompt is in control of. Today’s default path is a **procedural** engine (our algorithms + data + FFmpeg); photoreal is the destination on that same registry-backed foundation. No external generative “model” is required for the current loop.
 
 - **Core foundation and loop:** [docs/INTENDED_LOOP.md](./docs/INTENDED_LOOP.md) — origins, extraction, creation, growth
+- **Pixel field (motion & objects):** [docs/PIXEL_FIELD.md](./docs/PIXEL_FIELD.md) — motion is pixel color-change; sync forms objects
 - **Architecture:** [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) — layout, procedural engine, interpreter & learning
 - **Workflows & registries:** [docs/WORKFLOWS_AND_REGISTRIES.md](./docs/WORKFLOWS_AND_REGISTRIES.md) — Pure / Blended / Semantic / Interpretation
 - **Registry reset (primitives → D1):** [docs/REGISTRY_RESET.md](./docs/REGISTRY_RESET.md) — wipe registry tables + `seed_registries_d1.py` (Docker loops paused)

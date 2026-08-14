@@ -1,8 +1,9 @@
 """
 Pixel-field emergence: independent pairings can mass into objects, settings, scenery.
 
-Generation stays a pixel field (no premade scene layers). After render, this
-module looks at the field and:
+Generation stays a pixel field (no premade scene layers). Motion is pixels changing
+color over time; objects/motion appear the more those changes stay in sync
+(docs/PIXEL_FIELD.md). After render, this module looks at the field and:
   - scores origin settings / scene primitives the layout already resembles
   - matches spatial masses against registered entity profiles
   - names leftover coherent masses as novel discoveries

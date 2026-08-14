@@ -335,15 +335,16 @@ Exploiter always picks from good_prompts → same motion/sound/color. Balanced w
 
 ### Intended vs actual workflow
 
-- **Per-video:** One prompt → one spec per video (one palette, one motion, one gradient, one camera, one audio for the whole video). Variety across videos comes from different prompts, not from randomizing the spec every frame.
-- **Per-frame / per-pixel (pure):** In **pure_per_frame** mode we place different pure colors at different pixels (hash of x, y, t), but the **set** of colors and the **motion** are fixed for the video. So there is per-pixel variation within a single spec.
-- **Blends:** New blends are **extracted** from the rendered video (dominant color per frame, aggregates per window) and recorded. They are not computed as "particles combining" during render. **Strict (→ new pure):** per-frame dominant color/sound and per-window temporal blend (mean RGB over 1s) → static. **Lenient (→ dynamic + semantic):** motion, lighting, gradient, camera, etc. over window → dynamic and narrative.
+- **Per-video:** One prompt → one spec per video (one palette, one motion recipe, one gradient, one camera, one audio for the whole video). Variety across videos comes from different prompts, not from randomizing the spec every frame.
+- **Per-frame / per-pixel (pure):** Each pixel independently pairs registry colors. **Motion is those pairings changing color from frame to frame.** Neighboring pixels that change **in sync** form objects and motion; independent change is flicker. Frames hold pairings still; windows let them change over ~1s. See [PIXEL_FIELD.md](PIXEL_FIELD.md).
+- **Blends:** New blends are **extracted** from the rendered video (dominant color per frame, aggregates per window) and recorded. They are not computed as "particles combining" during render. **Strict (→ new pure):** per-frame dominant color/sound and per-window temporal blend (mean RGB over 1s) → static. **Lenient (→ dynamic + semantic):** motion (measured as frame-to-frame color difference), lighting, gradient, camera, etc. over window → dynamic and narrative. Emerged settings/entities from pixel masses → narrative + learned_entities.
 
 ---
 
 ## See also
 
 - **[REGISTRY_FOUNDATION.md](REGISTRY_FOUNDATION.md)** — Authoritative foundation: four registries, depth_breakdown, name-generator (semantic/name-like), 100% precise & accurate.
+- **[PIXEL_FIELD.md](PIXEL_FIELD.md)** — Motion is pixel color-change; synchronized change forms objects and motion.
 - **[LOOP_STANDARDS.md](LOOP_STANDARDS.md)** — Set algorithms and functions for interpretation loop (language standard) and video loop (MP4 aspects); both grow from origin/primitive + extracted values.
 - [NAME_GENERATOR.md](NAME_GENERATOR.md) — Algorithm for sensible, semantic or name-like short names.
 - [MP4_ASPECTS.md](MP4_ASPECTS.md) — Every aspect of a complete MP4; frame/window model.

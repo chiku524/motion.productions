@@ -82,6 +82,8 @@ class SceneSpec:
     # Numeric motion recipe (extraction-scale 0–25). Renderer interpolates; motion_type is a label.
     motion_level: float | None = None
     motion_std: float | None = None
+    # 0 = independent per-pixel color change (flicker); 1 = neighboring pixels change together (object / motion).
+    motion_sync: float | None = None
     sfx_events: list[dict] | None = None
     # Scene graph layers (Phase 2+): list of LayerSpec-like dicts
     scene_layers: list[dict] | None = None

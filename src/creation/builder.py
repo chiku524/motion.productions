@@ -370,15 +370,28 @@ def build_spec_from_instruction(
             motion = secure_choice(pool) if pool else secure_choice(tuple(v for v in _MOTION_VALID if v not in avoid_motion) or tuple(_MOTION_VALID))
     if motion_level is None:
         motion_level = _level_from_motion_label(motion)
+    # Pairing clips: motion = pixel color-change; sync = how locked neighboring pixels are.
+    motion_sync: float | None = None
     if wants_pairing:
+        camera = "static"
         if window_pairing:
             motion_level = max(float(motion_level or 8.0), 9.0)
+            sm = (motion_smoothness or "smooth").lower()
+            if sm in ("jittery", "jerky", "chaotic"):
+                motion_sync = 0.28
+            elif sm in ("medium",):
+                motion_sync = 0.55
+            else:
+                motion_sync = 0.82
         elif static_frame_pairing:
             motion_level = min(float(motion_level or 2.5), 3.5)
+            motion_sync = 1.0
             if motion_std is not None:
                 motion_std = min(float(motion_std), 1.5)
             else:
                 motion_std = 0.4
+        else:
+            motion_sync = 0.7
     if camera == DEFAULT_CAMERA and not lock_look:
         pool = _pool_from_knowledge(knowledge, "learned_camera", "origin_camera", _CAMERA_VALID)
         camera = secure_choice(pool) if pool else secure_choice([v for v in CAMERA_ORIGINS["motion_type"] if v in _CAMERA_VALID] or list(_CAMERA_VALID))
@@ -677,6 +690,7 @@ def build_spec_from_instruction(
         motion_rhythm=motion_rhythm,
         motion_level=motion_level,
         motion_std=motion_std,
+        motion_sync=motion_sync,
         sfx_events=sfx_events or None,
         scene_layers=scene_layers,
         text_overlay=text_overlay,
@@ -698,7 +712,9 @@ def build_spec_from_instruction(
         creation_mode=creation_mode,
         pure_sounds=pure_sounds,
         sound_pairing=sound_pairing,
-        camera_steadiness=_resolve_camera_steadiness(instruction, camera, shot),
+        camera_steadiness=(
+            "locked" if wants_pairing else _resolve_camera_steadiness(instruction, camera, shot)
+        ),
         color_temperature=_resolve_color_temperature(instruction, lighting),
         instance=instance,
     )
