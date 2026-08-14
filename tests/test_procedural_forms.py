@@ -126,12 +126,12 @@ class TestProceduralForms(unittest.TestCase):
         self.assertIsNotNone(a.instance)
         self.assertIsNotNone(b.instance)
         self.assertNotEqual(a.instance.get("horizon"), b.instance.get("horizon"))
-        trees_a = [l["form"]["species"] for l in (a.scene_layers or []) if l.get("kind") == "tree"]
-        trees_b = [l["form"]["species"] for l in (b.scene_layers or []) if l.get("kind") == "tree"]
+        trees_a = [layer["form"]["species"] for layer in (a.scene_layers or []) if layer.get("kind") == "tree"]
+        trees_b = [layer["form"]["species"] for layer in (b.scene_layers or []) if layer.get("kind") == "tree"]
         self.assertTrue(trees_a)
         self.assertTrue(trees_b)
-        xa = sorted(round(l["keyframes"][0]["x"], 3) for l in (a.scene_layers or []) if l.get("kind") == "tree")
-        xb = sorted(round(l["keyframes"][0]["x"], 3) for l in (b.scene_layers or []) if l.get("kind") == "tree")
+        xa = sorted(round(layer["keyframes"][0]["x"], 3) for layer in (a.scene_layers or []) if layer.get("kind") == "tree")
+        xb = sorted(round(layer["keyframes"][0]["x"], 3) for layer in (b.scene_layers or []) if layer.get("kind") == "tree")
         self.assertNotEqual(xa, xb)
 
     def test_same_prompt_and_seed_same_instance(self):
@@ -177,8 +177,8 @@ class TestProceduralForms(unittest.TestCase):
             }] * 8,
         }
         spec = build_spec_from_instruction(instruction, knowledge=knowledge, creation_seed=3)
-        kinds = {l.get("kind") for l in (spec.scene_layers or [])}
-        ids = {l.get("id") for l in (spec.scene_layers or [])}
+        kinds = {layer.get("kind") for layer in (spec.scene_layers or [])}
+        ids = {layer.get("id") for layer in (spec.scene_layers or [])}
         self.assertNotIn("learned0", ids)
         self.assertNotIn("fish", kinds)
 
@@ -214,8 +214,8 @@ class TestProceduralForms(unittest.TestCase):
         instruction.duration_seconds = 5.0
         a = build_spec_from_instruction(instruction, knowledge={}, creation_seed=4)
         b = build_spec_from_instruction(instruction, knowledge={}, creation_seed=5)
-        fish_a = [l for l in (a.scene_layers or []) if l.get("kind") == "fish"]
-        fish_b = [l for l in (b.scene_layers or []) if l.get("kind") == "fish"]
+        fish_a = [layer for layer in (a.scene_layers or []) if layer.get("kind") == "fish"]
+        fish_b = [layer for layer in (b.scene_layers or []) if layer.get("kind") == "fish"]
         self.assertTrue(fish_a)
         self.assertTrue(fish_b)
         self.assertIn("form", fish_a[0])

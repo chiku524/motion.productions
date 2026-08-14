@@ -7,7 +7,6 @@ from __future__ import annotations
 import unittest
 
 from src.creation.builder import build_spec_from_instruction
-from src.creation.narrative_script import build_mini_scene_script
 from src.interpretation.parser import interpret_user_prompt
 from src.knowledge.entity_registry import entity_profile_key, grow_entities_from_spec
 
@@ -53,7 +52,7 @@ class TestMiniSceneFidelity(unittest.TestCase):
         instruction.duration_seconds = 5.0
         spec = build_spec_from_instruction(instruction, knowledge={})
         self.assertTrue(spec.scene_layers)
-        self.assertTrue(any(l.get("kind") == "character" for l in spec.scene_layers))
+        self.assertTrue(any(layer.get("kind") == "character" for layer in spec.scene_layers))
 
     def test_blue_ball_techno(self):
         prompt = "a blue ball bouncing right with techno music"
@@ -100,7 +99,7 @@ class TestMiniSceneFidelity(unittest.TestCase):
         instruction.duration_seconds = 5.0
         spec = build_spec_from_instruction(instruction, knowledge={})
         self.assertTrue(spec.scene_layers)
-        layer = next(l for l in spec.scene_layers if l.get("kind") == "character")
+        layer = next(layer for layer in spec.scene_layers if layer.get("kind") == "character")
         self.assertEqual(layer.get("expression"), "happy")
         self.assertEqual(layer.get("personality"), "playful")
 
@@ -120,16 +119,16 @@ class TestMiniSceneFidelity(unittest.TestCase):
             isinstance(e, dict) and e.get("path_segments")
             for e in (getattr(instruction, "entities", None) or [])
         )
-        starts = [l.get("keyframes", [{}])[0].get("t", 0) for l in spec.scene_layers]
+        starts = [layer.get("keyframes", [{}])[0].get("t", 0) for layer in spec.scene_layers]
         self.assertTrue(
             has_segments
             or any(float(s) > 0.05 for s in starts)
             or len(spec.scene_layers) >= 2
         )
-        bouncing = [l for l in spec.scene_layers if l.get("bounce") or l.get("gag") == "squash"]
+        bouncing = [layer for layer in spec.scene_layers if layer.get("bounce") or layer.get("gag") == "squash"]
         self.assertTrue(
             bouncing
-            or any(l.get("gag") for l in spec.scene_layers)
+            or any(layer.get("gag") for layer in spec.scene_layers)
             or has_segments
         )
         # Phase E: freeform beats wire timed overlays + music sections
@@ -228,7 +227,7 @@ class TestMiniSceneFidelity(unittest.TestCase):
         self.assertEqual(spec.creation_mode, "blended")
         self.assertIsNone(spec.sound_pairing)
         self.assertIsNone(spec.motion_sync)
-        kinds = {l.get("kind") for l in (spec.scene_layers or [])}
+        kinds = {layer.get("kind") for layer in (spec.scene_layers or [])}
         self.assertIn("tree", kinds)
         self.assertIn("character", kinds)
 
@@ -239,7 +238,7 @@ class TestMiniSceneFidelity(unittest.TestCase):
         self.assertTrue(any(e.get("kind") == "fish" for e in instruction.entities))
         instruction.duration_seconds = 5.0
         spec = build_spec_from_instruction(instruction, knowledge={})
-        kinds = {l.get("kind") for l in (spec.scene_layers or [])}
+        kinds = {layer.get("kind") for layer in (spec.scene_layers or [])}
         self.assertIn("fish", kinds)
         # Waves often auto-spawn for ocean setting
         self.assertTrue("wave" in kinds or "fish" in kinds)
@@ -394,9 +393,9 @@ class TestMiniSceneFidelity(unittest.TestCase):
         self.assertEqual(spec.audio_genre, "none")
         self.assertGreaterEqual(float(spec.motion_sync or 0), 0.85)
         self.assertEqual(getattr(instruction, "setting", None), "kitchen")
-        kinds = {l.get("kind") for l in (spec.scene_layers or [])}
+        kinds = {layer.get("kind") for layer in (spec.scene_layers or [])}
         self.assertIn("character", kinds)
-        char = next(l for l in spec.scene_layers if l.get("kind") == "character")
+        char = next(layer for layer in spec.scene_layers if layer.get("kind") == "character")
         kfs = char.get("keyframes") or []
         self.assertGreaterEqual(len(kfs), 4)
         xs = [float(k.get("x")) for k in kfs]

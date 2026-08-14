@@ -28,7 +28,7 @@ from ..procedural.data.keywords import (
 )
 from ..procedural.data.palettes import PALETTES
 from ..procedural.parser import SceneSpec
-from ..random_utils import secure_choice, secure_random, weighted_choice_favor_underused, weighted_choice_favor_recent
+from ..random_utils import secure_choice, weighted_choice_favor_underused, weighted_choice_favor_recent
 
 logger = logging.getLogger(__name__)
 

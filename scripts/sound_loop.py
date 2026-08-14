@@ -169,13 +169,13 @@ def run() -> None:
                 source_prompt = (
                     f"dynamic sound pairing of {labels[0]} with {labels[1]}"
                     if len(labels) >= 2
-                    else f"sound_loop window pairing"
+                    else "sound_loop window pairing"
                 )
             else:
                 source_prompt = (
                     f"static sound pairing of {labels[0]} with {labels[1]}"
                     if len(labels) >= 2
-                    else f"sound_loop frame pairing"
+                    else "sound_loop frame pairing"
                 )
             target_primitive = labels[0] if labels else _pick_target_primitive(api_base)
 

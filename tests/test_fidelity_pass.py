@@ -179,7 +179,6 @@ class TestFidelityPass(unittest.TestCase):
 
         narr = build_mini_scene_script(total_duration=5.0, action="walk", topic="walk")
         ents, _sfx = script_to_entities_and_sfx(narr, entity_kind="circle")
-        walk_ents = [e for e in ents if e.get("kind") == "character" or e.get("trajectory") in ("left", "right", "walk")]
         self.assertTrue(ents)
         # Walk beats must not auto-assign spin/double_take
         for e in ents:

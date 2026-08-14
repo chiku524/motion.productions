@@ -7,6 +7,7 @@ import random
 from typing import Any, Iterator
 
 from ..random_utils import secure_choice, secure_random
+from ..knowledge.completion_targets import NARRATIVE_ASPECT_TO_ORIGIN as _NARRATIVE_ASPECT_TO_ORIGIN
 
 from ..procedural.data.keywords import (
     KEYWORD_TO_PALETTE,
@@ -342,10 +343,6 @@ def _is_near_duplicate(prompt: str, avoid: set[str], threshold: float = 0.8) -> 
         if _word_overlap_ratio(prompt, other) >= threshold:
             return True
     return False
-
-
-# API narrative aspect -> NARRATIVE_ORIGINS key (tone->mood, tension_curve->plots)
-from ..knowledge.completion_targets import NARRATIVE_ASPECT_TO_ORIGIN as _NARRATIVE_ASPECT_TO_ORIGIN
 
 
 def generate_targeted_narrative_prompt(

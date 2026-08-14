@@ -491,7 +491,6 @@ KEYWORD_TO_SETTING: dict[str, str] = {
     "city": "city",
     "urban": "city",
     "tokyo": "city",
-    "street": "city",
     "neon": "neon",
     "cyber": "neon",
     "ocean": "ocean",

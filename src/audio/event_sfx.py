@@ -5,7 +5,6 @@ Event-synced SFX scheduler: overlay Pure-sound-style hits at timed events
 from __future__ import annotations
 
 import logging
-import math
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -86,7 +85,6 @@ def schedule_sfx_events(
     """
     if not events:
         return base
-    from pydub import AudioSegment
 
     out = base
     for ev in events:

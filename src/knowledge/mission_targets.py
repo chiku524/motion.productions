@@ -108,12 +108,12 @@ def classify_color_family_rgb(r: float, g: float, b: float) -> str:
     """Python mirror of Worker colorBrowse.classifyColorFamily (for parity checks)."""
     R, G, B = float(r) / 255.0, float(g) / 255.0, float(b) / 255.0
     mx, mn = max(R, G, B), min(R, G, B)
-    l = (mx + mn) / 2
+    lightness = (mx + mn) / 2
     if mx == mn:
         h, s = 0.0, 0.0
     else:
         d = mx - mn
-        s = d / (2 - mx - mn) if l > 0.5 else d / (mx + mn)
+        s = d / (2 - mx - mn) if lightness > 0.5 else d / (mx + mn)
         if mx == R:
             h = ((G - B) / d + (6 if G < B else 0)) / 6
         elif mx == G:
@@ -121,13 +121,13 @@ def classify_color_family_rgb(r: float, g: float, b: float) -> str:
         else:
             h = ((R - G) / d + 4) / 6
         h *= 360
-    if l >= 0.92 and s < 0.2:
+    if lightness >= 0.92 and s < 0.2:
         return "white"
-    if l <= 0.08:
+    if lightness <= 0.08:
         return "black"
     if s < 0.12:
         return "gray"
-    if l < 0.45 and s >= 0.12 and 15 <= h < 55:
+    if lightness < 0.45 and s >= 0.12 and 15 <= h < 55:
         return "brown"
     if h < 15 or h >= 345:
         return "red"

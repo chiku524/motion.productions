@@ -9,6 +9,8 @@ See docs/REGISTRY_FOUNDATION.md.
 from pathlib import Path
 from typing import Any
 
+from .blend_depth import SOUND_ORIGIN_PRIMITIVES
+
 # -----------------------------------------------------------------------------
 # COLOR PRIMITIVES — every pure color known (origin values). R, G, B, opacity only.
 # Full set of CSS named colors (sRGB) so the loop can blend from all known-to-man primitives.
@@ -169,8 +171,6 @@ STATIC_COLOR_PRIMITIVES = [
 # - Discovered pure sound *values* are blends of these primitives; depth % = origin_noises weights.
 # - Kick, snare, speech, melody, etc. are Blended (dynamic), not pure primitives.
 # -----------------------------------------------------------------------------
-from .blend_depth import SOUND_ORIGIN_PRIMITIVES
-
 STATIC_SOUND_NOISE_NAMES = list(SOUND_ORIGIN_PRIMITIVES)
 
 _NOISE_TONE_BAND: dict[str, str] = {

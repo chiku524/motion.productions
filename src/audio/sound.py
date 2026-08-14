@@ -439,11 +439,6 @@ def _generate_procedural_audio(
         logger.warning("pydub.generators.Sine not available: %s — using silence for procedural audio", e)
         return base
 
-    try:
-        from pydub.generators import WhiteNoise
-    except ImportError:
-        WhiteNoise = None  # type: ignore[misc, assignment]
-
     # Mood: frequency and volume (full AUDIO_ORIGINS mood set + film aliases).
     mood_config = {
         "neutral": (110, -22),

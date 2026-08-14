@@ -125,7 +125,6 @@ def ensure_narrative_in_registry(
                 "depth_breakdown": depth_breakdown,
             })
         return None
-    names = {e.get("name", "") for e in data.get("entries", []) if e.get("name")}
     from .blend_names import narrative_display_name
     name = narrative_display_name(aspect, key, value.strip())
     entry: dict[str, Any] = {
