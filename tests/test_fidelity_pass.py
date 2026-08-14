@@ -218,6 +218,24 @@ class TestFidelityPass(unittest.TestCase):
         p = generate_mini_scene_prompt(fidelity_bias=True)
         self.assertTrue(p)
 
+    def test_mini_scene_prompts_are_new_each_call(self):
+        from src.automation.prompt_gen import _MINI_SCENE_TEMPLATES, generate_mini_scene_prompt
+
+        catalog = set(_MINI_SCENE_TEMPLATES)
+        avoid: set[str] = set()
+        seen: list[str] = []
+        for _ in range(20):
+            p = generate_mini_scene_prompt(avoid=avoid)
+            self.assertTrue(p)
+            seen.append(p)
+            avoid.add(p)
+        self.assertEqual(len(set(seen)), 20, f"loop recycled prompts: {seen}")
+        outside = [p for p in seen if p not in catalog]
+        self.assertGreaterEqual(
+            len(outside), 16,
+            f"expected composed prompts, mostly not catalog; got {seen}",
+        )
+
     def test_continuous_subject_path_segments(self):
         from src.creation.narrative_script import build_mini_scene_script, script_to_entities_and_sfx
 

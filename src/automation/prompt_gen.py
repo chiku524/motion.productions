@@ -519,14 +519,17 @@ def generate_targeted_color_family_prompt(
     # Prefer light/deep shades randomly to widen shade brackets
     shade = secure_choice(["deep", "mid", "light", "muted"])
     subject, cue = color_family_prompt_bits(target, shade)
+    setting = secure_choice(_SETTING_PHRASES + ["at dusk", "across a quiet landscape", "over still water"])
     templates = [
-        f"a {cue} {subject} scene at dusk",
-        f"{cue} {subject} tones across a quiet landscape",
-        f"soft {subject} light, {cue} atmosphere",
-        f"a {cue} {subject} palette over still water",
-        f"close-up textures in {cue} {subject}",
+        f"a {cue} {subject} scene {setting}",
+        f"{cue} {subject} tones {setting}",
+        f"soft {subject} light, {cue} atmosphere {setting}",
+        f"a {cue} {subject} palette {setting}",
+        f"close-up textures in {cue} {subject} {setting}",
+        f"a {cue} {subject} wash {setting} with calm ambient music",
+        f"{cue} {subject} glow {setting} with a slow drifting orb",
     ]
-    for _ in range(8):
+    for _ in range(24):
         prompt = secure_choice(templates)
         if prompt and prompt not in avoid and not _is_near_duplicate(prompt, avoid):
             return prompt
@@ -761,6 +764,159 @@ def _mini_scene_pools() -> dict[str, list[str]]:
     return pools
 
 
+_MINI_COLORS = [
+    "red", "blue", "green", "yellow", "amber", "teal", "magenta", "violet",
+    "orange", "pink", "gold", "white", "neon", "warm", "cool", "crimson",
+]
+_MINI_BALL_NOUNS = ["ball", "orb", "sphere"]
+_MINI_CHAR_NOUNS = ["person", "character", "figure"]
+_MINI_PROP_NOUNS: dict[str, list[str]] = {
+    "tree": ["tree", "pine"],
+    "fish": ["fish"],
+    "wave": ["wave"],
+    "building": ["building", "tower"],
+    "cloud": ["cloud"],
+    "arrow": ["arrow"],
+    "rect": ["block", "box"],
+}
+_MINI_TRAJ = ["left", "right", "up", "down"]
+_MINI_TRAJ_CAM = ["left", "right", "toward the camera", "away"]
+_MINI_MUSIC = [
+    "a deep house beat",
+    "techno music",
+    "calm ambient music",
+    "cinematic music",
+    "uplifting house music",
+    "melancholy music",
+    "tense techno",
+    "dreamy ambient music",
+    "a playful beat",
+    "dark music",
+]
+_MINI_EXPR = ["happy", "calm", "playful", "shy", "sad", "angry", "excited"]
+_MINI_EDU_TOPICS = [
+    "gravity", "photosynthesis", "momentum", "orbits", "waves", "light",
+    "tides", "friction", "buoyancy", "echoes", "seasons", "reflection",
+]
+_MINI_WEATHER = [
+    "in the rain", "in the snow", "in soft drizzle", "in a storm", "under gray sky",
+]
+
+
+def _pick_mini_mode(fidelity_bias: bool) -> str:
+    r = secure_random()
+    if fidelity_bias:
+        if r < 0.35:
+            return "setting"
+        if r < 0.55:
+            return "weather"
+        if r < 0.70:
+            return "educational"
+        if r < 0.85:
+            return "multibeat"
+        return "general"
+    if r < 0.40:
+        return "general"
+    if r < 0.65:
+        return "setting"
+    if r < 0.78:
+        return "weather"
+    if r < 0.88:
+        return "educational"
+    return "multibeat"
+
+
+def _mini_article(noun: str) -> str:
+    return "an" if noun[:1].lower() in "aeiou" else "a"
+
+
+def _finish_mini(core: str) -> str:
+    """Attach music (and sometimes vocals) without doubling 'with'."""
+    music = secure_choice(_MINI_MUSIC)
+    vocals = ""
+    if secure_random() < 0.32:
+        vocals = " and soft vocals"
+    if " with " in core.lower():
+        return f"{core} and {music}{vocals}"
+    return f"{core} with {music}{vocals}"
+
+
+def _compose_mini_scene(mode: str) -> str:
+    """
+    Build a fresh everyday mini-scene from parts. Combinatorics are large enough
+    that each loop should get a new prompt instead of cycling a catalog.
+    """
+    color = secure_choice(_MINI_COLORS)
+    setting = secure_choice(_SETTING_PHRASES)
+    if mode == "educational":
+        topic = secure_choice(_MINI_EDU_TOPICS)
+        noun = secure_choice(_MINI_BALL_NOUNS)
+        art = _mini_article(noun)
+        return secure_choice([
+            f"explain {topic} with a bouncing {color} {noun} and soft spoken vocals",
+            f"teach {topic}: {art} {color} {noun} falls then bounces then settles with calm music",
+            f"a tutorial-style scene: {art} {color} {noun} bouncing while explaining {topic}",
+            f"lesson on {topic} with {art} {color} {noun} bouncing left and soft vocals",
+        ])
+    if mode == "weather":
+        weather = secure_choice(_MINI_WEATHER)
+        if secure_random() < 0.55:
+            who = secure_choice(_MINI_CHAR_NOUNS)
+            traj = secure_choice(["left", "right"])
+            expr = secure_choice(_MINI_EXPR + [""])
+            bit = f"{expr} " if expr else ""
+            return _finish_mini(f"a {bit}{who} walking {traj} {weather}".strip())
+        noun = secure_choice(_MINI_BALL_NOUNS)
+        traj = secure_choice(_MINI_TRAJ)
+        verb = "bouncing" if secure_random() < 0.65 else "drifting"
+        return _finish_mini(f"a {color} {noun} {verb} {traj} {weather}")
+    if mode == "multibeat":
+        set_bit = f" {setting}" if secure_random() < 0.7 else ""
+        if secure_random() < 0.45:
+            who = secure_choice(_MINI_CHAR_NOUNS)
+            expr = secure_choice(_MINI_EXPR)
+            return _finish_mini(
+                f"a {expr} {who} walks in then waves then walks away{set_bit}"
+            )
+        noun = secure_choice(_MINI_BALL_NOUNS)
+        return _finish_mini(
+            f"a {color} {noun} enters left then bounces then exits right{set_bit}"
+        )
+    # setting / general
+    set_bit = f" {setting}" if (mode == "setting" or secure_random() < 0.5) else ""
+    r = secure_random()
+    if r < 0.36:
+        who = secure_choice(_MINI_CHAR_NOUNS)
+        traj = secure_choice(_MINI_TRAJ_CAM)
+        expr = secure_choice(_MINI_EXPR + [""])
+        bit = f"{expr} " if expr else ""
+        return _finish_mini(f"a {bit}{who} walking {traj}{set_bit}".strip())
+    if r < 0.72:
+        noun = secure_choice(_MINI_BALL_NOUNS)
+        traj = secure_choice(_MINI_TRAJ + ["diagonally"])
+        verb = "bouncing" if secure_random() < 0.7 else "drifting"
+        return _finish_mini(f"a {color} {noun} {verb} {traj}{set_bit}")
+    kind = secure_choice(list(_MINI_PROP_NOUNS.keys()))
+    label = secure_choice(_MINI_PROP_NOUNS[kind])
+    traj = secure_choice(["left", "right"])
+    verbs = {
+        "tree": "swaying",
+        "building": "standing",
+        "cloud": "drifting",
+        "wave": "rolling",
+        "fish": "swimming",
+        "arrow": "flying",
+        "rect": "sliding",
+    }
+    verb = verbs.get(kind, "drifting")
+    if kind == "fish" and secure_random() < 0.4:
+        verb = "jumping"
+    art = _mini_article(label)
+    if kind == "arrow" and secure_random() < 0.4:
+        return _finish_mini(f"{art} {label} {verb} toward the camera{set_bit}")
+    return _finish_mini(f"{art} {label} {verb} {traj}{set_bit}")
+
+
 def mutate_liked_prompt(prompt: str, *, avoid: set[str] | None = None) -> str | None:
     """
     Exploit human-liked prompts by mutating setting / expression / direction
@@ -831,33 +987,26 @@ def generate_mini_scene_prompt(
     Natural-language mini-scene prompts for ~5s clips — closer to real user requests
     than registry-axis jargon. Exercises scene graph + music + event SFX.
 
+    Each call composes a new prompt from color/entity/trajectory/setting/music parts.
+    The catalog list is only a last-resort fallback so loops do not cycle a fixed set.
     When fidelity_bias=True (balanced/window loops), overweight setting / weather /
-    educational / multi-beat templates so procedural polish is exercised often.
+    educational / multi-beat *modes* so procedural polish is exercised often.
     """
     avoid = avoid or set()
-    pools = _mini_scene_pools()
-    if fidelity_bias:
-        r = secure_random()
-        if r < 0.35:
-            cat = "setting"
-        elif r < 0.55:
-            cat = "weather"
-        elif r < 0.70:
-            cat = "educational"
-        elif r < 0.85:
-            cat = "multibeat"
-        else:
-            cat = "general"
-        bucket = [p for p in pools.get(cat, []) if p not in avoid]
-        candidates = bucket or [p for p in _MINI_SCENE_TEMPLATES if p not in avoid]
-    else:
-        candidates = [p for p in _MINI_SCENE_TEMPLATES if p not in avoid]
-    if not candidates:
-        return None
-    prompt = secure_choice(candidates)
-    if _is_near_duplicate(prompt, avoid):
-        return None
-    return prompt
+    mode = _pick_mini_mode(fidelity_bias)
+    for _ in range(48):
+        prompt = _compose_mini_scene(mode)
+        if not prompt:
+            continue
+        prompt = " ".join(prompt.split()).strip()
+        if prompt not in avoid and not _is_near_duplicate(prompt, avoid):
+            return prompt
+    leftovers = [p for p in _MINI_SCENE_TEMPLATES if p not in avoid]
+    if leftovers:
+        prompt = secure_choice(leftovers)
+        if prompt and not _is_near_duplicate(prompt, avoid):
+            return prompt
+    return None
 
 
 def generate_procedural_prompt(
