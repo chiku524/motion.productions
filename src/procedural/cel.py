@@ -1,11 +1,12 @@
 """
 Cel cartoon kit — starting visual grammar for the cartoon loop.
 
-Uses Pillow ImageDraw (already in the stack) as the 2D drawing library:
-hard ink outlines, flat fills, readable modern-day rooms. This path does not
-use the soft-blob character / horizon-band renderer.
+When a loop origin field exists, frames are the palette-indexed pixel masses
+sampled from the reference clip (hold, then snap to the next sample). That is
+the engine's starting picture.
 
-Unique per clip via registry colors + seed (hair, clothes, room offsets).
+Otherwise Pillow ImageDraw: hard ink outlines, flat fills, modern-day rooms
+and a TV-cartoon figure. Unique per clip via registry colors + seed.
 """
 from __future__ import annotations
 
@@ -328,6 +329,80 @@ def _draw_character(
         draw.line((cx - mw // 2, mouth_y, cx + mw // 2, mouth_y), fill=INK, width=max(2, stroke - 1))
 
 
+def _origin_for_field_render(origin: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(origin, dict):
+        return None
+    field = origin.get("field")
+    if isinstance(field, dict) and field.get("frames"):
+        return origin
+    if not origin.get("has_field"):
+        return None
+    try:
+        from ..knowledge.reference_origin import load_loop_origin
+        disk = load_loop_origin("cartoon")
+    except Exception:
+        return None
+    if isinstance(disk, dict) and isinstance(disk.get("field"), dict) and disk["field"].get("frames"):
+        merged = dict(origin)
+        merged["field"] = disk["field"]
+        return merged
+    return None
+
+
+def render_origin_field_frame(
+    origin: dict[str, Any],
+    t: float,
+    width: int,
+    height: int,
+    *,
+    seed: int = 0,
+    duration_seconds: float | None = None,
+) -> np.ndarray | None:
+    """Nearest-neighbor upsample of a palette-indexed origin sample; hold then snap."""
+    from ..knowledge.reference_origin import decode_index_map
+
+    field = origin.get("field") if isinstance(origin.get("field"), dict) else None
+    if not field:
+        return None
+    blobs = field.get("frames") or []
+    lut_raw = field.get("lut") or []
+    w0 = int(field.get("width") or 0)
+    h0 = int(field.get("height") or 0)
+    if not blobs or w0 < 4 or h0 < 4 or not lut_raw:
+        return None
+    lut_rows = []
+    for c in lut_raw:
+        if isinstance(c, dict):
+            lut_rows.append((int(c.get("r") or 0), int(c.get("g") or 0), int(c.get("b") or 0)))
+        elif isinstance(c, (tuple, list)) and len(c) >= 3:
+            lut_rows.append((int(c[0]), int(c[1]), int(c[2])))
+    if not lut_rows:
+        return None
+    lut = np.array(lut_rows, dtype=np.uint8)
+    n = len(blobs)
+    ink_fracs = field.get("ink_fracs") or []
+    usable = [i for i, frac in enumerate(ink_fracs) if i < n and float(frac) < 0.85]
+    if not usable:
+        usable = list(range(n))
+    start = usable[int(seed) % len(usable)]
+    after = [i for i in usable if i > start] or [i for i in usable if i != start] or usable
+    nxt = after[0]
+    dur = float(duration_seconds or 2.5)
+    hold_s = float(origin.get("hold_seconds") or 0.0)
+    if hold_s <= 0:
+        hold_s = dur * float(origin.get("hold_frac") or 0.85)
+    hold_s = min(max(0.05, hold_s), dur * 0.92)
+    use = nxt if float(t) >= hold_s else start
+    try:
+        indices = decode_index_map(str(blobs[use]), h0, w0)
+    except Exception:
+        return None
+    indices = np.clip(indices, 0, len(lut) - 1)
+    small = lut[indices]
+    img = Image.fromarray(small, "RGB").resize((int(width), int(height)), Image.Resampling.NEAREST)
+    return np.asarray(img, dtype=np.uint8)
+
+
 def render_cel_frame(
     spec: Any,
     t: float,
@@ -335,12 +410,25 @@ def render_cel_frame(
     height: int,
     *,
     seed: int = 0,
+    duration_seconds: float | None = None,
 ) -> np.ndarray:
-    """One RGB uint8 frame: room kit + inked character, posed from scene layers."""
+    """One RGB uint8 frame: origin field when present, else room kit + inked character."""
     w, h = int(width), int(height)
-    colors = _palette(spec)
     inst = getattr(spec, "instance", None) if isinstance(getattr(spec, "instance", None), dict) else {}
     origin = inst.get("loop_origin") if isinstance(inst.get("loop_origin"), dict) else None
+    origin = _origin_for_field_render(origin)
+    if origin:
+        field_frame = render_origin_field_frame(
+            origin,
+            float(t),
+            w,
+            h,
+            seed=seed,
+            duration_seconds=duration_seconds,
+        )
+        if field_frame is not None:
+            return field_frame
+    colors = _palette(spec)
     if origin:
         extra = []
         for p in origin.get("palette") or []:

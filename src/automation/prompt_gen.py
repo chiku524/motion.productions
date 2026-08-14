@@ -1290,9 +1290,9 @@ def generate_cartoon_prompt(
     """
     Unique modern-day cartoon shots for the dedicated cartoon loop.
 
-    Named-subject prompts (not pixel pairing): a locked character in a
-    contemporary setting, cel/cartoon look, hold-then-snap timing.
-    Colors come from a reference-origin palette when present, else the registry.
+    When a loop-origin field exists, prompts name palette pairings on that
+    field (the sampled frames' pixel masses). Otherwise: a locked character
+    in a contemporary setting. Cel/cartoon look, hold-then-snap timing.
     """
     avoid = avoid or set()
     origin = (knowledge or {}).get("loop_origin") if isinstance(knowledge, dict) else None
@@ -1305,30 +1305,45 @@ def generate_cartoon_prompt(
             if n and n not in origin_names:
                 origin_names.append(n)
     names = origin_names + [n for n in _named_registry_colors(knowledge) if n not in origin_names]
+    if not names:
+        names = ["ink", "fill"]
+    has_field = isinstance(origin, dict) and bool(origin.get("field") or origin.get("has_field"))
     for _ in range(36):
         color_a = secure_choice(names)
         rest = [n for n in names if n != color_a] or names
         color_b = secure_choice(rest)
-        subject = secure_choice(_CARTOON_SUBJECTS)
-        setting = secure_choice(_CARTOON_SETTINGS)
-        action = secure_choice(_CARTOON_ACTIONS)
-        expr = secure_choice(_CARTOON_EXPR)
-        article = _mini_article(subject)
         look = secure_choice(("cel cartoon", "modern cartoon"))
-        templates = [
-            (
-                f"{look}: {article} {color_a} {subject} {action} in a {setting}, "
-                f"{color_b} walls, {expr} face, cartoon hold then snap, anime look"
-            ),
-            (
-                f"{look}: {article} {subject} in a {setting} wearing {color_a}, "
-                f"{action}, {color_b} interior, cartoon hold then snap"
-            ),
-            (
-                f"{look}: {article} {expr} {subject} {action} in a {setting}, "
-                f"{color_a} and {color_b}, anime look"
-            ),
-        ]
+        if has_field:
+            templates = [
+                (
+                    f"{look}: origin field {color_a} and {color_b} masses hold then snap, "
+                    f"cartoon hold then snap"
+                ),
+                (
+                    f"{look}: origin field pairing {color_a} with {color_b}, "
+                    f"pixels hold then snap, cartoon hold then snap"
+                ),
+            ]
+        else:
+            subject = secure_choice(_CARTOON_SUBJECTS)
+            setting = secure_choice(_CARTOON_SETTINGS)
+            action = secure_choice(_CARTOON_ACTIONS)
+            expr = secure_choice(_CARTOON_EXPR)
+            article = _mini_article(subject)
+            templates = [
+                (
+                    f"{look}: {article} {color_a} {subject} {action} in a {setting}, "
+                    f"{color_b} walls, {expr} face, cartoon hold then snap, anime look"
+                ),
+                (
+                    f"{look}: {article} {subject} in a {setting} wearing {color_a}, "
+                    f"{action}, {color_b} interior, cartoon hold then snap"
+                ),
+                (
+                    f"{look}: {article} {expr} {subject} {action} in a {setting}, "
+                    f"{color_a} and {color_b}, anime look"
+                ),
+            ]
         prompt = " ".join(secure_choice(templates).split()).strip()
         if prompt not in avoid and not _is_near_duplicate(prompt, avoid):
             return prompt

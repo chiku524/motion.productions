@@ -1,25 +1,36 @@
 """
 Loop origin from a reference video.
 
-A specialized loop (cartoon, later others) can start from measurements of an
-existing clip: colors, sounds, motion windows, hold/snap timing. Those values
-are grown into the registries like any other discovery.
+A specialized loop (cartoon, later others) starts from a reference clip you
+have rights to. Sampled frames are read as a pixel field: each pixel snaps to
+a registry color (or ink). That field — not a stock room-and-figure kit — is
+the cartoon engine's first picture. Hold/snap is those pairings holding still,
+then changing together.
 
-The source frames are not stored or replayed. The origin is a recipe + named
-registry entries, so generation stays ours (cel kit, pixel field, …) while
-the starting palette and timing come from a real picture.
+Raw source pixels are not kept. The origin stores palette-indexed grids plus
+named registry growth. Generation stays ours; the starting masses come from
+the sampled frames.
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
+import zlib
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
 from ..analysis.metrics import frame_difference
+
+
+FIELD_WIDTH = 192
+FIELD_HEIGHT = 108
+FIELD_PALETTE_N = 32
+PROMPT_PALETTE_N = 8
+INK_RGB = (28, 22, 30)
 
 
 _VALID_LOOPS = frozenset({"cartoon", "explorer", "balanced", "sound", "main"})
@@ -44,6 +55,17 @@ def load_loop_origin(loop: str = "cartoon", *, config: dict[str, Any] | None = N
     return data if isinstance(data, dict) else None
 
 
+def slim_loop_origin(origin: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Job/spec copy: keep recipe, drop indexed field blobs (renderer reloads them)."""
+    if not isinstance(origin, dict):
+        return None
+    if not origin.get("field"):
+        return origin
+    slim = {k: v for k, v in origin.items() if k != "field"}
+    slim["has_field"] = True
+    return slim
+
+
 def save_loop_origin(
     recipe: dict[str, Any],
     *,
@@ -56,8 +78,7 @@ def save_loop_origin(
     return path
 
 
-def _quantize_palette(frames: list[np.ndarray], *, n: int = 8, step: int = 16) -> list[dict[str, int]]:
-    """Most frequent quantized RGBs, skipping near-black ink."""
+def _color_counts(frames: list[np.ndarray], *, step: int = 16) -> dict[tuple[int, int, int], int]:
     counts: dict[tuple[int, int, int], int] = {}
     for frame in frames[:48]:
         if frame.ndim != 3 or frame.shape[-1] < 3:
@@ -70,8 +91,108 @@ def _quantize_palette(frames: list[np.ndarray], *, n: int = 8, step: int = 16) -
         for r, g, b in flat[mask]:
             key = (int(r), int(g), int(b))
             counts[key] = counts.get(key, 0) + 1
-    ranked = sorted(counts.items(), key=lambda kv: -kv[1])[: max(3, n)]
-    return [{"r": r, "g": g, "b": b} for (r, g, b), _ in ranked]
+    return counts
+
+
+def _swatches_from_ranked(
+    ranked: list[tuple[tuple[int, int, int], int]],
+    n: int,
+) -> list[dict[str, int]]:
+    return [{"r": r, "g": g, "b": b} for (r, g, b), _ in ranked[: max(1, n)]]
+
+
+def _accent_swatches(
+    counts: dict[tuple[int, int, int], int],
+    already: set[tuple[int, int, int]],
+    *,
+    n: int = 8,
+) -> list[dict[str, int]]:
+    scored: list[tuple[float, tuple[int, int, int]]] = []
+    for rgb, c in counts.items():
+        if rgb in already or c < 8:
+            continue
+        sat = max(rgb) - min(rgb)
+        if sat < 36:
+            continue
+        scored.append((float(sat) * (1.0 + float(np.log1p(c))), rgb))
+    scored.sort(key=lambda kv: -kv[0])
+    return [{"r": r, "g": g, "b": b} for _, (r, g, b) in scored[: max(0, n)]]
+
+
+def _quantize_palette(frames: list[np.ndarray], *, n: int = 8, step: int = 16) -> list[dict[str, int]]:
+    """Most frequent quantized RGBs plus a few high-chroma accents, skipping ink."""
+    counts = _color_counts(frames, step=step)
+    ranked = sorted(counts.items(), key=lambda kv: -kv[1])
+    main = _swatches_from_ranked(ranked, max(3, n - 3))
+    already = {(int(s["r"]), int(s["g"]), int(s["b"])) for s in main}
+    accents = _accent_swatches(counts, already, n=max(0, n - len(main)))
+    return (main + accents)[: max(3, n)]
+
+
+def encode_index_map(indices: np.ndarray) -> str:
+    arr = np.ascontiguousarray(indices, dtype=np.uint8)
+    return base64.b64encode(zlib.compress(arr.tobytes(), 9)).decode("ascii")
+
+
+def decode_index_map(blob: str, height: int, width: int) -> np.ndarray:
+    raw = zlib.decompress(base64.b64decode(blob.encode("ascii")))
+    return np.frombuffer(raw, dtype=np.uint8).reshape(int(height), int(width)).copy()
+
+
+def _lut_from_counts(counts: dict[tuple[int, int, int], int], *, n: int = FIELD_PALETTE_N) -> list[dict[str, int]]:
+    ranked = sorted(counts.items(), key=lambda kv: -kv[1])
+    body = _swatches_from_ranked(ranked, max(8, n - 8))
+    already = {(int(s["r"]), int(s["g"]), int(s["b"])) for s in body}
+    accents = _accent_swatches(counts, already, n=max(0, n - len(body)))
+    colors = (body + accents)[:n]
+    return [{"r": INK_RGB[0], "g": INK_RGB[1], "b": INK_RGB[2]}, *colors]
+
+
+def _frame_to_indices(frame: np.ndarray, lut: list[dict[str, int]]) -> np.ndarray:
+    from PIL import Image
+
+    rgb = frame[..., :3].astype(np.uint8) if frame.ndim == 3 else frame
+    img = Image.fromarray(rgb, "RGB")
+    small = np.asarray(
+        img.resize((FIELD_WIDTH, FIELD_HEIGHT), Image.Resampling.NEAREST),
+        dtype=np.int32,
+    )
+    ink = np.array([int(lut[0]["r"]), int(lut[0]["g"]), int(lut[0]["b"])], dtype=np.int32)
+    body = np.array(
+        [[int(c["r"]), int(c["g"]), int(c["b"])] for c in lut[1:]],
+        dtype=np.int32,
+    )
+    if body.size == 0:
+        return np.zeros((FIELD_HEIGHT, FIELD_WIDTH), dtype=np.uint8)
+    dist = ((small[:, :, None, :] - body[None, None, :, :]) ** 2).sum(-1)
+    idx = (dist.argmin(-1) + 1).astype(np.uint8)
+    luma = 0.299 * small[..., 0] + 0.587 * small[..., 1] + 0.114 * small[..., 2]
+    ink_luma = 0.299 * float(ink[0]) + 0.587 * float(ink[1]) + 0.114 * float(ink[2])
+    idx[luma < max(40.0, ink_luma + 8.0)] = 0
+    return idx
+
+
+def pack_origin_field(frames: list[np.ndarray], lut: list[dict[str, int]]) -> dict[str, Any] | None:
+    if not frames or len(lut) < 2:
+        return None
+    blobs: list[str] = []
+    ink_fracs: list[float] = []
+    for frame in frames:
+        if frame.ndim != 3 or frame.shape[-1] < 3:
+            continue
+        indices = _frame_to_indices(frame, lut)
+        blobs.append(encode_index_map(indices))
+        ink_fracs.append(round(float((indices == 0).mean()), 4))
+    if not blobs:
+        return None
+    return {
+        "width": FIELD_WIDTH,
+        "height": FIELD_HEIGHT,
+        "lut": lut,
+        "frames": blobs,
+        "ink_fracs": ink_fracs,
+        "note": "Palette-indexed masses from sampled frames; source RGB is not stored.",
+    }
 
 
 def _unique_quantized(frames: list[np.ndarray], *, step: int = 16) -> int:
@@ -135,13 +256,16 @@ def measure_frames(
     loop: str = "cartoon",
     source: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Build a loop-origin recipe from decoded frames. No source pixels are kept."""
+    """Build a loop-origin recipe from decoded frames. Source RGB is not kept."""
     timing = _hold_snap(frames, float(fps) or 24.0)
-    palette = _quantize_palette(frames)
+    counts = _color_counts(frames)
+    palette = _quantize_palette(frames, n=PROMPT_PALETTE_N)
+    lut = _lut_from_counts(counts, n=FIELD_PALETTE_N)
+    field = pack_origin_field(frames, lut)
     return {
         "loop": loop if loop in _VALID_LOOPS else "cartoon",
         "source": source or {},
-        "note": "Measurements only; source frames are not stored or replayed.",
+        "note": "Palette-indexed origin field; source RGB is not stored or replayed.",
         "fps": round(float(fps) or 24.0, 3),
         "frame_count": len(frames),
         "palette": palette,
@@ -150,6 +274,8 @@ def measure_frames(
         **timing,
         "style": "cartoon" if loop == "cartoon" else None,
         "render_engine": "cel" if loop == "cartoon" else None,
+        "has_field": bool(field),
+        "field": field,
     }
 
 
@@ -233,6 +359,7 @@ def ingest_reference_video(
     prompt: str | None = None,
     max_frames: int = 72,
     sample_every: int | None = None,
+    recipe_only: bool = False,
 ) -> dict[str, Any]:
     """
     Measure a reference clip, grow registries from it, save the loop origin recipe.
@@ -252,6 +379,14 @@ def ingest_reference_video(
     )
     recipe["sample_every"] = sample_every
     recipe["max_frames"] = max_frames
+    if recipe_only:
+        existing = load_loop_origin(loop, config=config)
+        if existing:
+            recipe["growth_added"] = existing.get("growth_added")
+            _attach_palette_names(recipe, existing.get("palette") or [])
+        out = save_loop_origin(recipe, loop=loop, config=config)
+        recipe["saved_to"] = str(out)
+        return recipe
     from .growth_per_instance import grow_all_from_video
 
     added, novel = grow_all_from_video(

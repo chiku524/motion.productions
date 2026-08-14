@@ -53,7 +53,7 @@ These can still exist as **named readings** after the field has done the work, o
 - Premade object layers (tree, person, car) as the default clip
 - Keyword motion catalogs (`wave`, `pulse`, `fast`) as the generator switch
 
-For **pairing clips** (the default loop): the renderer changes pixel colors; it does not pan the field. Named-subject prompts (`a person walking in a forest`) still use the object path. The **cartoon loop** (`LOOP_WORKFLOW_TYPE=cartoon`) starts from a Pillow **cel kit** (`render_engine=cel`): inked rooms and a TV-cartoon figure, not a grade on the blob renderer.
+For **pairing clips** (the default loop): the renderer changes pixel colors; it does not pan the field. Named-subject prompts (`a person walking in a forest`) still use the object path. The **cartoon loop** (`LOOP_WORKFLOW_TYPE=cartoon`, `render_engine=cel`) starts from a **palette-indexed origin field** when a reference clip has been ingested: each sampled frame is snapped onto registry colors (plus ink), stored as compact index maps, then hold/snap is those masses staying still and then changing together. The Pillow room-and-figure kit is only the fallback before an origin field exists.
 
 ---
 

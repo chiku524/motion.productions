@@ -733,7 +733,8 @@ def build_spec_from_instruction(
     )
     origin = _loop_origin(knowledge)
     if origin:
-        instance = {**(instance or {}), "loop_origin": origin}
+        from ..knowledge.reference_origin import slim_loop_origin
+        instance = {**(instance or {}), "loop_origin": slim_loop_origin(origin) or origin}
 
     spec = SceneSpec(
         palette_name=palette,

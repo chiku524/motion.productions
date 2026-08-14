@@ -463,6 +463,13 @@ class TestMiniSceneFidelity(unittest.TestCase):
         self.assertIn("r", recipe["palette"][0])
         self.assertEqual(recipe["render_engine"], "cel")
         self.assertNotIn("frames", recipe)
+        field = recipe.get("field") or {}
+        self.assertTrue(field.get("frames"))
+        self.assertEqual(int(field.get("width") or 0), 192)
+        from src.knowledge.reference_origin import decode_index_map
+
+        idx0 = decode_index_map(field["frames"][0], field["height"], field["width"])
+        self.assertEqual(idx0.shape, (field["height"], field["width"]))
 
     def test_reference_origin_spreads_samples_across_clip(self):
         from src.knowledge.reference_origin import stride_for_clip
@@ -494,6 +501,45 @@ class TestMiniSceneFidelity(unittest.TestCase):
         char = next(layer for layer in spec.scene_layers if layer.get("kind") == "character")
         kfs = char.get("keyframes") or []
         self.assertGreaterEqual(float(kfs[1]["t"]), 1.5)
+
+    def test_cartoon_origin_field_is_the_starting_picture(self):
+        import numpy as np
+        from src.automation.prompt_gen import generate_cartoon_prompt
+        from src.knowledge.reference_origin import measure_frames, slim_loop_origin
+        from src.procedural.cel import render_cel_frame
+
+        left = np.zeros((48, 48, 3), dtype=np.uint8)
+        left[:, :24] = (220, 40, 40)
+        left[:, 24:] = (40, 80, 200)
+        right = left.copy()
+        right[:, :24] = (40, 180, 80)
+        right[:, 24:] = (220, 180, 40)
+        recipe = measure_frames([left] * 4 + [right] * 4, fps=24.0, loop="cartoon")
+        self.assertTrue(recipe.get("has_field"))
+        origin = recipe
+        knowledge = {"loop_origin": origin, "color_by_name": {}}
+        prompt = generate_cartoon_prompt(knowledge=knowledge, avoid=set())
+        self.assertIsNotNone(prompt)
+        self.assertIn("origin field", prompt.lower())
+        self.assertNotIn("kitchen", prompt.lower())
+
+        instruction = interpret_user_prompt(prompt)
+        instruction.duration_seconds = 2.5
+        spec = build_spec_from_instruction(instruction, knowledge=knowledge)
+        attached = (spec.instance or {}).get("loop_origin") or {}
+        self.assertTrue(attached.get("has_field"))
+        self.assertNotIn("field", attached)
+        self.assertEqual(slim_loop_origin(origin).get("has_field"), True)
+
+        spec.instance = {**(spec.instance or {}), "loop_origin": origin}
+        hold = render_cel_frame(spec, 0.1, 96, 96, seed=3, duration_seconds=2.5)
+        snap = render_cel_frame(spec, 2.4, 96, 96, seed=3, duration_seconds=2.5)
+        self.assertEqual(hold.shape, (96, 96, 3))
+        left_mean = hold[:, :40].astype(np.float32).mean(axis=(0, 1))
+        right_mean = hold[:, 56:].astype(np.float32).mean(axis=(0, 1))
+        self.assertGreater(float(left_mean[0] - left_mean[2]), 20.0)
+        self.assertGreater(float(right_mean[2] - right_mean[0]), 20.0)
+        self.assertGreater(float(np.abs(hold.astype(np.float32) - snap.astype(np.float32)).mean()), 8.0)
 
 
 if __name__ == "__main__":

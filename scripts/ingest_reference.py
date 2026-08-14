@@ -4,13 +4,15 @@ Seed a specialized loop from a reference video.
 
 Reads a local clip you have rights to (your own render, CC0, public domain),
 extracts colors / sounds / motion windows into the registries, and writes a
-loop-origin recipe (palette + hold/snap timing). The source MP4 is not copied
-into the library and is not replayed.
+loop-origin recipe: palette, hold/snap timing, and a palette-indexed pixel
+field from the sampled frames. That field is the cartoon engine's starting
+picture. The source MP4 is not copied into the library and is not replayed.
 
 Usage:
   python scripts/ingest_reference.py path/to/clip.mp4 --loop cartoon
   python scripts/ingest_reference.py path/to/clip.mp4 --loop cartoon --api-base https://motion.productions
   python scripts/ingest_reference.py path/to/clip.mp4 --loop cartoon --max-frames 72
+  python scripts/ingest_reference.py path/to/clip.mp4 --loop cartoon --recipe-only
 
 Drop convention: references/cartoon.mp4
 """
@@ -34,6 +36,11 @@ def main() -> int:
     parser.add_argument("--api-base", default=None, help="POST discoveries to this API (D1)")
     parser.add_argument("--local-only", action="store_true", help="Grow local registries only; skip API")
     parser.add_argument("--max-frames", type=int, default=72, help="Sample this many frames across the clip")
+    parser.add_argument(
+        "--recipe-only",
+        action="store_true",
+        help="Re-measure palette/field/timing only; skip registry growth and API",
+    )
     args = parser.parse_args()
 
     video = Path(args.video) if args.video else REPO_ROOT / "references" / f"{args.loop}.mp4"
@@ -55,8 +62,21 @@ def main() -> int:
         api_base=api_base or None,
         config=load_config(),
         max_frames=max(8, int(args.max_frames)),
+        recipe_only=bool(args.recipe_only),
     )
-    print(json.dumps({k: recipe[k] for k in recipe if k != "growth_added"}, indent=2))
+    skip = {"growth_added", "field"}
+    print(json.dumps({k: recipe[k] for k in recipe if k not in skip}, indent=2))
+    field = recipe.get("field") or {}
+    if field:
+        print(
+            "field:",
+            field.get("width"),
+            "x",
+            field.get("height"),
+            "x",
+            len(field.get("frames") or []),
+            "indexed samples",
+        )
     added = recipe.get("growth_added") or {}
     if added:
         print("growth:", added)
