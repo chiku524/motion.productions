@@ -527,13 +527,14 @@ def generate_targeted_color_family_prompt(
         "dark music",
         "cinematic music",
     ])
+    others = [c for c in ("red", "blue", "green", "amber", "teal", "violet", "gold") if c != hue] or ["teal"]
+    other = secure_choice(others)
     templates = [
-        f"pure color mesh of {cue} {hue} meshing with {music}",
-        f"pixel field: {cue} {hue} washing",
-        f"color mesh of {cue} {hue} pulsing with {music}",
-        f"abstract pixel wash of {cue} {hue}",
-        f"per-frame pure mesh: {cue} {hue} blooming",
-        f"rainbow mesh of {cue} {hue} drifting with {music}",
+        f"static frame: {cue} {hue} paired with {other}",
+        f"per-frame pairing of {cue} {hue} with {other}",
+        f"still pixel pairing: {cue} {hue} with {other}",
+        f"static frame pairing of {cue} {hue} with {other} with {music}",
+        f"pixel pairing of {cue} {hue} with {other}",
     ]
     for _ in range(24):
         prompt = secure_choice(templates)
@@ -989,16 +990,31 @@ def _named_registry_colors(knowledge: dict[str, Any] | None) -> list[str]:
     return names or list(_MINI_COLORS)
 
 
-def generate_abstract_mesh_prompt(
+def _named_registry_motion(knowledge: dict[str, Any] | None) -> list[str]:
+    names: list[str] = []
+    seen: set[str] = set()
+    for m in (knowledge or {}).get("learned_motion") or []:
+        if not isinstance(m, dict):
+            continue
+        s = str(m.get("name") or "").strip().lower()
+        if s and s not in seen and 1 < len(s) < 40:
+            seen.add(s)
+            names.append(s)
+    return names or ["slow drift", "pulse", "wave"]
+
+
+def generate_pixel_pairing_prompt(
     *,
+    kind: str = "frame",
     knowledge: dict[str, Any] | None = None,
     avoid: set[str] | None = None,
     family: str | None = None,
 ) -> str | None:
     """
-    Unique abstract pixel-mesh prompts from named registry colors.
-    Phrasing includes mesh/pure-color cues so creation stays per-frame mesh
-    instead of injecting catalog objects.
+    Unique frame (static) or window (dynamic) prompts from named registry colors.
+
+    A scene is a pairing of colored pixels — not a catalog object and not one mesh look.
+    Frame workers hold the pairing still; window workers rematch it over motion.
     """
     avoid = avoid or set()
     names = _named_registry_colors(knowledge)
@@ -1008,27 +1024,48 @@ def generate_abstract_mesh_prompt(
         if biased:
             names = biased + [n for n in names if n not in biased]
     music = secure_choice(_MINI_MUSIC)
-    verbs = ["meshing", "washing", "drifting", "pulsing", "blooming", "folding"]
+    motions = _named_registry_motion(knowledge)
+    window = (kind or "frame").strip().lower() == "window"
     for _ in range(28):
         a = secure_choice(names)
         rest = [n for n in names if n != a] or names
         b = secure_choice(rest)
         c = secure_choice(names)
-        verb = secure_choice(verbs)
-        templates = [
-            f"pure color mesh of {a} and {b} {verb} with {music}",
-            f"pixel field: {a}, {b}, and {c} meshing",
-            f"color mesh of {a} washing into {b} with {music}",
-            f"abstract pixel wash of {a} and {b} {verb}",
-            f"per-frame pure mesh: {a} folding through {b} and {c}",
-            f"rainbow mesh of {a} and {b} drifting with {music}",
-            f"pixel wash of {a} blooming through {b}",
-            f"abstract mesh of {a}, {b}, and {c} pulsing with {music}",
-        ]
+        motion = secure_choice(motions)
+        if window:
+            templates = [
+                f"motion window: {a} paired with {b} in {motion}",
+                f"dynamic pairing of {a} and {b} over a moving window with {music}",
+                f"window blend: {a} paired with {b} and {c}",
+                f"pixel pairing of {a} with {b} drifting across a motion window",
+                f"motion window pairing of {a} and {c} with {music}",
+                f"dynamic pairing of {a} with {b} and {c} in {motion}",
+            ]
+        else:
+            templates = [
+                f"static frame: {a} paired with {b}",
+                f"per-frame pairing of {a} and {b}",
+                f"still pixel pairing: {a} with {b} and {c}",
+                f"static frame pairing of {a} with {b} with {music}",
+                f"pixel pairing of {a} with {b}",
+                f"static frame: {a} paired with {c}",
+            ]
         prompt = secure_choice(templates)
         if prompt not in avoid and not _is_near_duplicate(prompt, avoid):
             return prompt
     return None
+
+
+def generate_abstract_mesh_prompt(
+    *,
+    knowledge: dict[str, Any] | None = None,
+    avoid: set[str] | None = None,
+    family: str | None = None,
+) -> str | None:
+    """Back-compat alias: static frame pairing."""
+    return generate_pixel_pairing_prompt(
+        kind="frame", knowledge=knowledge, avoid=avoid, family=family
+    )
 
 
 def generate_mini_scene_prompt(

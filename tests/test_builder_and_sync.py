@@ -23,6 +23,35 @@ class TestBuilderAndSync(unittest.TestCase):
             self.assertEqual(len(item), 3)
             self.assertTrue(all(0 <= c <= 255 for c in item))
 
+    def test_build_pure_color_pool_pair_count_is_unique_combo(self):
+        from src.creation.builder import _build_pure_color_pool
+        from src.interpretation.schema import InterpretedInstruction
+
+        instruction = InterpretedInstruction(
+            raw_prompt="static frame: amber veil paired with teal mist",
+            palette_name="default",
+            motion_type="flow",
+            intensity=0.5,
+        )
+        knowledge = {
+            "color_by_name": {
+                "amber veil": {"r": 200, "g": 140, "b": 40},
+                "teal mist": {"r": 20, "g": 160, "b": 170},
+            },
+            "static_colors": {
+                "k1": {"r": 200, "g": 140, "b": 40, "name": "amber veil", "count": 1},
+                "k2": {"r": 20, "g": 160, "b": 170, "name": "teal mist", "count": 1},
+                "k3": {"r": 9, "g": 9, "b": 9, "name": "void ink", "count": 40},
+            },
+        }
+        pool = _build_pure_color_pool(
+            knowledge, instruction, avoid_palette=set(), pair_count=2, seed=11
+        )
+        self.assertEqual(len(pool), 2)
+        self.assertEqual(len(set(pool)), 2)
+        self.assertIn((200, 140, 40), pool)
+        self.assertIn((20, 160, 170), pool)
+
     def test_build_pure_color_pool_with_static_and_learned(self):
         """_build_pure_color_pool prefers static_colors; learned_colors only if static is empty."""
         from src.creation.builder import _build_pure_color_pool

@@ -77,13 +77,13 @@ def pick_prompt(
     coverage: dict | None = None,
 ) -> tuple[str, dict]:
     """
-    Always compose a new prompt. Default is an abstract pixel/color mesh from
-    named registry colors — no object catalog, no replay of past strings.
+    Always compose a new prompt. Default is a unique pixel pairing from named
+    registry colors: static frames or motion windows — no object catalog, no replay.
     Returns (prompt, meta) where meta includes source.
     """
     from src.automation import generate_procedural_prompt
     from src.automation.prompt_gen import (
-        generate_abstract_mesh_prompt,
+        generate_pixel_pairing_prompt,
         generate_targeted_blended_prompt,
         generate_targeted_color_family_prompt,
         generate_targeted_narrative_prompt,
@@ -121,9 +121,16 @@ def pick_prompt(
         or static_focus in ("none", "off", "narrative")
     )
 
+    pairing_kind = "window" if (
+        extraction_focus == "window"
+        or prefer_fidelity
+    ) else "frame"
+    if extraction_focus == "all":
+        pairing_kind = "window" if secure_random() < 0.5 else "frame"
+
     color_target_rate = 0.72 if critical_color else (0.48 if thin_color else 0.28)
     if (
-        not prefer_fidelity
+        pairing_kind == "frame"
         and static_focus in ("color", "both")
         and thin_families
         and secure_random() < color_target_rate
@@ -137,28 +144,36 @@ def pick_prompt(
             logger.info("Targeted color-family prompt: %s", color_prompt[:60] + ("..." if len(color_prompt) > 60 else ""))
             return (color_prompt, {"source": "targeted_color_family"})
 
-    if secure_random() < 0.78:
-        mesh = generate_abstract_mesh_prompt(knowledge=knowledge, avoid=recent)
-        if mesh:
-            logger.info("Abstract mesh prompt: %s", mesh[:70] + ("..." if len(mesh) > 70 else ""))
-            return (mesh, {"source": "abstract_mesh"})
+    if secure_random() < 0.82:
+        pairing = generate_pixel_pairing_prompt(kind=pairing_kind, knowledge=knowledge, avoid=recent)
+        if pairing:
+            logger.info(
+                "%s pairing prompt: %s",
+                pairing_kind,
+                pairing[:70] + ("..." if len(pairing) > 70 else ""),
+            )
+            return (pairing, {"source": f"pixel_pairing_{pairing_kind}"})
 
-    if coverage and thin_narrative and secure_random() < 0.22:
+    if coverage and thin_narrative and pairing_kind == "window" and secure_random() < 0.18:
         targeted = generate_targeted_narrative_prompt(coverage, avoid=recent)
         if targeted:
             logger.info("Targeted narrative prompt (fill gaps): %s", targeted[:60] + ("..." if len(targeted) > 60 else ""))
             return (targeted, {"source": "targeted_narrative"})
 
-    if secure_random() < 0.14:
+    if pairing_kind == "window" and secure_random() < 0.12:
         blended = generate_targeted_blended_prompt(knowledge, avoid=recent)
         if blended:
             logger.info("Targeted blended prompt: %s", blended[:60] + ("..." if len(blended) > 60 else ""))
             return (blended, {"source": "targeted_blended"})
 
-    mesh = generate_abstract_mesh_prompt(knowledge=knowledge, avoid=recent)
-    if mesh:
-        logger.info("Abstract mesh prompt: %s", mesh[:70] + ("..." if len(mesh) > 70 else ""))
-        return (mesh, {"source": "abstract_mesh"})
+    pairing = generate_pixel_pairing_prompt(kind=pairing_kind, knowledge=knowledge, avoid=recent)
+    if pairing:
+        logger.info(
+            "%s pairing prompt: %s",
+            pairing_kind,
+            pairing[:70] + ("..." if len(pairing) > 70 else ""),
+        )
+        return (pairing, {"source": f"pixel_pairing_{pairing_kind}"})
     fallback = generate_procedural_prompt(
         avoid=recent, knowledge=knowledge, coverage=coverage, instructive_ratio=0.2
     )

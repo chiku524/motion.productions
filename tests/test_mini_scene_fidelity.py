@@ -161,33 +161,45 @@ class TestMiniSceneFidelity(unittest.TestCase):
         self.assertEqual(spec.creation_mode, "blended")
         self.assertIn(spec.setting, ("city", "neon"))
 
-    def test_abstract_mesh_prompt(self):
-        from src.automation.prompt_gen import generate_abstract_mesh_prompt
+    def test_pixel_pairing_prompt_frame_and_window(self):
+        from src.automation.prompt_gen import generate_pixel_pairing_prompt
         knowledge = {
             "color_by_name": {
                 "amber veil": {"key": "a", "r": 200, "g": 140, "b": 40},
                 "teal mist": {"key": "b", "r": 20, "g": 160, "b": 170},
-            }
+            },
+            "learned_motion": [{"name": "slow drift", "motion_level": 4.0}],
         }
-        prompt = generate_abstract_mesh_prompt(knowledge=knowledge, avoid=set())
-        self.assertIsNotNone(prompt)
-        low = prompt.lower()
+        frame = generate_pixel_pairing_prompt(kind="frame", knowledge=knowledge, avoid=set())
+        self.assertIsNotNone(frame)
+        flow = frame.lower()
+        self.assertTrue("pair" in flow or "static frame" in flow, frame)
+        self.assertFalse(any(obj in flow for obj in ("person", "ball", "tree", "fish", "car")), frame)
+        window = generate_pixel_pairing_prompt(kind="window", knowledge=knowledge, avoid=set())
+        self.assertIsNotNone(window)
+        wlow = window.lower()
         self.assertTrue(
-            any(cue in low for cue in ("color mesh", "pixel field", "pixel wash", "pure mesh", "abstract mesh", "rainbow mesh")),
-            prompt,
+            any(cue in wlow for cue in ("motion window", "dynamic pairing", "window blend")),
+            window,
         )
-        self.assertFalse(any(obj in low for obj in ("person", "ball", "tree", "fish", "car")), prompt)
-        again = generate_abstract_mesh_prompt(knowledge=knowledge, avoid={prompt})
-        if again is not None:
-            self.assertNotEqual(again, prompt)
 
     def test_abstract_mesh_stays_pure_no_layers(self):
-        prompt = "pure color mesh of amber and teal pulsing with calm ambient music"
+        prompt = "static frame: amber paired with teal"
         instruction = interpret_user_prompt(prompt)
         instruction.duration_seconds = 5.0
         spec = build_spec_from_instruction(instruction, knowledge={})
         self.assertEqual(spec.creation_mode, "pure_per_frame")
         self.assertFalse(spec.scene_layers)
+        self.assertLessEqual(float(spec.motion_level or 0), 3.5)
+
+    def test_motion_window_stays_pure_higher_motion(self):
+        prompt = "motion window: amber paired with teal in slow drift"
+        instruction = interpret_user_prompt(prompt)
+        instruction.duration_seconds = 5.0
+        spec = build_spec_from_instruction(instruction, knowledge={})
+        self.assertEqual(spec.creation_mode, "pure_per_frame")
+        self.assertFalse(spec.scene_layers)
+        self.assertGreaterEqual(float(spec.motion_level or 0), 9.0)
 
     def test_setting_props_forest_trees(self):
         prompt = "a person walking left in a forest with soft vocals"
@@ -273,6 +285,20 @@ class TestMiniSceneFidelity(unittest.TestCase):
         r, g, b = _render_pure_per_frame(xx, yy, colors, 0.4, 42, 1.0, motion_level=2.0)
         mixed = (r > 30) & (b > 30)
         self.assertGreater(int(np.sum(mixed)), 20, "expected interpolated pixels, not hard color cells")
+
+    def test_window_pairing_moves_more_than_static_frame(self):
+        import numpy as np
+        from src.procedural.renderer import _render_pure_per_frame
+
+        xx, yy = np.meshgrid(np.linspace(0, 1, 32), np.linspace(0, 1, 32))
+        colors = [(255, 0, 0), (0, 0, 255), (0, 255, 0)]
+        r0, _, _ = _render_pure_per_frame(xx, yy, colors, 0.0, 7, 1.0, motion_level=2.5)
+        r1, _, _ = _render_pure_per_frame(xx, yy, colors, 0.8, 7, 1.0, motion_level=2.5)
+        static_delta = float(np.mean(np.abs(r0 - r1)))
+        r2, _, _ = _render_pure_per_frame(xx, yy, colors, 0.0, 7, 1.0, motion_level=16.0, motion_val=0.8)
+        r3, _, _ = _render_pure_per_frame(xx, yy, colors, 0.8, 7, 1.0, motion_level=16.0, motion_val=0.2)
+        window_delta = float(np.mean(np.abs(r2 - r3)))
+        self.assertGreater(window_delta, static_delta)
 
 
 if __name__ == "__main__":

@@ -215,13 +215,15 @@ def _render_pure_per_frame(
     seed: int,
     intensity: float,
     motion_level: float = 1.0,
+    motion_val: float | None = None,
 ) -> tuple["np.ndarray", "np.ndarray", "np.ndarray"]:
     """
-    Pure-per-frame creation: registry colors meshed across pixels.
+    Pair registry colors across pixels.
 
-    Each pixel interpolates two named registry colors through a smooth spatial
-    field that drifts with time and motion_level — unique combinations, not
-    hard cells or catalog objects.
+    Each pixel is a pairing of two colors from this clip's unique set. Low
+    motion_level keeps the pairing still (static frames). High motion_level plus
+    motion_val rematches pairings over time (dynamic windows). Layout varies by
+    seed so loops are not one mesh look.
     """
     n_colors = len(pure_colors)
     if n_colors == 0:
@@ -230,29 +232,38 @@ def _render_pure_per_frame(
     G_arr = np.array([c[1] for c in pure_colors], dtype=np.float32)
     B_arr = np.array([c[2] for c in pure_colors], dtype=np.float32)
 
-    field_a = _hash_noise(xx, yy, seed, scale=31.0)
-    field_b = _hash_noise(xx + 0.17, yy + 0.13, seed + 19, scale=53.0)
-    speed = 0.35 + 0.85 * float(np.clip(motion_level, 0.2, 8.0)) / 8.0
-    w = 0.5 + 0.5 * np.sin(
-        xx * (2.4 + 3.1 * field_a)
-        + yy * (2.1 + 2.7 * field_b)
-        + t * speed * 6.283185307179586
-        + (seed % 1000) * 0.001
-    )
+    t_amt = (float(np.clip(motion_level, 0.0, 25.0)) / 25.0) ** 2
+    mv = 0.0 if motion_val is None else float(motion_val)
+    t_shift = t * t_amt * 1.8 + mv * t_amt
+    field = _hash_noise(xx, yy, seed, scale=41.0)
+    layout = int(abs(seed)) % 4
+    if layout == 0:
+        w = 0.5 + 0.5 * np.sin((yy + t_shift * 0.35) * (1.6 + 0.8 * field) * np.pi)
+    elif layout == 1:
+        w = 0.5 + 0.5 * np.sin((xx + t_shift * 0.35) * (1.6 + 0.8 * field) * np.pi)
+    elif layout == 2:
+        cx = 0.32 + 0.36 * ((abs(seed) % 17) / 17.0)
+        cy = 0.32 + 0.36 * ((abs(seed) % 13) / 13.0)
+        dist = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
+        w = 0.5 + 0.5 * np.sin((dist * 4.0 + t_shift) * np.pi + field * 0.5)
+    else:
+        w = 0.5 + 0.5 * np.sin((xx + yy + t_shift) * (1.4 + 0.5 * field) * np.pi)
+
     h = (
-        np.floor(xx * 17.0 + field_a * 3.0).astype(np.int64)
-        + np.floor(yy * 13.0 + field_b * 5.0).astype(np.int64) * 31
-        + seed * 17
+        np.floor(xx * 9.0 + field * 4.0).astype(np.int64)
+        + np.floor(yy * 7.0).astype(np.int64) * 11
+        + seed * 13
     )
-    idx_a = np.mod(np.abs(h), n_colors)
-    step = 1 if n_colors < 2 else 1 + np.mod(np.abs(h // 7), n_colors - 1)
+    pair_drift = np.floor(t_shift * 5.0).astype(np.int64) if t_amt > 0.12 else 0
+    idx_a = np.mod(np.abs(h) + pair_drift, n_colors)
+    step = 1 if n_colors < 2 else 1 + np.mod(np.abs(h // 5), n_colors - 1)
     idx_b = np.mod(idx_a + step, n_colors)
     one_minus = 1.0 - w
     r = R_arr[idx_a] * one_minus + R_arr[idx_b] * w
     g = G_arr[idx_a] * one_minus + G_arr[idx_b] * w
     b = B_arr[idx_a] * one_minus + B_arr[idx_b] * w
-    n = _hash_noise(xx, yy, seed + int(t * 100.0), scale=97.0)
-    amp = 8 * intensity
+    n = _hash_noise(xx, yy, seed, scale=97.0)
+    amp = 6 * intensity
     r = np.clip(r + (n - 0.5) * amp, 0, 255)
     g = np.clip(g + (n - 0.5) * amp, 0, 255)
     b = np.clip(b + (n - 0.5) * amp, 0, 255)
@@ -967,7 +978,11 @@ def render_frame(
 
     if creation_mode == "pure_per_frame" and pure_colors:
         ml = float(getattr(spec, "motion_level", None) or 1.0)
-        r, g, b = _render_pure_per_frame(xx, yy, pure_colors, t_abs, seed, intensity, motion_level=ml)
+        r, g, b = _render_pure_per_frame(
+            xx, yy, pure_colors, t_abs, seed, intensity,
+            motion_level=ml,
+            motion_val=float(motion_val),
+        )
     else:
         v = _gradient_value(
             xx, yy, gradient_type, motion_val,

@@ -162,7 +162,7 @@ def _intensity_from_learned_motion(knowledge: dict[str, Any] | None) -> float | 
     return max(0.15, min(1.0, avg / 20.0))
 
 
-_PURE_MESH_PHRASES = (
+_PIXEL_PAIRING_PHRASES = (
     "pure mesh",
     "pure color",
     "color mesh",
@@ -174,12 +174,46 @@ _PURE_MESH_PHRASES = (
     "color field",
     "abstract mesh",
     "abstract pixel",
+    "pixel pairing",
+    "paired with",
+    "static frame",
+    "motion window",
+    "per-frame pairing",
+    "window blend",
+    "dynamic pairing",
+    "still pixel",
+    "color pairing",
+)
+
+_WINDOW_PAIRING_PHRASES = (
+    "motion window",
+    "dynamic pairing",
+    "window blend",
+    "moving window",
+    "across a motion",
+)
+
+_STATIC_FRAME_PHRASES = (
+    "static frame",
+    "per-frame pairing",
+    "still pixel",
+    "per-frame pure",
 )
 
 
-def _wants_pure_mesh(prompt: str) -> bool:
+def _wants_pixel_pairing(prompt: str) -> bool:
     low = (prompt or "").lower()
-    return any(p in low for p in _PURE_MESH_PHRASES)
+    return any(p in low for p in _PIXEL_PAIRING_PHRASES)
+
+
+def _wants_window_pairing(prompt: str) -> bool:
+    low = (prompt or "").lower()
+    return any(p in low for p in _WINDOW_PAIRING_PHRASES)
+
+
+def _wants_static_frame_pairing(prompt: str) -> bool:
+    low = (prompt or "").lower()
+    return any(p in low for p in _STATIC_FRAME_PHRASES)
 
 
 def build_spec_from_instruction(
@@ -204,6 +238,10 @@ def build_spec_from_instruction(
     """
     palette = instruction.palette_name
     motion = instruction.motion_type
+    raw_prompt = getattr(instruction, "raw_prompt", "") or ""
+    wants_pairing = _wants_pixel_pairing(raw_prompt)
+    window_pairing = _wants_window_pairing(raw_prompt)
+    static_frame_pairing = _wants_static_frame_pairing(raw_prompt)
     intensity = instruction.intensity
     if abs(float(intensity) - float(DEFAULT_INTENSITY)) < 1e-9:
         learned_i = _intensity_from_learned_motion(knowledge)
@@ -326,12 +364,31 @@ def build_spec_from_instruction(
             motion = secure_choice(pool) if pool else secure_choice(tuple(v for v in _MOTION_VALID if v not in avoid_motion) or tuple(_MOTION_VALID))
     if motion_level is None:
         motion_level = _level_from_motion_label(motion)
+    if wants_pairing:
+        if window_pairing:
+            motion_level = max(float(motion_level or 8.0), 9.0)
+        elif static_frame_pairing:
+            motion_level = min(float(motion_level or 2.5), 3.5)
+            if motion_std is not None:
+                motion_std = min(float(motion_std), 1.5)
+            else:
+                motion_std = 0.4
     if camera == DEFAULT_CAMERA and not lock_look:
         pool = _pool_from_knowledge(knowledge, "learned_camera", "origin_camera", _CAMERA_VALID)
         camera = secure_choice(pool) if pool else secure_choice([v for v in CAMERA_ORIGINS["motion_type"] if v in _CAMERA_VALID] or list(_CAMERA_VALID))
 
-    # Pure-per-frame pool built early; mode finalized after entities (mini-scenes → blended)
-    pure_colors = _build_pure_color_pool(knowledge, instruction, avoid_palette=avoid_palette)
+    # Pixel pairing: unique 2–4 registry colors this clip; otherwise full discovery pool
+    pair_n = None
+    if wants_pairing:
+        pair_n = 4 if window_pairing else (2 if static_frame_pairing else 3)
+    pair_seed = creation_seed if creation_seed is not None else None
+    pure_colors = _build_pure_color_pool(
+        knowledge,
+        instruction,
+        avoid_palette=avoid_palette,
+        pair_count=pair_n,
+        seed=pair_seed,
+    )
     creation_mode = "pure_per_frame" if pure_colors else "blended"
 
     # Pure sounds from registry: sample 3–5 per-instant sounds (bias toward underused)
@@ -359,8 +416,7 @@ def build_spec_from_instruction(
     )
 
     duration_hint = float(getattr(instruction, "duration_seconds", None) or 4.0)
-    raw_prompt = getattr(instruction, "raw_prompt", "") or ""
-    wants_pure = _wants_pure_mesh(raw_prompt)
+    wants_pure = wants_pairing
     entities = [] if wants_pure else list(getattr(instruction, "entities", None) or [])
     if wants_pure:
         instruction.entities = []
@@ -659,21 +715,114 @@ def _resolve_color_temperature(instruction: InterpretedInstruction, lighting: st
     return "neutral"
 
 
+def _rgb_from_color_dict(data: Any) -> tuple[int, int, int] | None:
+    if not isinstance(data, dict) or "r" not in data or "g" not in data or "b" not in data:
+        return None
+    r, g, b = int(round(float(data["r"]))), int(round(float(data["g"]))), int(round(float(data["b"])))
+    return (
+        max(0, min(255, r)),
+        max(0, min(255, g)),
+        max(0, min(255, b)),
+    )
+
+
+def _stable_pair_key(seed: int, rgb: tuple[int, int, int]) -> int:
+    return (int(seed) * 1000003 + rgb[0] * 13 + rgb[1] * 47 + rgb[2] * 97) & 0x7FFFFFFF
+
+
+def _name_in_prompt(name: str, raw: str) -> bool:
+    s = (name or "").strip().lower()
+    if not s or len(s) < 3:
+        return False
+    if " " in s:
+        return s in raw
+    tokens = raw.replace(":", " ").replace(",", " ").replace(".", " ").split()
+    return s in tokens
+
+
+def _prompt_named_rgbs(
+    knowledge: dict[str, Any] | None,
+    instruction: InterpretedInstruction,
+) -> list[tuple[int, int, int]]:
+    """Registry colors whose names appear in the prompt — the pairing the loop asked for."""
+    raw = (getattr(instruction, "raw_prompt", "") or "").lower()
+    if not raw:
+        return []
+    found: list[tuple[int, int, int]] = []
+    seen: set[tuple[int, int, int]] = set()
+    by_name = (knowledge or {}).get("color_by_name") or {}
+    if isinstance(by_name, dict):
+        for nm, data in by_name.items():
+            if not _name_in_prompt(str(nm or ""), raw):
+                continue
+            rgb = _rgb_from_color_dict(data) if isinstance(data, dict) else None
+            if rgb is not None and rgb not in seen:
+                seen.add(rgb)
+                found.append(rgb)
+    static = (knowledge or {}).get("static_colors") or {}
+    if isinstance(static, dict):
+        for data in static.values():
+            if not isinstance(data, dict):
+                continue
+            if not _name_in_prompt(str(data.get("name") or ""), raw):
+                continue
+            rgb = _rgb_from_color_dict(data)
+            if rgb is not None and rgb not in seen:
+                seen.add(rgb)
+                found.append(rgb)
+    return found
+
+
+def _sample_color_pairing(
+    pool: list[tuple[int, int, int]],
+    instruction: InterpretedInstruction,
+    knowledge: dict[str, Any] | None,
+    *,
+    pair_count: int,
+    seed: int | None,
+) -> list[tuple[int, int, int]]:
+    """Unique 2–N registry colors for this clip (named first, then underused / seed-picked)."""
+    n = max(2, min(6, int(pair_count)))
+    pair_seed = int(seed) if seed is not None else 1
+    named = _prompt_named_rgbs(knowledge, instruction)
+    unique_pool: list[tuple[int, int, int]] = []
+    seen: set[tuple[int, int, int]] = set()
+    for rgb in named + list(pool):
+        if rgb in seen:
+            continue
+        seen.add(rgb)
+        unique_pool.append(rgb)
+    if not unique_pool:
+        return pool[:n] if pool else []
+    named_set = set(named)
+    rest = [c for c in unique_pool if c not in named_set]
+    rest.sort(key=lambda rgb: _stable_pair_key(pair_seed, rgb))
+    out = list(named)
+    for rgb in rest:
+        if len(out) >= n:
+            break
+        out.append(rgb)
+    if len(out) < 2:
+        out = unique_pool[:n]
+    return out[:n]
+
+
 def _build_pure_color_pool(
     knowledge: dict[str, Any] | None,
     instruction: InterpretedInstruction,
     *,
     avoid_palette: set[str] | None = None,
+    pair_count: int | None = None,
+    seed: int | None = None,
 ) -> list[tuple[int, int, int]]:
     """
-    Build full pool of pure colors for random-per-pixel creation.
+    Build registry colors for pixel pairing / pure-per-frame creation.
 
-    Each pixel in each frame gets a random value from this pool; motion over a window
-    combines pixels (captured at extraction as temporal blend → new pure or dynamic).
-    Pool = origin primitives + static_colors (per-frame discovered) + learned_colors (whole-video).
-    Creation biasing: underused colors (lower count) get higher multiplicity in the pool
-    so they are picked more often, breaking the high-count feedback loop (REGISTRY_AND_WORKFLOW_IMPROVEMENTS).
+    Default (pair_count unset): origin primitives + static_colors (count-inverse).
+    When pair_count is set: a unique 2–N pairing for this clip from named prompt
+    colors plus underused discoveries — new combination each loop.
     """
+    _ = avoid_palette
     pool: list[tuple[int, int, int]] = []
     seen: set[tuple[int, int, int]] = set()
 
@@ -692,13 +841,10 @@ def _build_pure_color_pool(
     ) -> None:
         """Add colors to pool with multiplicity inversely proportional to count (favor underused)."""
         for _key, data in data_iter:
-            if not isinstance(data, dict) or "r" not in data or "g" not in data or "b" not in data:
+            t = _rgb_from_color_dict(data)
+            if t is None:
                 continue
-            r, g, b = int(round(float(data["r"]))), int(round(float(data["g"]))), int(round(float(data["b"])))
-            r, g, b = max(0, min(255, r)), max(0, min(255, g)), max(0, min(255, b))
-            t = (r, g, b)
-            count = int(data.get("count", 0) or 0)
-            # Multiplicity: more copies when count is low (explore underused)
+            count = int(data.get("count", 0) or 0) if isinstance(data, dict) else 0
             mult = max(1, min(max_copies, int(count_scale / (1.0 + count))))
             for _ in range(mult):
                 pool.append(t)
@@ -716,6 +862,10 @@ def _build_pure_color_pool(
         if isinstance(learned, dict):
             _add_with_count_inverse(learned.items())
 
+    if pair_count is not None and pair_count > 0:
+        return _sample_color_pairing(
+            pool, instruction, knowledge, pair_count=pair_count, seed=seed
+        )
     return pool
 
 
