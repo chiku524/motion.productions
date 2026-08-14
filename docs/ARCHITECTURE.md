@@ -164,6 +164,7 @@ Clean organization: every file is in its respective directory.
 | `generate.py` | CLI one-shot generate. |
 | `automate.py` | Interval-based local automation. |
 | `learn_from_api.py`, `learn_report.py` | Learning report / API suggestions. |
+| `ingest_reference.py` | Measure a reference MP4 → registry growth + loop-origin recipe. |
 | `run_d1_migrations.py` | D1 migrations with 7429 retry. |
 | `color_sweep.py`, `registry_*.py`, `seed_*.py`, `backfill_*.py`, … | Registry ops and seeding. |
 

@@ -631,16 +631,20 @@ def cartoon_hold_snap_keyframes(
     duration: float,
     direction: str = "right",
     travel: float = 0.16,
+    hold_frac: float = 0.42,
+    snap_frac: float = 0.10,
 ) -> list[LayerKeyframe]:
     """Hold most of the shot, smear across a short snap, then hold again."""
     duration = max(1.0, float(duration))
     travel = max(0.06, min(0.28, float(travel)))
+    hold_frac = max(0.2, min(0.8, float(hold_frac)))
+    snap_frac = max(0.04, min(0.35, float(snap_frac)))
     x0 = 0.40 if direction == "right" else 0.60
     x1 = min(0.82, x0 + travel) if direction == "right" else max(0.18, x0 - travel)
     y = 0.55
-    hold = duration * 0.42
-    snap = duration * 0.52
-    settle = min(duration * 0.64, duration - 0.04)
+    hold = duration * hold_frac
+    snap = min(duration - 0.08, hold + duration * snap_frac)
+    settle = min(duration - 0.04, snap + duration * 0.08)
     return [
         LayerKeyframe(t=0.0, x=x0, y=y, scale=1.0, rot=0.0),
         LayerKeyframe(t=hold, x=x0, y=y, scale=1.0, rot=0.0),

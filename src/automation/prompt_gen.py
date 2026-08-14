@@ -1292,11 +1292,19 @@ def generate_cartoon_prompt(
 
     Named-subject prompts (not pixel pairing): a locked character in a
     contemporary setting, cel/cartoon look, hold-then-snap timing.
-    Colors come from the registry when present so each run is a new pairing
-    of look + setting + action — not a fixed catalog replay.
+    Colors come from a reference-origin palette when present, else the registry.
     """
     avoid = avoid or set()
-    names = _named_registry_colors(knowledge)
+    origin = (knowledge or {}).get("loop_origin") if isinstance(knowledge, dict) else None
+    origin_names: list[str] = []
+    if isinstance(origin, dict):
+        for p in origin.get("palette") or []:
+            if not isinstance(p, dict):
+                continue
+            n = str(p.get("name") or "").strip().lower()
+            if n and n not in origin_names:
+                origin_names.append(n)
+    names = origin_names + [n for n in _named_registry_colors(knowledge) if n not in origin_names]
     for _ in range(36):
         color_a = secure_choice(names)
         rest = [n for n in names if n != color_a] or names

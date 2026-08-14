@@ -13,6 +13,11 @@ data/automation_state.json
 # Local registry cache (recreated at runtime; D1 is source of truth when API is used)
 /knowledge/
 
+# User-supplied loop origin clips (do not commit copyrighted files)
+/references/*.mp4
+/references/*.mkv
+/references/*.webm
+
 # Python
 __pycache__/
 *.egg-info/

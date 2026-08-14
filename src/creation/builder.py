@@ -234,6 +234,11 @@ def _wants_cartoon(prompt: str) -> bool:
     return any(p in low for p in _CARTOON_PHRASES)
 
 
+def _loop_origin(knowledge: dict[str, Any] | None) -> dict[str, Any] | None:
+    o = (knowledge or {}).get("loop_origin")
+    return o if isinstance(o, dict) else None
+
+
 def build_spec_from_instruction(
     instruction: InterpretedInstruction,
     *,
@@ -363,6 +368,15 @@ def build_spec_from_instruction(
             lighting = vis["lighting"]
         if vis.get("gradient") and gradient == DEFAULT_GRADIENT:
             gradient = vis["gradient"]
+
+    origin = _loop_origin(knowledge)
+    if wants_cartoon and origin:
+        origin_rgb: list[tuple[int, int, int]] = []
+        for p in origin.get("palette") or []:
+            if isinstance(p, dict) and p.get("r") is not None:
+                origin_rgb.append((int(p["r"]), int(p["g"]), int(p["b"])))
+        if origin_rgb:
+            palette_colors = origin_rgb + [c for c in (palette_colors or []) if c not in origin_rgb]
 
     lock_look = _has_subject_look(instruction)
     motion_level: float | None = None
@@ -654,9 +668,12 @@ def build_spec_from_instruction(
         if layer.keyframes and layer.keyframes[-1].x > layer.keyframes[0].x:
             direction = "right"
         if wants_cartoon:
+            origin = _loop_origin(knowledge) or {}
             layer.keyframes = cartoon_hold_snap_keyframes(
                 duration=duration_hint,
                 direction=direction,
+                hold_frac=float(origin.get("hold_frac") or 0.42),
+                snap_frac=float(origin.get("snap_frac") or 0.10),
             )
         elif len(layer.keyframes) <= 2:
             layer.keyframes = walk_cycle_keyframes(
@@ -714,6 +731,9 @@ def build_spec_from_instruction(
         shot_type=shot,
         default_shot=DEFAULT_SHOT,
     )
+    origin = _loop_origin(knowledge)
+    if origin:
+        instance = {**(instance or {}), "loop_origin": origin}
 
     spec = SceneSpec(
         palette_name=palette,

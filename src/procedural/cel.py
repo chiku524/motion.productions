@@ -339,6 +339,15 @@ def render_cel_frame(
     """One RGB uint8 frame: room kit + inked character, posed from scene layers."""
     w, h = int(width), int(height)
     colors = _palette(spec)
+    inst = getattr(spec, "instance", None) if isinstance(getattr(spec, "instance", None), dict) else {}
+    origin = inst.get("loop_origin") if isinstance(inst.get("loop_origin"), dict) else None
+    if origin:
+        extra = []
+        for p in origin.get("palette") or []:
+            if isinstance(p, dict) and p.get("r") is not None:
+                extra.append(_as_rgb((p.get("r"), p.get("g"), p.get("b"))))
+        if extra:
+            colors = extra + colors
     setting = str(getattr(spec, "setting", None) or "apartment")
     prompt = str(getattr(spec, "raw_prompt", "") or "").lower()
     rng = random.Random(int(seed) + sum(ord(c) for c in setting))

@@ -89,6 +89,14 @@ docker compose -f docker-compose.local.yml --profile cartoon up -d --build
 
 This worker never uses pixel-pairing prompts. Explorer / balanced / sound stay on their own missions. Jobs show a **Cartoon** badge. Requires the Worker to accept `workflow_type=cartoon` (deployed with this change).
 
+**Optional: seed from a real cartoon you have rights to**
+
+```bash
+python scripts/ingest_reference.py references/cartoon.mp4 --loop cartoon --api-base https://motion.productions
+```
+
+That grows registry colors/sounds/motion from the clip and writes `knowledge/loop_origins/cartoon.json` (palette + hold/snap timing). The cartoon container mounts `./knowledge`. It does **not** copy or replay the source video.
+
 **D1 write contract (avoid 7429 / discovery storms):**
 - Shared env: `DISCOVERIES_MAX_ITEMS` (default **8**), `DISCOVERIES_CHUNK_PAUSE_SECONDS` (default **3.5**). Blends count as weight 3 toward the budget so Free D1 stays under ~50 queries/request. Empty `job_id`-only discovery posts skip the write lease.
 - Single-writer lease on `POST /api/knowledge/discoveries` → 429 + wait (not a crash).

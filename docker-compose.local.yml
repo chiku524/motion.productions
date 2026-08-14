@@ -190,6 +190,11 @@ services:
       LOOP_DURATION_SECONDS: "2.5"
       DISCOVERIES_MAX_ITEMS: "8"
       DISCOVERIES_CHUNK_PAUSE_SECONDS: "3.5"
+      LOOP_ORIGIN_PATH: /app/knowledge/loop_origins/cartoon.json
+    volumes:
+      - ./src:/app/src
+      - ./scripts:/app/scripts
+      - ./knowledge:/app/knowledge
     ports:
       - "8088:8080"
 

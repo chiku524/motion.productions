@@ -257,7 +257,8 @@ Each workflow is one **continuous loop** that repeats the same steps. Only **pro
 - **Opt-in only.** Compose `--profile cartoon` (port 8088). Not part of Core 4 / `--profile free`. Extra D1 writes, same chunk caps as other loops.
 - **Env:** `LOOP_WORKFLOW_TYPE=cartoon`, `LOOP_EXTRACTION_FOCUS=window`, `LOOP_DURATION_SECONDS=2.5`, `LOOP_DELAY_SECONDS=120`.
 - **Prompt selection:** **100% cartoon.** `generate_cartoon_prompt()` only — unique named-subject shots (character + modern-day setting + registry colors + hold-then-snap). Never pixel pairing, never explorer/balanced prompt mix.
-- **Creation:** Pillow **cel kit** (`src/procedural/cel.py`, `render_engine=cel`): hard ink outlines, flat fills, modern-day rooms (kitchen / apartment / cafe / …) and a TV-cartoon character rig. Not the soft-blob mini-scene renderer. Registry colors tint clothes/walls; hold-then-snap still comes from scene-graph keyframes.
+- **Creation:** Pillow **cel kit** (`src/procedural/cel.py`, `render_engine=cel`): hard ink outlines, flat fills, modern-day rooms and a TV-cartoon character rig.
+- **Reference origin (optional):** ingest a clip you have rights to with `python scripts/ingest_reference.py path.mp4 --loop cartoon`. That extracts **measurements** (limited palette, ink, hold/snap timing) into the registries and a recipe at `knowledge/loop_origins/cartoon.json`. The cartoon loop starts from that recipe. Source frames are **not** copied or replayed. Do not ingest a copyrighted show in order to reproduce it.
 - **Growth:** Window extraction (entities, narrative settings, motion). Novel kitchens / apartments / looks land in the same registries; other workers do not switch to cartoon prompts.
 - **Badge:** jobs use `workflow_type=cartoon` (**Cartoon** on the site).
 

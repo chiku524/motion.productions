@@ -449,6 +449,45 @@ class TestMiniSceneFidelity(unittest.TestCase):
         self.assertIn("cartoon", low)
         self.assertNotIn("pixel pairing", low)
 
+    def test_reference_origin_recipe_from_frames(self):
+        import numpy as np
+        from src.knowledge.reference_origin import measure_frames
+
+        still = np.full((48, 48, 3), (200, 160, 80), dtype=np.uint8)
+        snap = still.copy()
+        snap[:, 24:] = (40, 80, 160)
+        frames = [still] * 10 + [snap] * 2 + [still] * 10
+        recipe = measure_frames(frames, fps=24.0, loop="cartoon")
+        self.assertGreater(float(recipe["hold_frac"]), 0.6)
+        self.assertTrue(recipe["palette"])
+        self.assertIn("r", recipe["palette"][0])
+        self.assertEqual(recipe["render_engine"], "cel")
+        self.assertNotIn("frames", recipe)
+
+    def test_cartoon_prompt_and_spec_use_loop_origin(self):
+        from src.automation.prompt_gen import generate_cartoon_prompt
+
+        origin = {
+            "palette": [{"r": 210, "g": 90, "b": 40, "name": "origin ochre"}],
+            "hold_frac": 0.7,
+            "snap_frac": 0.08,
+        }
+        knowledge = {"loop_origin": origin, "color_by_name": {"origin ochre": {"r": 210, "g": 90, "b": 40}}}
+        prompt = generate_cartoon_prompt(knowledge=knowledge, avoid=set())
+        self.assertIsNotNone(prompt)
+        self.assertIn("origin ochre", prompt.lower())
+
+        instruction = interpret_user_prompt(
+            "cel cartoon: a person holds still then turns in a kitchen, cartoon hold then snap"
+        )
+        instruction.duration_seconds = 2.5
+        spec = build_spec_from_instruction(instruction, knowledge=knowledge)
+        self.assertIn((210, 90, 40), spec.palette_colors[:4])
+        self.assertEqual((spec.instance or {}).get("loop_origin"), origin)
+        char = next(layer for layer in spec.scene_layers if layer.get("kind") == "character")
+        kfs = char.get("keyframes") or []
+        self.assertGreaterEqual(float(kfs[1]["t"]), 1.5)
+
 
 if __name__ == "__main__":
     unittest.main()

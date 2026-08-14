@@ -117,6 +117,15 @@ def pick_prompt(
     extraction_focus = _loop_extraction_focus()
     workflow_type = (os.environ.get("LOOP_WORKFLOW_TYPE") or "").strip().lower()
     if workflow_type == "cartoon":
+        from src.knowledge.reference_origin import load_loop_origin
+        origin = None
+        if isinstance(knowledge, dict):
+            origin = knowledge.get("loop_origin")
+        origin = origin or load_loop_origin("cartoon")
+        if origin and isinstance(knowledge, dict):
+            knowledge = {**knowledge, "loop_origin": origin}
+        elif origin:
+            knowledge = {"loop_origin": origin}
         cartoon = generate_cartoon_prompt(knowledge=knowledge, avoid=recent)
         if cartoon:
             logger.info("Cartoon prompt: %s", cartoon[:70] + ("..." if len(cartoon) > 70 else ""))

@@ -2,7 +2,7 @@
 
 This document is the **authoritative foundation** for all registries. Everything recorded and computed must align with it. Algorithms and functions are **100% precise**; what we record is **100% accurate**.
 
-**Mission:** Exhaustively record **colors**, **sounds**, **semantics (narratives)**, and **interpretations (linguistics)**. Each registry starts from **primitives**; loops add novel combinations under **non-gibberish names**. Creation and a future **photoreal engine** resort to these registries for values the user prompt controls.
+**Mission:** Exhaustively record **colors**, **sounds**, **semantics (narratives)**, and **interpretations (linguistics)**. Each registry starts from **primitives**; loops add novel combinations under **non-gibberish names**. A specialized loop may also **ingest a reference clip you have rights to** (`scripts/ingest_reference.py`): that grows the same registries from measured colors/sounds/windows and stores a recipe (palette, timing) as the loop’s starting point. Source frames are not kept or replayed.
 
 ---
 
