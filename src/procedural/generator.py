@@ -55,7 +55,9 @@ class ProceduralVideoGenerator(VideoGenerator):
         # (we could use it later to match last frame color/mood)
         del conditioning_image_path
 
-        seed = seed if seed is not None else 42
+        from .forms import form_seed
+
+        seed = int(seed) if seed is not None else form_seed(prompt, "clip")
         if config:
             out_cfg = config.get("output", {})
             width = out_cfg.get("width", self.width)

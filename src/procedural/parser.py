@@ -107,6 +107,8 @@ class SceneSpec:
     camera_steadiness: str = "stable"
     # Color temperature grade: warm | neutral | cool
     color_temperature: str = "neutral"
+    # Per-video look instance (horizon, palette RGB, composition jitter, …)
+    instance: dict | None = None
 
 
 def parse_prompt_to_spec(prompt: str, *, seed: int | None = None) -> SceneSpec:

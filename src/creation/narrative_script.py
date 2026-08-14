@@ -73,12 +73,17 @@ def build_mini_scene_script(
     total_duration: float = 5.0,
     action: str = "bounce",
     topic: str | None = None,
+    weights: list[float] | None = None,
 ) -> NarrativeScript:
     """
     Compact 3-beat arc for ~5s everyday mini-scenes: setup → beat → resolve.
     """
     total_duration = max(3.0, float(total_duration))
-    weights = [0.25, 0.45, 0.30]
+    if weights and len(weights) >= 3:
+        wsum = sum(float(w) for w in weights[:3]) or 1.0
+        weights = [float(weights[0]) / wsum, float(weights[1]) / wsum, float(weights[2]) / wsum]
+    else:
+        weights = [0.25, 0.45, 0.30]
     names = ["setup", "beat", "resolve"]
     label = (topic or action).strip() or action
     texts = [None, None, None]

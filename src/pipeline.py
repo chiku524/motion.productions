@@ -84,7 +84,7 @@ def generate_full_video(
             seg_path,
             seg_dur,
             conditioning_image_path=conditioning_path,
-            seed=seed if index == 1 else None,
+            seed=seed,
             config=config,
             segment_index=index,
             total_segments=total_segments,

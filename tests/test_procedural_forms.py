@@ -116,6 +116,45 @@ class TestProceduralForms(unittest.TestCase):
             [(e["kind"], e["prop_x"], e["label"]) for e in b],
         )
 
+    def test_two_prompts_author_distinct_scene_instances(self):
+        p1 = "a person walking left in a forest with soft vocals"
+        p2 = "a person walking left in a pine forest at dusk"
+        i1 = interpret_user_prompt(p1)
+        i2 = interpret_user_prompt(p2)
+        i1.duration_seconds = 5.0
+        i2.duration_seconds = 5.0
+        a = build_spec_from_instruction(i1, knowledge={}, creation_seed=11)
+        b = build_spec_from_instruction(i2, knowledge={}, creation_seed=12)
+        self.assertIsNotNone(a.instance)
+        self.assertIsNotNone(b.instance)
+        self.assertNotEqual(a.instance.get("horizon"), b.instance.get("horizon"))
+        self.assertNotEqual(a.palette_colors, b.palette_colors)
+        trees_a = [l["form"]["species"] for l in (a.scene_layers or []) if l.get("kind") == "tree"]
+        trees_b = [l["form"]["species"] for l in (b.scene_layers or []) if l.get("kind") == "tree"]
+        self.assertTrue(trees_a)
+        self.assertTrue(trees_b)
+        xa = sorted(round(l["keyframes"][0]["x"], 3) for l in (a.scene_layers or []) if l.get("kind") == "tree")
+        xb = sorted(round(l["keyframes"][0]["x"], 3) for l in (b.scene_layers or []) if l.get("kind") == "tree")
+        self.assertNotEqual(xa, xb)
+
+    def test_same_prompt_and_seed_same_instance(self):
+        prompt = "waves in the ocean with a jumping fish"
+        instruction = interpret_user_prompt(prompt)
+        instruction.duration_seconds = 4.0
+        a = build_spec_from_instruction(instruction, knowledge={}, creation_seed=21)
+        b = build_spec_from_instruction(instruction, knowledge={}, creation_seed=21)
+        self.assertEqual(a.instance.get("horizon"), b.instance.get("horizon"))
+        self.assertEqual(a.palette_colors, b.palette_colors)
+        self.assertEqual(a.shot_type, b.shot_type)
+
+    def test_ocean_keeps_named_look_family(self):
+        instruction = interpret_user_prompt("waves in the ocean")
+        instruction.setting = "ocean"
+        instruction.duration_seconds = 4.0
+        spec = build_spec_from_instruction(instruction, knowledge={}, creation_seed=8)
+        self.assertEqual(spec.gradient_type, "horizontal")
+        self.assertEqual(spec.lighting_preset, "documentary")
+
     def test_builder_does_not_inject_learned_entities(self):
         instruction = interpret_user_prompt("slow warm gradient with calm ambient music")
         instruction.duration_seconds = 4.0

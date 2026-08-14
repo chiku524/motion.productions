@@ -15,72 +15,23 @@ from ..procedural.forms import form_seed
 
 PROP_KINDS = ("tree", "fish", "wave", "building", "cloud")
 
-# setting → list of prop spawn recipes (kind, typical trajectory, bounce, z-bias)
-SETTING_PROP_RECIPES: dict[str, list[dict[str, Any]]] = {
-    "forest": [
-        {"kind": "tree", "trajectory": "none", "x": 0.18, "y": 0.62, "scale": 1.1, "z": 0},
-        {"kind": "tree", "trajectory": "none", "x": 0.78, "y": 0.64, "scale": 0.95, "z": 0},
-        {"kind": "tree", "trajectory": "none", "x": 0.48, "y": 0.68, "scale": 0.75, "z": 0},
-    ],
-    "ocean": [
-        {"kind": "wave", "trajectory": "left", "x": 0.5, "y": 0.78, "scale": 1.4, "z": 0},
-        {"kind": "fish", "trajectory": "jump", "x": 0.25, "y": 0.7, "scale": 0.7, "z": 2, "bounce": True},
-    ],
-    "beach": [
-        {"kind": "wave", "trajectory": "right", "x": 0.5, "y": 0.8, "scale": 1.3, "z": 0},
-        {"kind": "cloud", "trajectory": "left", "x": 0.7, "y": 0.22, "scale": 1.0, "z": 0},
-    ],
-    "underwater": [
-        {"kind": "fish", "trajectory": "right", "x": 0.2, "y": 0.45, "scale": 0.8, "z": 2},
-        {"kind": "fish", "trajectory": "left", "x": 0.85, "y": 0.6, "scale": 0.55, "z": 1},
-        {"kind": "wave", "trajectory": "none", "x": 0.5, "y": 0.15, "scale": 1.2, "z": 0},
-    ],
-    "city": [
-        {"kind": "building", "trajectory": "none", "x": 0.2, "y": 0.55, "scale": 1.3, "z": 0},
-        {"kind": "building", "trajectory": "none", "x": 0.45, "y": 0.5, "scale": 1.6, "z": 0},
-        {"kind": "building", "trajectory": "none", "x": 0.75, "y": 0.58, "scale": 1.1, "z": 0},
-    ],
-    "neon": [
-        {"kind": "building", "trajectory": "none", "x": 0.25, "y": 0.52, "scale": 1.4, "z": 0},
-        {"kind": "building", "trajectory": "none", "x": 0.7, "y": 0.48, "scale": 1.7, "z": 0},
-    ],
-    "mountain": [
-        {"kind": "tree", "trajectory": "none", "x": 0.15, "y": 0.7, "scale": 0.6, "z": 0},
-        {"kind": "cloud", "trajectory": "right", "x": 0.3, "y": 0.2, "scale": 1.1, "z": 0},
-    ],
-    "day": [
-        {"kind": "cloud", "trajectory": "left", "x": 0.65, "y": 0.2, "scale": 1.0, "z": 0},
-    ],
-    "golden_hour": [
-        {"kind": "cloud", "trajectory": "right", "x": 0.35, "y": 0.25, "scale": 1.15, "z": 0},
-        {"kind": "tree", "trajectory": "none", "x": 0.85, "y": 0.65, "scale": 0.85, "z": 0},
-    ],
-    "desert": [
-        {"kind": "cloud", "trajectory": "left", "x": 0.4, "y": 0.18, "scale": 0.7, "z": 0},
-    ],
-    "rain": [
-        {"kind": "cloud", "trajectory": "none", "x": 0.5, "y": 0.15, "scale": 1.4, "z": 0},
-        {"kind": "building", "trajectory": "none", "x": 0.8, "y": 0.55, "scale": 1.0, "z": 0},
-    ],
-    "snow": [
-        {"kind": "cloud", "trajectory": "left", "x": 0.35, "y": 0.18, "scale": 1.2, "z": 0},
-        {"kind": "cloud", "trajectory": "right", "x": 0.75, "y": 0.22, "scale": 0.9, "z": 0},
-        {"kind": "tree", "trajectory": "none", "x": 0.2, "y": 0.68, "scale": 0.85, "z": 0},
-    ],
-    "street": [
-        {"kind": "building", "trajectory": "none", "x": 0.2, "y": 0.52, "scale": 1.3, "z": 0},
-        {"kind": "building", "trajectory": "none", "x": 0.75, "y": 0.55, "scale": 1.15, "z": 0},
-        {"kind": "cloud", "trajectory": "left", "x": 0.55, "y": 0.2, "scale": 0.85, "z": 0},
-    ],
-    "park": [
-        {"kind": "tree", "trajectory": "none", "x": 0.2, "y": 0.62, "scale": 1.0, "z": 0},
-        {"kind": "tree", "trajectory": "none", "x": 0.78, "y": 0.65, "scale": 0.9, "z": 0},
-        {"kind": "cloud", "trajectory": "right", "x": 0.45, "y": 0.2, "scale": 1.0, "z": 0},
-    ],
-    "night": [
-        {"kind": "building", "trajectory": "none", "x": 0.3, "y": 0.55, "scale": 1.2, "z": 0},
-        {"kind": "cloud", "trajectory": "left", "x": 0.7, "y": 0.18, "scale": 0.9, "z": 0},
-    ],
+# setting → (kind, min_count, max_count) authored per video — not cloned positions
+SETTING_KIND_WEIGHTS: dict[str, list[tuple[str, int, int]]] = {
+    "forest": [("tree", 3, 6), ("cloud", 0, 2)],
+    "park": [("tree", 2, 5), ("cloud", 0, 2)],
+    "ocean": [("wave", 1, 2), ("fish", 1, 2), ("cloud", 0, 2)],
+    "beach": [("wave", 1, 2), ("cloud", 1, 3)],
+    "underwater": [("fish", 2, 4), ("wave", 0, 1)],
+    "city": [("building", 2, 5), ("cloud", 0, 2)],
+    "neon": [("building", 2, 4), ("cloud", 0, 1)],
+    "street": [("building", 2, 4), ("cloud", 0, 2)],
+    "night": [("building", 1, 3), ("cloud", 0, 2)],
+    "mountain": [("tree", 1, 3), ("cloud", 1, 3)],
+    "day": [("cloud", 1, 3)],
+    "golden_hour": [("cloud", 1, 3), ("tree", 0, 2)],
+    "desert": [("cloud", 0, 2)],
+    "rain": [("cloud", 1, 3), ("building", 0, 2)],
+    "snow": [("cloud", 1, 3), ("tree", 1, 3)],
 }
 
 # Default colors per prop kind (overridden by color_hint / palette)
@@ -182,107 +133,124 @@ def _tree_species_label(rng: random.Random, setting: str) -> str:
     return rng.choice(("oak", "pine", "tree"))
 
 
+def _place_kind(kind: str, rng: random.Random) -> tuple[float, float, float, str, bool, int]:
+    """Return x, y, scale, trajectory, bounce, z for a newly authored prop."""
+    if kind == "tree":
+        return (
+            rng.uniform(0.06, 0.94),
+            rng.uniform(0.56, 0.76),
+            rng.uniform(0.55, 1.35),
+            "none",
+            False,
+            0,
+        )
+    if kind == "cloud":
+        return (
+            rng.uniform(0.08, 0.92),
+            rng.uniform(0.10, 0.30),
+            rng.uniform(0.65, 1.45),
+            rng.choice(("left", "right", "none")),
+            False,
+            0,
+        )
+    if kind == "building":
+        return (
+            rng.uniform(0.08, 0.92),
+            rng.uniform(0.46, 0.62),
+            rng.uniform(0.85, 1.75),
+            "none",
+            False,
+            0,
+        )
+    if kind == "wave":
+        return (
+            rng.uniform(0.28, 0.72),
+            rng.uniform(0.70, 0.86),
+            rng.uniform(1.05, 1.65),
+            rng.choice(("left", "right", "none")),
+            False,
+            0,
+        )
+    # fish
+    jump = rng.random() < 0.45
+    return (
+        rng.uniform(0.12, 0.40) if jump else rng.uniform(0.10, 0.88),
+        rng.uniform(0.58, 0.78) if jump else rng.uniform(0.38, 0.70),
+        rng.uniform(0.50, 0.95),
+        "jump" if jump else rng.choice(("left", "right")),
+        jump,
+        2,
+    )
+
+
+def _make_prop(
+    kind: str,
+    rng: random.Random,
+    setting_key: str,
+    index: int,
+) -> dict[str, Any]:
+    x, y, scale, traj, bounce, z = _place_kind(kind, rng)
+    label = kind
+    if kind == "tree":
+        label = _tree_species_label(rng, setting_key)
+    elif kind == "fish":
+        label = rng.choice(("fish", "goldfish", "reef fish", "tuna"))
+    return {
+        "id": f"prop_{kind}_{index}_{int(x * 1000)}_{int(scale * 100)}",
+        "kind": kind,
+        "label": label,
+        "color_hint": None,
+        "prop_color": _tint(PROP_COLORS.get(kind, (180, 180, 180)), rng),
+        "directionality": "horizontal" if traj in ("left", "right", "jump") else "none",
+        "trajectory": "right" if traj == "jump" else traj,
+        "bounce": bounce,
+        "sfx_on": ["whoosh"] if kind == "fish" and traj == "jump" else [],
+        "expression": "neutral",
+        "personality": "neutral",
+        "gag": "none",
+        "z": z,
+        "is_prop": True,
+        "prop_scale": scale,
+        "prop_x": _clip01(x),
+        "prop_y": _clip01(y),
+        "prop_motion": traj,
+    }
+
+
 def props_for_setting(
     setting: str | None,
     *,
     duration: float = 5.0,
     existing_kinds: set[str] | None = None,
-    max_props: int = 6,
+    max_props: int = 8,
     prompt: str = "",
     creation_seed: int | None = None,
 ) -> list[dict[str, Any]]:
-    """
-    Build entity dicts for setting scenery. Placement and species vary per
-    prompt+seed so two forest videos do not share the same three trees.
-    """
-    del duration  # duration is applied later when keyframes are built
+    """Author a unique scenery layout from setting + prompt + seed."""
+    del duration
     if not setting:
         return []
     setting_key = str(setting).strip().lower()
-    recipes = SETTING_PROP_RECIPES.get(setting_key)
-    if not recipes:
+    weights = SETTING_KIND_WEIGHTS.get(setting_key)
+    if not weights:
         return []
     rng = random.Random(form_seed(prompt, setting_key, extra=int(creation_seed or 0)))
     existing = existing_kinds or set()
     out: list[dict[str, Any]] = []
-    for i, recipe in enumerate(recipes):
-        if len(out) >= max_props:
-            break
-        kind = str(recipe.get("kind") or "")
+    n = 0
+    for kind, lo, hi in weights:
         if kind not in PROP_KINDS:
             continue
+        count = rng.randint(lo, hi)
         if kind in existing and kind in ("fish", "wave", "cloud"):
-            continue
-        traj = str(recipe.get("trajectory") or "none")
-        bounce = bool(recipe.get("bounce"))
-        x = _clip01(float(recipe.get("x", 0.5)) + rng.uniform(-0.14, 0.14))
-        y = _clip01(float(recipe.get("y", 0.5)) + rng.uniform(-0.07, 0.07))
-        scale = max(0.45, float(recipe.get("scale", 1.0)) * rng.uniform(0.72, 1.28))
-        z = int(recipe.get("z", 0))
-        color = _tint(PROP_COLORS.get(kind, (180, 180, 180)), rng)
-        label = kind
-        if kind == "tree":
-            label = _tree_species_label(rng, setting_key)
-        elif kind == "fish":
-            label = rng.choice(("fish", "fish", "goldfish", "reef fish"))
-        ent: dict[str, Any] = {
-            "id": f"prop_{kind}_{i}_{int(x * 100)}_{int(scale * 100)}",
-            "kind": kind,
-            "label": label,
-            "color_hint": None,
-            "prop_color": color,
-            "directionality": "horizontal" if traj in ("left", "right", "jump") else "none",
-            "trajectory": "right" if traj == "jump" else traj,
-            "bounce": bounce,
-            "sfx_on": ["whoosh"] if kind == "fish" and traj == "jump" else [],
-            "expression": "neutral",
-            "personality": "neutral",
-            "gag": "none",
-            "z": z,
-            "is_prop": True,
-            "prop_scale": scale,
-            "prop_x": x,
-            "prop_y": y,
-            "prop_motion": traj,
-        }
-        out.append(ent)
-    # Extra trees/clouds so forests aren't a fixed trio
-    if setting_key in ("forest", "park") and len(out) < max_props:
-        n_extra = rng.randint(0, 2)
-        for j in range(n_extra):
+            count = 0 if kind == "fish" else min(count, 1)
+            if kind == "fish":
+                continue
+        for _ in range(count):
             if len(out) >= max_props:
                 break
-            x = rng.uniform(0.08, 0.92)
-            y = rng.uniform(0.58, 0.74)
-            scale = rng.uniform(0.55, 1.2)
-            label = _tree_species_label(rng, setting_key)
-            out.append({
-                "id": f"prop_tree_x{j}_{int(x * 100)}",
-                "kind": "tree",
-                "label": label,
-                "color_hint": None,
-                "prop_color": _tint(PROP_COLORS["tree"], rng, 36),
-                "directionality": "none",
-                "trajectory": "none",
-                "bounce": False,
-                "sfx_on": [],
-                "expression": "neutral",
-                "personality": "neutral",
-                "gag": "none",
-                "z": 0,
-                "is_prop": True,
-                "prop_scale": scale,
-                "prop_x": x,
-                "prop_y": y,
-                "prop_motion": "none",
-            })
-    if len(out) > 2 and rng.random() < 0.22:
-        idx = rng.randrange(len(out))
-        kind = str(out[idx].get("kind") or "")
-        n_kind = sum(1 for e in out if e.get("kind") == kind)
-        primary = {"forest": "tree", "park": "tree", "ocean": "wave", "city": "building"}.get(setting_key)
-        if not (kind == primary and n_kind <= 2):
-            out.pop(idx)
+            out.append(_make_prop(kind, rng, setting_key, n))
+            n += 1
     return out
 
 

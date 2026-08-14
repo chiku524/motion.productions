@@ -168,16 +168,19 @@ def _apply_setting_backdrop(
     yy: "np.ndarray",
     setting: str,
     intensity: float,
+    instance: dict | None = None,
 ) -> tuple["np.ndarray", "np.ndarray", "np.ndarray"]:
     """
     Soft horizon / ground / sky bands for setting-themed mini-scene backgrounds.
-    Keeps the look procedural and primitive so settings remain discoverable.
+    Per-video instance supplies unique horizon and tint deltas.
     """
     s = (setting or "").strip().lower()
-    amp = 0.22 * max(0.3, min(1.0, intensity))
-    ground = np.clip((yy - 0.62) / 0.38, 0, 1) ** 1.4
-    sky = np.clip((0.38 - yy) / 0.38, 0, 1) ** 1.2
-    # (ground_rgb_delta, sky_rgb_delta)
+    inst = instance if isinstance(instance, dict) else {}
+    amp = float(inst.get("backdrop_amp") or (0.22 * max(0.3, min(1.0, intensity))))
+    horizon = float(inst.get("horizon") or 0.62)
+    sky_h = max(0.18, horizon - 0.24)
+    ground = np.clip((yy - horizon) / max(0.12, 1.0 - horizon), 0, 1) ** 1.4
+    sky = np.clip((sky_h - yy) / max(0.12, sky_h), 0, 1) ** 1.2
     deltas: dict[str, tuple[tuple[float, float, float], tuple[float, float, float]]] = {
         "city": ((18, 8, 28), (-10, -5, 35)),
         "neon": ((25, 0, 40), (-5, 20, 45)),
@@ -203,6 +206,10 @@ def _apply_setting_backdrop(
         "abstract": ((20, -10, 35), (10, 15, 40)),
     }
     ground_d, sky_d = deltas.get(s, ((10, 10, 10), (8, 12, 20)))
+    if inst.get("ground_d"):
+        ground_d = tuple(float(v) for v in inst["ground_d"])  # type: ignore[assignment]
+    if inst.get("sky_d"):
+        sky_d = tuple(float(v) for v in inst["sky_d"])  # type: ignore[assignment]
     r = np.clip(r + ground * (ground_d[0] * amp) + sky * (sky_d[0] * amp), 0, 255)
     g = np.clip(g + ground * (ground_d[1] * amp) + sky * (sky_d[1] * amp), 0, 255)
     b = np.clip(b + ground * (ground_d[2] * amp) + sky * (sky_d[2] * amp), 0, 255)
@@ -415,6 +422,8 @@ def _accumulate_contact_shadows(
     lighting_preset: str = "neutral",
     smoothness: str = "smooth",
     shot_type: str = "medium",
+    extra_dx: float = 0.0,
+    extra_dy: float = 0.0,
 ) -> "np.ndarray":
     """HxW soft contact-shadow alpha to darken the background before layer over."""
     from ..creation.scene_graph import (
@@ -430,6 +439,8 @@ def _accumulate_contact_shadows(
     xx = xx / max(1, width - 1)
     yy = yy / max(1, height - 1)
     dx, dy = composition_balance_offset(composition_balance, shot_type)
+    dx += float(extra_dx)
+    dy += float(extra_dy)
     lighting_model = get_lighting_model(lighting_preset)
     for layer in layers:
         if not isinstance(layer, dict):
@@ -490,6 +501,8 @@ def _render_layers_rgba(
     texture: "np.ndarray | None" = None,
     smoothness: str = "smooth",
     shot_type: str = "medium",
+    extra_dx: float = 0.0,
+    extra_dy: float = 0.0,
 ) -> tuple["np.ndarray", "np.ndarray"]:
     """
     Render stylized layers onto a transparent canvas.
@@ -511,6 +524,8 @@ def _render_layers_rgba(
     xx = xx / max(1, width - 1)
     yy = yy / max(1, height - 1)
     dx, dy = composition_balance_offset(composition_balance, shot_type)
+    dx += float(extra_dx)
+    dy += float(extra_dy)
     lighting_model = get_lighting_model(lighting_preset)
     texture_mod = _sample_texture_mod(texture, xx, yy)
 
@@ -807,6 +822,8 @@ def _composite_scene_layers(
     texture: "np.ndarray | None" = None,
     smoothness: str = "smooth",
     shot_type: str = "medium",
+    extra_dx: float = 0.0,
+    extra_dy: float = 0.0,
 ) -> "np.ndarray":
     """Composite keyframed stylized layers onto an RGB float frame (over)."""
     bg = frame.astype(np.float32)
@@ -817,6 +834,8 @@ def _composite_scene_layers(
         lighting_preset=lighting_preset,
         smoothness=smoothness,
         shot_type=shot_type,
+        extra_dx=extra_dx,
+        extra_dy=extra_dy,
     )
     bg = _darken_with_shadows(bg, shadow_a)
     fg_rgb, fg_a = _render_layers_rgba(
@@ -827,6 +846,8 @@ def _composite_scene_layers(
         texture=texture,
         smoothness=smoothness,
         shot_type=shot_type,
+        extra_dx=extra_dx,
+        extra_dy=extra_dy,
     )
     a = fg_a[..., None]
     out = bg * (1.0 - a) + fg_rgb * a
@@ -905,13 +926,17 @@ def render_frame(
     composition_balance = getattr(spec, "composition_balance", "balanced") or "balanced"
     composition_symmetry = getattr(spec, "composition_symmetry", "slight") or "slight"
     setting = getattr(spec, "setting", None)
+    instance = getattr(spec, "instance", None) if isinstance(getattr(spec, "instance", None), dict) else {}
+    extra_dx = float(instance.get("comp_dx") or 0.0)
+    extra_dy = float(instance.get("comp_dy") or 0.0)
+    tex_salt = int(instance.get("tex_salt") or 0)
 
     texture = None
     try:
         from ..depth.assets import get_asset_texture, texture_for_setting
         tex_name = texture_for_setting(setting)
         if tex_name:
-            texture = get_asset_texture(tex_name, width, height, seed=seed)
+            texture = get_asset_texture(tex_name, width, height, seed=seed + tex_salt)
     except ImportError:
         texture = None
 
@@ -971,7 +996,7 @@ def render_frame(
         b = np.clip(b + (n - 0.5) * amp, 0, 255)
 
         if setting:
-            r, g, b = _apply_setting_backdrop(r, g, b, yy, str(setting), intensity)
+            r, g, b = _apply_setting_backdrop(r, g, b, yy, str(setting), intensity, instance=instance)
 
     r, g, b = _apply_background_texture(r, g, b, xx, yy, texture, intensity)
     background = np.stack([r, g, b], axis=-1).astype(np.float32)
@@ -1018,11 +1043,13 @@ def render_frame(
                 lighting_preset=lighting_preset,
                 smoothness=smoothness,
                 shot_type=shot_type,
+                extra_dx=extra_dx,
+                extra_dy=extra_dy,
             ),
         )
         planes: list[tuple[np.ndarray, np.ndarray, float]] = []
         for img, depth in create_depth_layers(
-            width, height, num_layers=2, seed=seed, base_rgb=base_rgb, setting=setting,
+            width, height, num_layers=2, seed=seed + tex_salt, base_rgb=base_rgb, setting=setting,
         ):
             haze_a = np.full((height, width), 0.10 * (1.15 - float(depth)), dtype=np.float32)
             planes.append((img.astype(np.float32), haze_a, float(depth) * 0.35))
@@ -1037,6 +1064,8 @@ def render_frame(
                 texture=texture,
                 smoothness=smoothness,
                 shot_type=shot_type,
+                extra_dx=extra_dx,
+                extra_dy=extra_dy,
             )
             planes.append((fg_rgb, fg_a, depth))
         frame = composite_depth_planes(
@@ -1054,6 +1083,8 @@ def render_frame(
             texture=texture,
             smoothness=smoothness,
             shot_type=shot_type,
+            extra_dx=extra_dx,
+            extra_dy=extra_dy,
         )
     elif shape_overlay in ("circle", "rect") and overlay_palette:
         frame = background.copy()

@@ -22,6 +22,7 @@ from ..procedural.data.keywords import (
     DEFAULT_LIGHTING,
     DEFAULT_MOTION,
     DEFAULT_PALETTE,
+    DEFAULT_SHOT,
     SETTING_VISUAL_DEFAULTS,
 )
 from ..procedural.data.palettes import PALETTES
@@ -377,11 +378,17 @@ def build_spec_from_instruction(
         and seed_gag not in _PROMPT_GAGS
     ):
         from .narrative_script import build_mini_scene_script, script_beats_to_dicts
+        from ..procedural.scene_instance import scene_rng
         action = "walk" if entities[0].get("kind") == "character" else "bounce"
+        br = scene_rng(getattr(instruction, "raw_prompt", "") or "", creation_seed, "beats")
+        w1 = br.uniform(0.18, 0.32)
+        w3 = br.uniform(0.22, 0.36)
+        w2 = max(0.28, 1.0 - w1 - w3)
         narr = build_mini_scene_script(
             total_duration=duration_hint,
             action=action,
             topic=entities[0].get("label"),
+            weights=[w1, w2, w3],
         )
         kind = entities[0].get("kind") or "circle"
         ents, sfx_from_script = script_to_entities_and_sfx(narr, entity_kind=kind if kind != "character" else "circle")
@@ -486,6 +493,25 @@ def build_spec_from_instruction(
         from ..procedural.look import camera_for_subject_motion
         camera = camera_for_subject_motion(entities)
 
+    from ..procedural.scene_instance import instantiate_scene
+
+    color_temperature = _resolve_color_temperature(instruction, lighting)
+    instance = instantiate_scene(
+        prompt=instruction.raw_prompt or "",
+        setting=setting,
+        creation_seed=creation_seed,
+        palette_colors=palette_colors,
+        intensity=intensity,
+        shot_type=shot,
+        default_shot=DEFAULT_SHOT,
+    )
+    if instance.get("palette_colors"):
+        palette_colors = instance["palette_colors"]
+    intensity = float(instance.get("intensity") or intensity)
+    shot = str(instance.get("shot_type") or shot)
+    if color_temperature == "neutral":
+        color_temperature = str(instance.get("color_temperature") or color_temperature)
+
     spec = SceneSpec(
         palette_name=palette,
         motion_type=motion,
@@ -535,7 +561,8 @@ def build_spec_from_instruction(
         creation_mode=creation_mode,
         pure_sounds=pure_sounds,
         camera_steadiness=_resolve_camera_steadiness(instruction, camera, shot),
-        color_temperature=_resolve_color_temperature(instruction, lighting),
+        color_temperature=color_temperature,
+        instance=instance,
     )
 
     _validate_spec_against_instruction(spec, instruction)
