@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """
-Sound-only workflow: no video create/render. Pure sound = noise in one frame (one instant).
-Origin/primitive sound values (silence, rumble, tone, hiss) live in the mesh (static_sound
-registry); the loop records new discoveries as blends of primitives for each instant,
-so the mesh holds primitives + discovered values. This script: generates audio to a WAV;
-measures per-instant sound; records blends into the mesh; syncs to API for next-run discovery.
+Sound-only workflow: no video create/render.
+
+Sounds live on their own spectrum, same idea as color:
+  frame  — pair two registry instants and hold them still (static_sound growth)
+  window — rematch 3–4 sounds over ~1s (dynamic blends of those instants)
+
+Each cycle picks a new pairing from primitives + discoveries, not a mood catalog.
 
 Usage:
   python scripts/sound_loop.py
@@ -151,24 +153,46 @@ def run() -> None:
                     logger.warning("Knowledge fetch failed: %s — using empty", e)
 
             mood, tempo, presence = _pick_audio_params(knowledge)
-            target_primitive = _pick_target_primitive(api_base)
-            source_prompt = (
-                f"sound_loop:mood={mood},tempo={tempo},presence={presence}"
-                + (f",primitive={target_primitive}" if target_primitive else "")
+            pairing_kind = "window" if random.random() < 0.4 else "frame"
+            pair_count = 4 if pairing_kind == "window" else 2
+            clip_duration = duration if pairing_kind == "frame" else max(duration, 4.0)
+
+            from src.audio.pairing import sample_sound_pairing, sound_label
+            pairing = sample_sound_pairing(
+                knowledge,
+                prompt="",
+                pair_count=pair_count,
+                seed=cycle * 7919 + 13,
             )
+            labels = [sound_label(e) for e in pairing if sound_label(e)]
+            if pairing_kind == "window":
+                source_prompt = (
+                    f"dynamic sound pairing of {labels[0]} with {labels[1]}"
+                    if len(labels) >= 2
+                    else f"sound_loop window pairing"
+                )
+            else:
+                source_prompt = (
+                    f"static sound pairing of {labels[0]} with {labels[1]}"
+                    if len(labels) >= 2
+                    else f"sound_loop frame pairing"
+                )
+            target_primitive = labels[0] if labels else _pick_target_primitive(api_base)
 
             generate_audio_only(
-                duration,
+                clip_duration,
                 wav_path,
                 mood=mood,
                 tempo=tempo,
                 presence=presence,
                 target_primitive=target_primitive,
+                pure_sounds=pairing or None,
+                pairing_kind=pairing_kind,
             )
             segments = read_audio_segments_only(
                 wav_path,
                 fps=SOUND_LOOP_FPS,
-                duration_seconds=duration,
+                duration_seconds=clip_duration,
             )
             added, novel_list = grow_static_sound_from_audio_segments(
                 segments,
@@ -221,13 +245,13 @@ def run() -> None:
             if count:
                 print(
                     f"[{cycle}] sound discovery: +{count} "
-                    f"(mood={mood}, tempo={tempo}, presence={presence}, primitive={target_primitive}, "
+                    f"(kind={pairing_kind}, pair={'+'.join(labels[:4])}, "
                     f"segments={len(segments)})"
                 )
             else:
                 print(
                     f"[{cycle}] no new sounds this cycle "
-                    f"(segments={len(segments)}, mood={mood}, primitive={target_primitive})"
+                    f"(segments={len(segments)}, kind={pairing_kind}, pair={'+'.join(labels[:4])})"
                 )
 
             try:

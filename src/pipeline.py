@@ -182,6 +182,7 @@ def _add_audio(
             output_path, output_path=output_path,
             mood=mood, tempo=tempo, presence=presence,
             pure_sounds=pure_sounds,
+            sound_pairing=getattr(spec, "sound_pairing", None) if spec is not None else None,
             cut_times=cut_times,
             audio_genre=audio_genre,
             audio_vocals=audio_vocals,

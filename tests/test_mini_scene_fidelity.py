@@ -174,6 +174,7 @@ class TestMiniSceneFidelity(unittest.TestCase):
         self.assertIsNotNone(frame)
         flow = frame.lower()
         self.assertTrue("pair" in flow or "static frame" in flow, frame)
+        self.assertIn("sound pairing", flow)
         self.assertFalse(any(obj in flow for obj in ("person", "ball", "tree", "fish", "car")), frame)
         window = generate_pixel_pairing_prompt(kind="window", knowledge=knowledge, avoid=set())
         self.assertIsNotNone(window)
@@ -182,6 +183,7 @@ class TestMiniSceneFidelity(unittest.TestCase):
             any(cue in wlow for cue in ("motion window", "dynamic pairing", "window blend")),
             window,
         )
+        self.assertTrue("sound" in wlow or "paired with" in wlow, window)
 
     def test_abstract_mesh_stays_pure_no_layers(self):
         prompt = "static frame: amber paired with teal"
@@ -191,6 +193,10 @@ class TestMiniSceneFidelity(unittest.TestCase):
         self.assertEqual(spec.creation_mode, "pure_per_frame")
         self.assertFalse(spec.scene_layers)
         self.assertLessEqual(float(spec.motion_level or 0), 3.5)
+        self.assertEqual(spec.sound_pairing, "frame")
+        self.assertEqual(spec.audio_genre, "none")
+        self.assertTrue(spec.pure_sounds)
+        self.assertEqual(len(spec.pure_sounds), 2)
 
     def test_motion_window_stays_pure_higher_motion(self):
         prompt = "motion window: amber paired with teal in slow drift"
@@ -200,6 +206,10 @@ class TestMiniSceneFidelity(unittest.TestCase):
         self.assertEqual(spec.creation_mode, "pure_per_frame")
         self.assertFalse(spec.scene_layers)
         self.assertGreaterEqual(float(spec.motion_level or 0), 9.0)
+        self.assertEqual(spec.sound_pairing, "window")
+        self.assertEqual(spec.audio_genre, "none")
+        self.assertTrue(spec.pure_sounds)
+        self.assertEqual(len(spec.pure_sounds), 4)
 
     def test_setting_props_forest_trees(self):
         prompt = "a person walking left in a forest with soft vocals"
@@ -208,6 +218,7 @@ class TestMiniSceneFidelity(unittest.TestCase):
         instruction.duration_seconds = 5.0
         spec = build_spec_from_instruction(instruction, knowledge={})
         self.assertEqual(spec.creation_mode, "blended")
+        self.assertIsNone(spec.sound_pairing)
         kinds = {l.get("kind") for l in (spec.scene_layers or [])}
         self.assertIn("tree", kinds)
         self.assertIn("character", kinds)

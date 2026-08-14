@@ -520,21 +520,18 @@ def generate_targeted_color_family_prompt(
     shade = secure_choice(["deep", "mid", "light", "muted"])
     _subject, cue = color_family_prompt_bits(target, shade)
     hue = target
-    music = secure_choice([
-        "calm ambient music",
-        "dreamy ambient music",
-        "a playful beat",
-        "dark music",
-        "cinematic music",
-    ])
     others = [c for c in ("red", "blue", "green", "amber", "teal", "violet", "gold") if c != hue] or ["teal"]
     other = secure_choice(others)
+    from ..audio.pairing import named_registry_sounds
+    sounds = named_registry_sounds(None)
+    sa = secure_choice(sounds)
+    sb = secure_choice([s for s in sounds if s != sa] or sounds)
     templates = [
-        f"static frame: {cue} {hue} paired with {other}",
-        f"per-frame pairing of {cue} {hue} with {other}",
-        f"still pixel pairing: {cue} {hue} with {other}",
-        f"static frame pairing of {cue} {hue} with {other} with {music}",
-        f"pixel pairing of {cue} {hue} with {other}",
+        f"static frame: {cue} {hue} paired with {other}, static sound pairing of {sa} with {sb}",
+        f"per-frame pairing of {cue} {hue} with {other}, static sound pairing of {sa} with {sb}",
+        f"still pixel pairing: {cue} {hue} with {other}, static sound pairing of {sa} with {sb}",
+        f"static frame pairing of {cue} {hue} with {other}, static sound pairing of {sa} with {sb}",
+        f"pixel pairing of {cue} {hue} with {other}, static sound pairing of {sa} with {sb}",
     ]
     for _ in range(24):
         prompt = secure_choice(templates)
@@ -1011,10 +1008,9 @@ def generate_pixel_pairing_prompt(
     family: str | None = None,
 ) -> str | None:
     """
-    Unique frame (static) or window (dynamic) prompts from named registry colors.
-
-    A scene is a pairing of colored pixels — not a catalog object and not one mesh look.
-    Frame workers hold the pairing still; window workers rematch it over motion.
+    Unique frame (static) or window (dynamic) prompts from named registry colors
+    and sounds. Color and sound are separate spectra; both are unique pairings
+    from primitives + discoveries — not catalog objects or genre beds.
     """
     avoid = avoid or set()
     names = _named_registry_colors(knowledge)
@@ -1023,7 +1019,8 @@ def generate_pixel_pairing_prompt(
         biased = [n for n in names if fam in n]
         if biased:
             names = biased + [n for n in names if n not in biased]
-    music = secure_choice(_MINI_MUSIC)
+    from ..audio.pairing import named_registry_sounds
+    sounds = named_registry_sounds(knowledge)
     motions = _named_registry_motion(knowledge)
     window = (kind or "frame").strip().lower() == "window"
     for _ in range(28):
@@ -1031,24 +1028,25 @@ def generate_pixel_pairing_prompt(
         rest = [n for n in names if n != a] or names
         b = secure_choice(rest)
         c = secure_choice(names)
+        sa = secure_choice(sounds)
+        srest = [s for s in sounds if s != sa] or sounds
+        sb = secure_choice(srest)
         motion = secure_choice(motions)
         if window:
             templates = [
-                f"motion window: {a} paired with {b} in {motion}",
-                f"dynamic pairing of {a} and {b} over a moving window with {music}",
-                f"window blend: {a} paired with {b} and {c}",
-                f"pixel pairing of {a} with {b} drifting across a motion window",
-                f"motion window pairing of {a} and {c} with {music}",
-                f"dynamic pairing of {a} with {b} and {c} in {motion}",
+                f"motion window: {a} paired with {b} in {motion}, dynamic sound pairing of {sa} with {sb}",
+                f"dynamic pairing of {a} and {b} over a moving window, dynamic sound pairing of {sa} with {sb}",
+                f"window blend: {a} paired with {b} and {c}, dynamic sound pairing of {sa} with {sb}",
+                f"pixel pairing of {a} with {b} drifting across a motion window, dynamic sound pairing of {sa} with {sb}",
+                f"motion window pairing of {a} and {c}, dynamic sound pairing of {sa} with {sb}",
             ]
         else:
             templates = [
-                f"static frame: {a} paired with {b}",
-                f"per-frame pairing of {a} and {b}",
-                f"still pixel pairing: {a} with {b} and {c}",
-                f"static frame pairing of {a} with {b} with {music}",
-                f"pixel pairing of {a} with {b}",
-                f"static frame: {a} paired with {c}",
+                f"static frame: {a} paired with {b}, static sound pairing of {sa} with {sb}",
+                f"per-frame pairing of {a} and {b}, static sound pairing of {sa} with {sb}",
+                f"still pixel pairing: {a} with {b} and {c}, static sound pairing of {sa} with {sb}",
+                f"static frame pairing of {a} with {b}, static sound pairing of {sa} with {sb}",
+                f"pixel pairing of {a} with {b}, static sound pairing of {sa} with {sb}",
             ]
         prompt = secure_choice(templates)
         if prompt not in avoid and not _is_near_duplicate(prompt, avoid):

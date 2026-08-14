@@ -57,6 +57,7 @@ def mix_audio_to_video(
     presence: str = "ambient",
     cut_times: list[float] | None = None,
     pure_sounds: list[dict] | None = None,
+    sound_pairing: str | None = None,
     audio_genre: str = "none",
     audio_vocals: bool = False,
     sfx_events: list[dict] | None = None,
@@ -68,8 +69,8 @@ def mix_audio_to_video(
     """
     Add audio to a video. Phase 6+.
     - If audio_path: mix that file.
+    - Else if sound_pairing / pure_sounds: mix a unique registry pairing (static or window).
     - Else if presence=music or audio_genre set: in-house arrangement engine.
-    - Else if pure_sounds: mix registry mesh.
     - Else: procedural ambient from origins.
     - Overlay event SFX (bounce etc.) and optional offline vocals.
     - cut_times: soft click accents at scene cuts.
@@ -124,6 +125,7 @@ def mix_audio_to_video(
             tempo=tempo,
             presence=presence,
             pure_sounds=pure_sounds,
+            sound_pairing=sound_pairing,
             audio_genre=audio_genre,
             music_sections=music_sections,
             script_beats=script_beats,
@@ -179,6 +181,7 @@ def _build_audio_bed(
     tempo: str,
     presence: str,
     pure_sounds: list[dict] | None,
+    sound_pairing: str | None = None,
     audio_genre: str,
     music_sections: list[str] | None = None,
     script_beats: list[dict] | None = None,
@@ -191,6 +194,13 @@ def _build_audio_bed(
 
     if presence == "silence":
         return AudioSegment.silent(duration=duration_ms, frame_rate=44100)
+
+    if sound_pairing and pure_sounds:
+        return generate_audio_from_pure_sounds(
+            pure_sounds,
+            duration_ms=duration_ms,
+            pairing_kind=sound_pairing,
+        )
 
     use_music = presence in ("music", "full") or genre not in ("none", "", "ambient")
     if use_music and genre in ("none", "", "ambient") and presence == "music":
@@ -250,51 +260,145 @@ def _tone_to_freq_db(tone: str, amplitude: float) -> tuple[float, float]:
     return freq, db
 
 
+def _primitive_from_entry(entry: dict) -> str:
+    from ..knowledge.blend_depth import SOUND_ORIGIN_PRIMITIVES, _TONE_TO_NOISE
+
+    name = str(entry.get("name") or "").strip().lower()
+    timbre = str(entry.get("timbre") or "").strip().lower()
+    tone = str(entry.get("tone") or "").strip().lower()
+    blob = f"{name} {timbre}"
+    for prim in SOUND_ORIGIN_PRIMITIVES:
+        if prim != "silence" and prim in blob:
+            return prim
+    return _TONE_TO_NOISE.get(tone, "tone")
+
+
+def _primitive_texture(
+    prim: str,
+    duration_ms: int,
+    *,
+    db: float = -20.0,
+    tempo_ms: int = 2500,
+    sample_rate: int = 44100,
+):
+    """One SOUND_ORIGIN_PRIMITIVES texture for the full duration (pairing building block)."""
+    from pydub import AudioSegment
+    from pydub.generators import Sine
+
+    try:
+        from pydub.generators import WhiteNoise
+    except ImportError:
+        WhiteNoise = None  # type: ignore[misc, assignment]
+
+    prim = (prim or "tone").strip().lower()
+    base = AudioSegment.silent(duration=duration_ms, frame_rate=sample_rate)
+    if prim in ("silence", "silent") or duration_ms <= 0:
+        return base
+
+    def _noise(dur: int, volume: float):
+        if WhiteNoise is None:
+            return Sine(4000).to_audio_segment(duration=max(1, dur)) + volume
+        return WhiteNoise().to_audio_segment(duration=max(1, dur)) + volume
+
+    if prim == "hiss":
+        return base.overlay(_repeat_to_duration(_noise(min(800, duration_ms), db - 4), duration_ms))
+    if prim == "hum":
+        hum = Sine(60).to_audio_segment(duration=min(2000, duration_ms)) + (db - 2)
+        return base.overlay(_repeat_to_duration(hum, duration_ms))
+    if prim == "rumble":
+        rumble = Sine(40).to_audio_segment(duration=min(2500, duration_ms)) + db
+        return base.overlay(_repeat_to_duration(rumble, duration_ms))
+    if prim == "rustle":
+        result = base
+        for t in range(0, duration_ms, 180):
+            result = result.overlay(_noise(min(60, duration_ms - t), db - 4), position=t)
+        return result
+    if prim == "click":
+        result = base
+        step = max(400, tempo_ms // 2)
+        for t in range(0, duration_ms, step):
+            click = Sine(2000).to_audio_segment(duration=18) + (db + 2)
+            result = result.overlay(click, position=t)
+            if WhiteNoise is not None:
+                result = result.overlay(_noise(12, db), position=t)
+        return result
+    if prim == "whoosh":
+        result = base.overlay(_noise(min(900, duration_ms), db - 2), position=max(0, duration_ms // 4))
+        sweep = Sine(800).to_audio_segment(duration=min(600, duration_ms)) + (db - 6)
+        return result.overlay(_repeat_to_duration(sweep, duration_ms))
+    if prim == "thump":
+        result = base
+        thump = Sine(55).to_audio_segment(duration=80).fade_out(70) + (db + 4)
+        for t in range(0, duration_ms, max(500, tempo_ms)):
+            result = result.overlay(thump, position=t)
+        return result
+    if prim == "drip":
+        result = base
+        for t in range(200, duration_ms, 700):
+            result = result.overlay(Sine(1200).to_audio_segment(duration=30) + (db - 2), position=t)
+        return result
+    # tone (default)
+    mid = Sine(330).to_audio_segment(duration=min(1500, duration_ms)) + (db - 4)
+    return base.overlay(_repeat_to_duration(mid, duration_ms))
+
+
 def generate_audio_from_pure_sounds(
     pure_sounds: list[dict],
     duration_ms: int,
     *,
     sample_rate: int = 44100,
-) -> AudioSegment:
+    pairing_kind: str = "frame",
+):
     """
-    Mix multiple pure sounds (from the static_sound registry mesh) into one track.
-    Each entry can have tone (low/mid/high/silent), amplitude/weight, timbre.
-    Overlays all with reduced gain so they combine into a single evolving layer.
+    Mix a unique registry pairing into one track.
+
+    frame: two (or more) textures held together for the clip — static instants.
+    window: textures rematch / crossfade every ~1s — dynamic blends.
     """
     try:
         from pydub import AudioSegment
-        from pydub.generators import Sine
     except ImportError as e:
         raise RuntimeError("pydub is required for audio. Install with: pip install pydub") from e
 
-    try:
-        from pydub.generators import Sine
-    except ImportError:
+    entries = [e for e in (pure_sounds or []) if isinstance(e, dict)]
+    if not entries:
         return AudioSegment.silent(duration=duration_ms, frame_rate=sample_rate)
 
-    frame_rate = sample_rate
-    base = AudioSegment.silent(duration=duration_ms, frame_rate=frame_rate)
-    n = max(1, len([e for e in pure_sounds if isinstance(e, dict)]))
-    # Per-layer gain reduction so combined level is reasonable
-    layer_db = -10.0 * (1.0 / n) ** 0.5  # softer when more layers
-
-    for i, entry in enumerate(pure_sounds):
-        if not isinstance(entry, dict):
-            continue
-        tone = (entry.get("tone") or entry.get("timbre") or "mid").strip() or "mid"
+    layers = []
+    for entry in entries:
+        prim = _primitive_from_entry(entry)
         amp = float(entry.get("amplitude") or entry.get("weight") or 0.5)
-        freq, db = _tone_to_freq_db(tone, amp)
-        if freq <= 0:
-            continue
-        try:
-            tone_seg = Sine(freq).to_audio_segment(duration=duration_ms)
-            tone_seg = tone_seg + (db + layer_db)
-        except Exception:
-            continue
-        # Stagger start slightly so layers don't all align (more texture)
-        offset_ms = (i * 47) % max(1, duration_ms // 2)
-        base = base.overlay(tone_seg, position=offset_ms)
+        db = -28.0 + max(0.0, min(1.0, amp)) * 10.0
+        layers.append(_primitive_texture(prim, duration_ms, db=db, sample_rate=sample_rate))
 
+    n = len(layers)
+    layer_db = -8.0 * (1.0 / n) ** 0.5
+    kind = (pairing_kind or "frame").strip().lower()
+    base = AudioSegment.silent(duration=duration_ms, frame_rate=sample_rate)
+
+    if kind != "window" or n < 2:
+        for i, layer in enumerate(layers):
+            offset_ms = (i * 47) % max(1, duration_ms // 4) if n > 2 else 0
+            base = base.overlay(layer + layer_db, position=offset_ms)
+        return base
+
+    window_ms = 1000
+    n_win = max(1, (duration_ms + window_ms - 1) // window_ms)
+    fade = max(40, window_ms // 3)
+    for wi in range(n_win):
+        pos = wi * window_ms
+        chunk_ms = min(window_ms, duration_ms - pos)
+        if chunk_ms <= 0:
+            break
+        i0 = wi % n
+        i1 = (wi + 1) % n
+        a = layers[i0][pos : pos + chunk_ms] + layer_db
+        b = layers[i1][pos : pos + chunk_ms] + (layer_db - 1)
+        if chunk_ms > fade:
+            a = a.fade_out(min(fade, chunk_ms - 1))
+            b = b.fade_in(min(fade, chunk_ms - 1))
+        base = base.overlay(a, position=pos)
+        base = base.overlay(b, position=pos)
     return base
 
 
@@ -405,51 +509,7 @@ def _generate_procedural_audio(
         prim = random.choice(
             ["tone", "hum", "hiss", "rumble", "rustle", "click", "whoosh", "thump", "drip", "tone"]
         )
-
-    def _noise(dur: int, volume: int) -> AudioSegment:
-        if WhiteNoise is None:
-            return Sine(4000).to_audio_segment(duration=dur) + volume
-        return WhiteNoise().to_audio_segment(duration=dur) + volume
-
-    if prim == "hiss":
-        result = result.overlay(_noise(min(800, duration_ms), db - 10))
-    elif prim == "hum":
-        hum = Sine(60).to_audio_segment(duration=min(2000, duration_ms)) + (db - 6)
-        result = result.overlay(_repeat_to_duration(hum, duration_ms))
-    elif prim == "rumble":
-        rumble = Sine(40).to_audio_segment(duration=min(2500, duration_ms)) + (db - 4)
-        result = result.overlay(_repeat_to_duration(rumble, duration_ms))
-    elif prim == "rustle":
-        for t in range(0, duration_ms, 180):
-            result = result.overlay(_noise(min(60, duration_ms - t), db - 8), position=t)
-    elif prim == "click":
-        for t in range(0, duration_ms, max(400, tempo_ms // 2)):
-            click = Sine(2000).to_audio_segment(duration=18) + (db + 2)
-            result = result.overlay(click, position=t)
-            if WhiteNoise is not None:
-                result = result.overlay(_noise(12, db), position=t)
-    elif prim == "whoosh":
-        result = result.overlay(_noise(min(900, duration_ms), db - 6), position=max(0, duration_ms // 4))
-        result = result.overlay(Sine(800).to_audio_segment(duration=min(600, duration_ms)) + (db - 10))
-    elif prim == "thump":
-        thump = Sine(55).to_audio_segment(duration=80) + (db + 4)
-        for t in range(0, duration_ms, max(500, tempo_ms)):
-            result = result.overlay(thump, position=t)
-    elif prim == "drip":
-        for t in range(200, duration_ms, 700):
-            result = result.overlay(Sine(1200).to_audio_segment(duration=30) + (db - 2), position=t)
-    elif prim == "tone":
-        mid_tone = Sine(330).to_audio_segment(duration=min(1500, duration_ms)) + (db - 8)
-        result = result.overlay(_repeat_to_duration(mid_tone, duration_ms))
-    else:
-        if mood in ("uplifting", "calm", "neutral") or random.random() < 0.35:
-            mid_tone = Sine(330).to_audio_segment(duration=min(1500, duration_ms)) + (db - 8)
-            result = result.overlay(_repeat_to_duration(mid_tone, duration_ms))
-        if mood in ("uplifting", "bright") or random.random() < 0.25:
-            high_tone = Sine(1200).to_audio_segment(duration=min(800, duration_ms)) + (db - 12)
-            result = result.overlay(_repeat_to_duration(high_tone, duration_ms))
-
-    return result
+    return result.overlay(_primitive_texture(prim, duration_ms, db=db, tempo_ms=tempo_ms) + (-4))
 
 
 def generate_audio_only(
@@ -460,21 +520,30 @@ def generate_audio_only(
     tempo: str = "medium",
     presence: str = "ambient",
     target_primitive: str | None = None,
+    pure_sounds: list[dict] | None = None,
+    pairing_kind: str = "frame",
 ) -> Path:
     """
     Generate procedural audio to a WAV file (no video). Used by the sound-only
     workflow to discover pure sound values without rendering video.
-    Pass target_primitive to bias toward a specific SOUND_ORIGIN_PRIMITIVES entry.
+    Prefer pure_sounds pairing when provided; else mood bed + target_primitive.
     """
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     duration_ms = int(duration_seconds * 1000)
-    audio = _generate_procedural_audio(
-        duration_ms=duration_ms,
-        mood=mood,
-        tempo=tempo,
-        presence=presence,
-        target_primitive=target_primitive,
-    )
+    if pure_sounds:
+        audio = generate_audio_from_pure_sounds(
+            pure_sounds,
+            duration_ms=duration_ms,
+            pairing_kind=pairing_kind,
+        )
+    else:
+        audio = _generate_procedural_audio(
+            duration_ms=duration_ms,
+            mood=mood,
+            tempo=tempo,
+            presence=presence,
+            target_primitive=target_primitive,
+        )
     audio.export(str(output_path), format="wav")
     return output_path

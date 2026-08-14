@@ -183,11 +183,15 @@ _PIXEL_PAIRING_PHRASES = (
     "dynamic pairing",
     "still pixel",
     "color pairing",
+    "sound pairing",
+    "static sound",
+    "dynamic sound",
 )
 
 _WINDOW_PAIRING_PHRASES = (
     "motion window",
     "dynamic pairing",
+    "dynamic sound",
     "window blend",
     "moving window",
     "across a motion",
@@ -198,6 +202,7 @@ _STATIC_FRAME_PHRASES = (
     "per-frame pairing",
     "still pixel",
     "per-frame pure",
+    "static sound",
 )
 
 
@@ -391,17 +396,35 @@ def build_spec_from_instruction(
     )
     creation_mode = "pure_per_frame" if pure_colors else "blended"
 
-    # Pure sounds from registry: sample 3–5 per-instant sounds (bias toward underused)
-    pure_sounds: list[dict[str, Any]] | None = None
-    static_sound = (knowledge or {}).get("static_sound") or []
-    if static_sound:
-        n = min(5, max(3, len(static_sound)), len(static_sound))
-        pure_sounds = []
-        for _ in range(n):
-            s = weighted_choice_favor_underused(static_sound, lambda e: e.get("count", 0) if isinstance(e, dict) else 0)
-            if s is not None:
-                pure_sounds.append(dict(s) if isinstance(s, dict) else s)
-        pure_sounds = pure_sounds if pure_sounds else None
+    # Unique sound pairing from the registry (own spectrum: static instants vs motion windows)
+    from ..audio.pairing import sample_sound_pairing
+
+    sound_pairing: str | None = None
+    if wants_pairing:
+        sound_pairing = "window" if window_pairing else "frame"
+        sound_n = 4 if window_pairing else 2
+        pure_sounds = sample_sound_pairing(
+            knowledge,
+            prompt=raw_prompt,
+            pair_count=sound_n,
+            seed=pair_seed,
+        ) or None
+        audio_genre = "none"
+        audio_vocals = False
+        if (audio_presence or "").lower() in ("music", "full"):
+            audio_presence = "ambient"
+    else:
+        # Object / mini-scene path: keep a small underused sample when present
+        pure_sounds = None
+        static_sound = (knowledge or {}).get("static_sound") or []
+        if static_sound:
+            n = min(4, max(2, len(static_sound)))
+            sampled: list[dict[str, Any]] = []
+            for _ in range(n):
+                s = weighted_choice_favor_underused(static_sound, lambda e: e.get("count", 0) if isinstance(e, dict) else 0)
+                if s is not None:
+                    sampled.append(dict(s) if isinstance(s, dict) else s)
+            pure_sounds = sampled or None
 
     # Scene graph (Phase 2+): entities → keyframed layers + bounce SFX timings
     from .scene_graph import (
@@ -672,6 +695,7 @@ def build_spec_from_instruction(
         pure_colors=pure_colors,
         creation_mode=creation_mode,
         pure_sounds=pure_sounds,
+        sound_pairing=sound_pairing,
         camera_steadiness=_resolve_camera_steadiness(instruction, camera, shot),
         color_temperature=_resolve_color_temperature(instruction, lighting),
         instance=instance,

@@ -210,6 +210,7 @@ def spec_from_shot(
         pure_colors=getattr(base_spec, "pure_colors", None),
         creation_mode=getattr(base_spec, "creation_mode", "blended") or "blended",
         pure_sounds=getattr(base_spec, "pure_sounds", None),
+        sound_pairing=getattr(base_spec, "sound_pairing", None),
         cut_times=getattr(base_spec, "cut_times", None),
         cut_transitions=getattr(base_spec, "cut_transitions", None),
         camera_steadiness=getattr(base_spec, "camera_steadiness", "stable") or "stable",
