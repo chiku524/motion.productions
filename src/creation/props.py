@@ -1,14 +1,17 @@
 """
 Setting-linked prop primitives for mini-scene backgrounds.
 
-Stylized (not photoreal) scenery: trees, fish, waves, buildings, clouds.
-Spawned from setting keywords and/or explicit prompt words; discovered via learned_entities.
+Stylized scenery: trees, fish, waves, buildings, clouds.
+Spawned from setting keywords and/or explicit prompt words.
+Geometry is authored per video (prompt + seed); these recipes only pick
+kinds and rough placement, not cloned meshes or learned_entities rows.
 """
 from __future__ import annotations
 
+import random
 from typing import Any
 
-from ..random_utils import secure_choice, secure_random
+from ..procedural.forms import form_seed
 
 PROP_KINDS = ("tree", "fish", "wave", "building", "cloud")
 
@@ -98,14 +101,14 @@ def jump_arc_keyframes(
     water_y: float = 0.72,
     peak_y: float = 0.35,
 ) -> list[dict[str, float]]:
-    """Fish jump: leave water → peak → re-enter (for scene graph keyframes)."""
+    """Fish jump: leave water → peak → re-enter (mild pitch, not a tumble)."""
     duration = max(1.2, float(duration))
     return [
-        {"t": 0.0, "x": start_x, "y": water_y, "scale": 0.85, "opacity": 0.0, "rot": 0.2},
-        {"t": duration * 0.12, "x": start_x + 0.05, "y": water_y - 0.05, "scale": 0.9, "opacity": 1.0, "rot": -0.4},
-        {"t": duration * 0.45, "x": (start_x + end_x) / 2, "y": peak_y, "scale": 1.0, "opacity": 1.0, "rot": 0.0},
-        {"t": duration * 0.78, "x": end_x - 0.05, "y": water_y - 0.04, "scale": 0.9, "opacity": 1.0, "rot": 0.5},
-        {"t": duration, "x": end_x, "y": water_y, "scale": 0.85, "opacity": 0.0, "rot": 0.8},
+        {"t": 0.0, "x": start_x, "y": water_y, "scale": 0.92, "opacity": 0.0, "rot": 0.12},
+        {"t": duration * 0.12, "x": start_x + 0.05, "y": water_y - 0.05, "scale": 0.96, "opacity": 1.0, "rot": -0.22},
+        {"t": duration * 0.45, "x": (start_x + end_x) / 2, "y": peak_y, "scale": 1.0, "opacity": 1.0, "rot": 0.05},
+        {"t": duration * 0.78, "x": end_x - 0.05, "y": water_y - 0.04, "scale": 0.96, "opacity": 1.0, "rot": 0.28},
+        {"t": duration, "x": end_x, "y": water_y, "scale": 0.92, "opacity": 0.0, "rot": 0.38},
     ]
 
 
@@ -160,21 +163,46 @@ def drift_prop_keyframes(
     ]
 
 
+def _clip01(v: float) -> float:
+    return max(0.06, min(0.94, float(v)))
+
+
+def _tint(rgb: tuple[int, int, int], rng: random.Random, amount: int = 28) -> tuple[int, int, int]:
+    return tuple(max(0, min(255, int(c) + rng.randint(-amount, amount))) for c in rgb)  # type: ignore[return-value]
+
+
+def _tree_species_label(rng: random.Random, setting: str) -> str:
+    s = (setting or "").lower()
+    if s in ("snow", "mountain"):
+        return rng.choice(("pine", "pine", "fir", "oak"))
+    if s in ("beach", "desert"):
+        return rng.choice(("palm", "palm", "tree"))
+    if s in ("forest", "park"):
+        return rng.choice(("oak", "oak", "pine", "maple", "tree"))
+    return rng.choice(("oak", "pine", "tree"))
+
+
 def props_for_setting(
     setting: str | None,
     *,
     duration: float = 5.0,
     existing_kinds: set[str] | None = None,
-    max_props: int = 4,
+    max_props: int = 6,
+    prompt: str = "",
+    creation_seed: int | None = None,
 ) -> list[dict[str, Any]]:
     """
-    Build entity dicts for setting scenery. Skips kinds already present in the prompt.
+    Build entity dicts for setting scenery. Placement and species vary per
+    prompt+seed so two forest videos do not share the same three trees.
     """
+    del duration  # duration is applied later when keyframes are built
     if not setting:
         return []
-    recipes = SETTING_PROP_RECIPES.get(str(setting).strip().lower())
+    setting_key = str(setting).strip().lower()
+    recipes = SETTING_PROP_RECIPES.get(setting_key)
     if not recipes:
         return []
+    rng = random.Random(form_seed(prompt, setting_key, extra=int(creation_seed or 0)))
     existing = existing_kinds or set()
     out: list[dict[str, Any]] = []
     for i, recipe in enumerate(recipes):
@@ -183,23 +211,24 @@ def props_for_setting(
         kind = str(recipe.get("kind") or "")
         if kind not in PROP_KINDS:
             continue
-        # Always allow multiple trees/buildings; skip duplicate fish/wave/cloud if already in prompt
-        if kind in existing and kind in ("fish", "wave", "cloud") and kind in {e.get("kind") for e in out}:
-            continue
-        if kind in existing and kind in ("fish",) and any(e.get("kind") == "fish" for e in out):
-            # one auto fish is enough when prompt already has fish
+        if kind in existing and kind in ("fish", "wave", "cloud"):
             continue
         traj = str(recipe.get("trajectory") or "none")
         bounce = bool(recipe.get("bounce"))
-        x = float(recipe.get("x", 0.5))
-        y = float(recipe.get("y", 0.5))
-        scale = float(recipe.get("scale", 1.0))
+        x = _clip01(float(recipe.get("x", 0.5)) + rng.uniform(-0.14, 0.14))
+        y = _clip01(float(recipe.get("y", 0.5)) + rng.uniform(-0.07, 0.07))
+        scale = max(0.45, float(recipe.get("scale", 1.0)) * rng.uniform(0.72, 1.28))
         z = int(recipe.get("z", 0))
-        color = PROP_COLORS.get(kind, (180, 180, 180))
+        color = _tint(PROP_COLORS.get(kind, (180, 180, 180)), rng)
+        label = kind
+        if kind == "tree":
+            label = _tree_species_label(rng, setting_key)
+        elif kind == "fish":
+            label = rng.choice(("fish", "fish", "goldfish", "reef fish"))
         ent: dict[str, Any] = {
-            "id": f"prop_{kind}_{i}",
+            "id": f"prop_{kind}_{i}_{int(x * 100)}_{int(scale * 100)}",
             "kind": kind,
-            "label": kind,
+            "label": label,
             "color_hint": None,
             "prop_color": color,
             "directionality": "horizontal" if traj in ("left", "right", "jump") else "none",
@@ -217,9 +246,43 @@ def props_for_setting(
             "prop_motion": traj,
         }
         out.append(ent)
-    # Occasionally drop one prop for variety
-    if len(out) > 2 and secure_random() < 0.25:
-        out.pop(secure_choice(range(len(out))))
+    # Extra trees/clouds so forests aren't a fixed trio
+    if setting_key in ("forest", "park") and len(out) < max_props:
+        n_extra = rng.randint(0, 2)
+        for j in range(n_extra):
+            if len(out) >= max_props:
+                break
+            x = rng.uniform(0.08, 0.92)
+            y = rng.uniform(0.58, 0.74)
+            scale = rng.uniform(0.55, 1.2)
+            label = _tree_species_label(rng, setting_key)
+            out.append({
+                "id": f"prop_tree_x{j}_{int(x * 100)}",
+                "kind": "tree",
+                "label": label,
+                "color_hint": None,
+                "prop_color": _tint(PROP_COLORS["tree"], rng, 36),
+                "directionality": "none",
+                "trajectory": "none",
+                "bounce": False,
+                "sfx_on": [],
+                "expression": "neutral",
+                "personality": "neutral",
+                "gag": "none",
+                "z": 0,
+                "is_prop": True,
+                "prop_scale": scale,
+                "prop_x": x,
+                "prop_y": y,
+                "prop_motion": "none",
+            })
+    if len(out) > 2 and rng.random() < 0.22:
+        idx = rng.randrange(len(out))
+        kind = str(out[idx].get("kind") or "")
+        n_kind = sum(1 for e in out if e.get("kind") == kind)
+        primary = {"forest": "tree", "park": "tree", "ocean": "wave", "city": "building"}.get(setting_key)
+        if not (kind == primary and n_kind <= 2):
+            out.pop(idx)
     return out
 
 
@@ -228,6 +291,8 @@ def merge_setting_props(
     setting: str | None,
     *,
     duration: float = 5.0,
+    prompt: str = "",
+    creation_seed: int | None = None,
 ) -> list[dict[str, Any]]:
     """Append setting props behind/around existing foreground entities."""
     existing_kinds = {
@@ -235,8 +300,13 @@ def merge_setting_props(
         for e in entities
         if isinstance(e, dict)
     }
-    props = props_for_setting(setting, duration=duration, existing_kinds=existing_kinds)
+    props = props_for_setting(
+        setting,
+        duration=duration,
+        existing_kinds=existing_kinds,
+        prompt=prompt,
+        creation_seed=creation_seed,
+    )
     if not props:
         return entities
-    # Props first (lower z), then foreground entities
     return list(props) + list(entities)

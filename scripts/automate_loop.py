@@ -691,7 +691,8 @@ def run() -> None:
             if spec is None:
                 from src.knowledge import get_knowledge_for_creation
                 spec = build_spec_from_instruction(
-                    instruction, knowledge=get_knowledge_for_creation(config)
+                    instruction, knowledge=get_knowledge_for_creation(config),
+                    creation_seed=run_seed,
                 )
             # Record interpretation first (so it's never skipped by later errors); visible in worker logs
             if args.api_base:

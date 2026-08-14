@@ -38,6 +38,7 @@ class SceneLayer:
     expression: str = "neutral"  # happy | sad | angry | calm | excited | nervous | neutral
     personality: str = "neutral"  # playful | serious | energetic | shy | confident | neutral
     gag: str = "none"  # none | squash | spin | wink | flourish | double_take
+    form: dict[str, Any] = field(default_factory=dict)  # per-video silhouette; not a registry mesh
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -310,6 +311,7 @@ def build_scene_graph_from_instruction(
     *,
     duration_seconds: float | None = None,
     palette_colors: list[tuple[int, int, int]] | None = None,
+    creation_seed: int | None = None,
 ) -> SceneGraph:
     """Build a SceneGraph from InterpretedInstruction.entities."""
     from .props import (
@@ -318,12 +320,16 @@ def build_scene_graph_from_instruction(
         static_prop_keyframes,
         PROP_COLORS,
     )
+    from ..procedural.forms import create_form, form_seed
 
     duration = float(
         duration_seconds
         or getattr(instruction, "duration_seconds", None)
         or 4.0
     )
+    prompt = str(getattr(instruction, "raw_prompt", "") or "")
+    setting = str(getattr(instruction, "setting", "") or "")
+    extra = int(creation_seed or 0)
     entities = list(getattr(instruction, "entities", None) or [])
     layers: list[SceneLayer] = []
     for i, ent in enumerate(entities):
@@ -359,13 +365,44 @@ def build_scene_graph_from_instruction(
 
         is_prop = bool(ent.get("is_prop")) or kind in _PROP_KINDS
         prop_motion = str(ent.get("prop_motion") or traj or "none")
+        layer_id = str(ent.get("id") or f"e{i}")
+        form = create_form(
+            kind,
+            seed=form_seed(prompt, layer_id, extra=extra),
+            prompt=prompt,
+            label=str(ent.get("label") or kind),
+            setting=setting,
+            trajectory=prop_motion if prop_motion != "none" else traj,
+        )
+        if not ent.get("color_hint") and not (
+            isinstance(prop_color, (list, tuple)) and len(prop_color) >= 3
+        ):
+            color = (
+                max(0, min(255, color[0] + int(form.get("color_dr", 0)))),
+                max(0, min(255, color[1] + int(form.get("color_dg", 0)))),
+                max(0, min(255, color[2] + int(form.get("color_db", 0)))),
+            )
 
         if is_prop and kind in _PROP_KINDS:
-            px = float(ent.get("prop_x", 0.5))
-            py = float(ent.get("prop_y", 0.5))
+            if ent.get("prop_x") is not None:
+                px = float(ent.get("prop_x", 0.5))
+            else:
+                px = float(form.get("start_x", 0.5))
+            if ent.get("prop_y") is not None:
+                py = float(ent.get("prop_y", 0.5))
+            else:
+                py = float(form.get("water_y", 0.5) if kind == "fish" else 0.5)
             pscale = float(ent.get("prop_scale", 1.0))
             if prop_motion == "jump" or (kind == "fish" and bounce):
-                raw_kfs = jump_arc_keyframes(duration=duration, start_x=px, end_x=min(0.9, px + 0.55), water_y=py)
+                end_x = float(form.get("end_x", min(0.9, px + 0.55)))
+                peak_y = float(form.get("jump_peak", 0.35))
+                raw_kfs = jump_arc_keyframes(
+                    duration=duration,
+                    start_x=px,
+                    end_x=max(0.55, min(0.92, end_x)),
+                    water_y=py,
+                    peak_y=peak_y,
+                )
             elif prop_motion in ("left", "right", "up", "down") and kind in ("wave", "cloud", "fish"):
                 raw_kfs = drift_prop_keyframes(duration=duration, trajectory=prop_motion, y=py, scale=pscale)
             else:
@@ -445,7 +482,7 @@ def build_scene_graph_from_instruction(
             sfx_on.append("bounce")
         layers.append(
             SceneLayer(
-                id=str(ent.get("id") or f"e{i}"),
+                id=layer_id,
                 kind=kind,
                 color=color,
                 z=z if is_prop else (i + 1 if not is_prop else z),
@@ -455,6 +492,7 @@ def build_scene_graph_from_instruction(
                 expression=str(ent.get("expression") or "neutral"),
                 personality=str(ent.get("personality") or "neutral"),
                 gag=gag,
+                form=form,
             )
         )
     return SceneGraph(layers=layers)

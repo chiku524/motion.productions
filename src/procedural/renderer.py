@@ -7,6 +7,15 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from .data.palettes import PALETTES
+from .forms import (
+    building_parts,
+    cloud_mask,
+    fish_eye,
+    fish_mask,
+    layer_form,
+    tree_parts,
+    wave_mask,
+)
 from .motion import get_camera_params, get_motion_func, rhythm_modulation, steadiness_shake
 from .parser import SceneSpec
 
@@ -556,22 +565,24 @@ def _render_layers_rgba(
                 lighting_model, texture_mod, opacity, material=kind,
             )
         elif kind == "character":
-            head_r = radius * 0.45
-            body_r = radius * 0.7
+            form = layer_form(layer, kind)
+            head_r = radius * float(form.get("head_scale", 0.45))
+            body_r = radius * float(form.get("body_scale", 0.7))
             head_cy = cy - radius * 0.55
+            body_half_w = body_r * float(form.get("body_width", 0.55))
+            body_m = _soft_box(xx_l, yy_l, cx, cy + radius * 0.15, body_half_w, body_r, soft=0.03)
             head_m = _soft_disk(xx_l, yy_l, cx, head_cy, head_r, soft=0.025)
-            body_m = _soft_box(xx_l, yy_l, cx, cy + radius * 0.15, body_r * 0.55, body_r, soft=0.03)
             # Walk limbs: swing from keyframe rot (phase) or time
             limb_phase = float(pose.get("rot") or 0.0) if isinstance(pose, dict) else 0.0
             if abs(limb_phase) < 1e-6:
                 limb_phase = float(np.sin(t * 8.0))
             swing = float(np.sin(limb_phase * 2.5 if abs(limb_phase) > 0.05 else t * 8.0))
-            leg_len = radius * 0.55
-            arm_len = radius * 0.42
+            leg_len = radius * float(form.get("limb_len", 0.55))
+            arm_len = radius * float(form.get("arm_len", 0.42))
             hip_y = cy + radius * 0.55
             shoulder_y = cy - radius * 0.05
             # Legs (alternating)
-            leg_dx = radius * 0.18
+            leg_dx = radius * float(form.get("leg_dx", 0.18))
             left_leg = _soft_box(
                 xx_l, yy_l,
                 cx - leg_dx + swing * radius * 0.12,
@@ -702,79 +713,72 @@ def _render_layers_rgba(
                 lighting_model, None, 1.0, material=kind,
             )
         elif kind == "tree":
-            trunk_w, trunk_h = radius * 0.22, radius * 0.85
-            trunk = _soft_box(xx_l, yy_l, cx, cy + trunk_h * 0.15, trunk_w * 0.5, trunk_h * 0.55, soft=0.02)
+            form = layer_form(layer, kind)
+            parts = tree_parts(xx_l, yy_l, cx, cy, radius, form)
             canopy_cy = cy - radius * 0.35
-            canopy = _soft_disk(xx_l, yy_l, cx, canopy_cy, radius * 0.7, soft=0.04)
-            # Second canopy lobe + leaf speckles
-            canopy2 = _soft_disk(xx_l, yy_l, cx - radius * 0.25, canopy_cy + radius * 0.08, radius * 0.45, soft=0.035)
-            canopy3 = _soft_disk(xx_l, yy_l, cx + radius * 0.22, canopy_cy + radius * 0.05, radius * 0.4, soft=0.035)
-            canopy = np.clip(np.maximum(np.maximum(canopy, canopy2), canopy3), 0, 1)
-            if texture_mod is not None:
-                speck = (texture_mod > 0.62).astype(np.float32) * canopy * 0.35
-                canopy = np.clip(canopy + speck, 0, 1)
-            out_rgb, out_a = _blend_shaded_layer(
-                out_rgb, out_a, canopy, (cr, cg, cb), xx_l, yy_l, cx, canopy_cy, radius * 0.7,
-                lighting_model, texture_mod, opacity, material=kind,
+            bark = (
+                max(40.0, 90.0 + float(form.get("color_dr", 0)) * 0.4),
+                max(28.0, 55.0 + float(form.get("color_dg", 0)) * 0.25),
+                max(16.0, 30.0 + float(form.get("color_db", 0)) * 0.2),
             )
             out_rgb, out_a = _blend_shaded_layer(
-                out_rgb, out_a, trunk, (90.0, 55.0, 30.0), xx_l, yy_l, cx, cy, radius * 0.4,
+                out_rgb, out_a, parts["canopy"], (cr, cg, cb), xx_l, yy_l, cx, canopy_cy, radius * 0.7,
+                lighting_model, texture_mod, opacity, material=kind,
+            )
+            leaves = parts.get("leaves")
+            if leaves is not None and float(np.max(leaves)) > 0.05:
+                leaf_rgb = (cr * 0.62, min(255.0, cg * 0.88), cb * 0.45)
+                out_rgb, out_a = _blend_shaded_layer(
+                    out_rgb, out_a, leaves, leaf_rgb, xx_l, yy_l, cx, canopy_cy, radius * 0.7,
+                    lighting_model, None, opacity * 0.55, material=kind,
+                )
+            if float(np.max(parts["branches"])) > 0.04:
+                out_rgb, out_a = _blend_shaded_layer(
+                    out_rgb, out_a, parts["branches"], bark, xx_l, yy_l, cx, cy, radius * 0.4,
+                    lighting_model, texture_mod, opacity * 0.85, material=kind,
+                )
+            out_rgb, out_a = _blend_shaded_layer(
+                out_rgb, out_a, parts["trunk"], bark, xx_l, yy_l, cx, cy, radius * 0.4,
                 lighting_model, texture_mod, opacity * 0.9, material=kind,
             )
         elif kind == "fish":
-            body = _soft_ellipse(xx_l, yy_l, cx, cy, radius * 0.9, radius * 0.45, soft=0.03)
-            tail_core = (
-                (xx_l < cx - radius * 0.55)
-                & (xx_l > cx - radius * 1.15)
-                & (np.abs(yy_l - cy) < (cx - radius * 0.4 - xx_l) * 0.9 + 0.02)
-            ).astype(np.float32)
-            mask = np.clip(np.maximum(body, tail_core * 0.9), 0, 1)
+            form = layer_form(layer, kind)
+            mask = fish_mask(xx_l, yy_l, cx, cy, radius, form)
             out_rgb, out_a = _blend_shaded_layer(
                 out_rgb, out_a, mask, (cr, cg, cb), xx_l, yy_l, cx, cy, radius,
                 lighting_model, texture_mod, opacity, material=kind,
             )
-            eye = _soft_disk(xx_l, yy_l, cx + radius * 0.35, cy - radius * 0.08, radius * 0.1, soft=0.01)
+            eye, ex, ey = fish_eye(xx_l, yy_l, cx, cy, radius, form)
             out_rgb, out_a = _blend_shaded_layer(
-                out_rgb, out_a, eye, (20.0, 20.0, 30.0), xx_l, yy_l, cx, cy, radius * 0.2,
-                lighting_model, None, opacity * 0.7, material=kind,
+                out_rgb, out_a, eye, (20.0, 20.0, 30.0), xx_l, yy_l, ex, ey, radius * 0.2,
+                lighting_model, None, opacity * 0.85, material=kind,
             )
         elif kind == "wave":
-            band = np.abs(yy_l - (cy + 0.03 * np.sin(xx_l * 18.0 + t * 3.0))) < radius * 0.35
-            fade = np.clip(1.0 - np.abs(xx_l - cx) / max(1e-6, radius * 2.2), 0, 1)
-            mask = band.astype(np.float32) * fade
+            form = layer_form(layer, kind)
+            mask = wave_mask(xx_l, yy_l, cx, cy, radius, form, t)
             out_rgb, out_a = _blend_shaded_layer(
                 out_rgb, out_a, mask, (cr, cg, cb), xx_l, yy_l, cx, cy, radius,
                 lighting_model, texture_mod, opacity * 0.75, material=kind,
             )
         elif kind == "building":
-            half_w, half_h = radius * 0.55, radius * 1.2
-            body = _soft_box(xx_l, yy_l, cx, cy, half_w, half_h, soft=0.025)
-            wx = np.floor((xx_l - (cx - half_w)) / max(1e-6, half_w * 0.35))
-            wy = np.floor((yy_l - (cy - half_h)) / max(1e-6, half_h * 0.22))
-            windows = (
-                (np.mod(wx, 2) == 0)
-                & (np.mod(wy, 2) == 0)
-                & (np.abs(xx_l - cx) < half_w * 0.85)
-                & (np.abs(yy_l - cy) < half_h * 0.85)
-            ).astype(np.float32)
-            # Neon / night flicker: pulse window brightness with time
+            form = layer_form(layer, kind)
+            parts = building_parts(xx_l, yy_l, cx, cy, radius, form)
             flicker = 0.75 + 0.25 * float(np.sin(t * 4.7 + cx * 9.0))
             if (lighting_preset or "").lower() in ("neon", "noir", "moody"):
                 flicker = 0.55 + 0.45 * (0.5 + 0.5 * float(np.sin(t * 7.3 + cx * 5.0)))
-            win_color = (220.0 * flicker, 200.0 * flicker, 90.0 + 40.0 * flicker)
+            warmth = float(form.get("win_warmth", 1.0))
+            win_color = (220.0 * flicker * warmth, 200.0 * flicker, 90.0 + 40.0 * flicker)
             out_rgb, out_a = _blend_shaded_layer(
-                out_rgb, out_a, body, (cr, cg, cb), xx_l, yy_l, cx, cy, radius,
+                out_rgb, out_a, parts["body"], (cr, cg, cb), xx_l, yy_l, cx, cy, radius,
                 lighting_model, texture_mod, opacity, material=kind,
             )
             out_rgb, out_a = _blend_shaded_layer(
-                out_rgb, out_a, windows, win_color, xx_l, yy_l, cx, cy, radius * 0.5,
+                out_rgb, out_a, parts["windows"], win_color, xx_l, yy_l, cx, cy, radius * 0.5,
                 lighting_model, None, opacity * 0.45, material=kind,
             )
         elif kind == "cloud":
-            c1 = _soft_disk(xx_l, yy_l, cx - radius * 0.45, cy, radius * 0.55, soft=0.05)
-            c2 = _soft_disk(xx_l, yy_l, cx, cy - radius * 0.15, radius * 0.65, soft=0.055)
-            c3 = _soft_disk(xx_l, yy_l, cx + radius * 0.4, cy, radius * 0.5, soft=0.05)
-            mask = np.clip(np.maximum(np.maximum(c1, c2), c3), 0, 1)
+            form = layer_form(layer, kind)
+            mask = cloud_mask(xx_l, yy_l, cx, cy, radius, form)
             out_rgb, out_a = _blend_shaded_layer(
                 out_rgb, out_a, mask, (cr, cg, cb), xx_l, yy_l, cx, cy, radius,
                 lighting_model, texture_mod, opacity * 0.7, material=kind,

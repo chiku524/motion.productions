@@ -106,7 +106,9 @@ class ProceduralVideoGenerator(VideoGenerator):
             linguistic_registry=linguistic_registry,
         )
         knowledge = get_knowledge_for_creation(config)
-        base_spec = build_spec_from_instruction(instruction, knowledge=knowledge)
+        base_spec = build_spec_from_instruction(
+            instruction, knowledge=knowledge, creation_seed=seed,
+        )
 
         # Optional render overrides from config / HTTP render service
         render_cfg = (config or {}).get("render") or {}

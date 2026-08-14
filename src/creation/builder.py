@@ -142,6 +142,7 @@ def build_spec_from_instruction(
     instruction: InterpretedInstruction,
     *,
     knowledge: dict[str, Any] | None = None,
+    creation_seed: int | None = None,
 ) -> SceneSpec:
     """
     Build a SceneSpec from an InterpretedInstruction.
@@ -399,26 +400,8 @@ def build_spec_from_instruction(
             script_beats = script_beats_to_dicts(narr)
             music_sections = [b.music_section for b in narr.beats]
 
-    # Optionally enrich missing entity slots from learned_entities (variety without overriding prompt)
-    learned_ents = (knowledge or {}).get("learned_entities") or []
-    if not entities and learned_ents and secure_random() < 0.25:
-        pick = learned_ents[0] if len(learned_ents) == 1 else None
-        if pick is None:
-            pick = secure_choice(learned_ents)
-        if isinstance(pick, dict) and pick.get("kind"):
-            entities = [{
-                "id": "learned0",
-                "kind": pick.get("kind") or "circle",
-                "label": pick.get("label") or pick.get("kind"),
-                "color_hint": pick.get("color_hint"),
-                "directionality": pick.get("directionality") or "none",
-                "trajectory": pick.get("trajectory") or "left",
-                "bounce": bool(pick.get("bounce")),
-                "sfx_on": ["bounce"] if pick.get("bounce") else [],
-                "expression": "neutral",
-                "personality": "neutral",
-            }]
-            instruction.entities = entities
+    # Geometry is created per video from the prompt. Registry rows supply
+    # palette/motion/sound values only — never cloned object meshes.
 
     # Phase 5: character walk cycles when entity kind is character
     for ent in entities:
@@ -428,13 +411,20 @@ def build_spec_from_instruction(
     # Setting props: trees/fish/waves/buildings/clouds behind foreground entities
     if setting and (entities or duration_hint <= 8.0):
         from .props import merge_setting_props
-        entities = merge_setting_props(entities, setting, duration=duration_hint)
+        entities = merge_setting_props(
+            entities,
+            setting,
+            duration=duration_hint,
+            prompt=getattr(instruction, "raw_prompt", "") or "",
+            creation_seed=creation_seed,
+        )
         instruction.entities = entities
 
     graph = build_scene_graph_from_instruction(
         instruction,
         duration_seconds=duration_hint,
         palette_colors=palette_colors,
+        creation_seed=creation_seed,
     )
     # Attach walk-cycle keyframes for characters (personality modulates bob)
     # Skip when a gag already built spin/flourish/double_take keyframes
