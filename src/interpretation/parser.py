@@ -74,7 +74,7 @@ _DURATION_PATTERN = re.compile(
 )
 
 # Style keywords (optional)
-_STYLE_KEYWORDS: set[str] = {"cinematic", "anime", "abstract", "minimal", "realistic"}
+_STYLE_KEYWORDS: set[str] = {"cinematic", "anime", "cartoon", "abstract", "minimal", "realistic"}
 
 _ENTITY_NOISE_WORDS = frozenset({
     "with", "from", "into", "then", "than", "this", "that", "when", "while", "have",

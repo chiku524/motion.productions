@@ -71,7 +71,7 @@ if (path === "/api/jobs" && request.method === "GET") {
   return err("status=pending or status=completed required", 400);
 }
 
-// POST /api/jobs — create job (optional workflow_type: explorer | exploiter | main | web)
+// POST /api/jobs — create job (optional workflow_type: explorer | exploiter | main | web | cartoon)
 if (path === "/api/jobs" && request.method === "POST") {
   let body: { prompt: string; duration_seconds?: number; workflow_type?: string };
   try {
@@ -83,7 +83,7 @@ if (path === "/api/jobs" && request.method === "POST") {
   if (!prompt) return err("prompt is required");
   const id = uuid();
   const duration_seconds = typeof body.duration_seconds === "number" ? body.duration_seconds : null;
-  const workflow_type = typeof body.workflow_type === "string" && /^(explorer|exploiter|main|web)$/.test(body.workflow_type) ? body.workflow_type : null;
+  const workflow_type = typeof body.workflow_type === "string" && /^(explorer|exploiter|main|web|cartoon)$/.test(body.workflow_type) ? body.workflow_type : null;
   await db.prepare(
     "INSERT INTO jobs (id, prompt, duration_seconds, status, workflow_type) VALUES (?, ?, ?, 'pending', ?)"
   )

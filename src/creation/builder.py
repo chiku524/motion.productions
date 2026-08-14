@@ -206,6 +206,13 @@ _STATIC_FRAME_PHRASES = (
     "static sound",
 )
 
+_CARTOON_PHRASES = (
+    "cel cartoon",
+    "modern cartoon",
+    "cartoon hold",
+    "cartoon snap",
+)
+
 
 def _wants_pixel_pairing(prompt: str) -> bool:
     low = (prompt or "").lower()
@@ -220,6 +227,11 @@ def _wants_window_pairing(prompt: str) -> bool:
 def _wants_static_frame_pairing(prompt: str) -> bool:
     low = (prompt or "").lower()
     return any(p in low for p in _STATIC_FRAME_PHRASES)
+
+
+def _wants_cartoon(prompt: str) -> bool:
+    low = (prompt or "").lower()
+    return any(p in low for p in _CARTOON_PHRASES)
 
 
 def build_spec_from_instruction(
@@ -245,9 +257,10 @@ def build_spec_from_instruction(
     palette = instruction.palette_name
     motion = instruction.motion_type
     raw_prompt = getattr(instruction, "raw_prompt", "") or ""
-    wants_pairing = _wants_pixel_pairing(raw_prompt)
-    window_pairing = _wants_window_pairing(raw_prompt)
-    static_frame_pairing = _wants_static_frame_pairing(raw_prompt)
+    wants_cartoon = _wants_cartoon(raw_prompt)
+    wants_pairing = False if wants_cartoon else _wants_pixel_pairing(raw_prompt)
+    window_pairing = False if wants_cartoon else _wants_window_pairing(raw_prompt)
+    static_frame_pairing = False if wants_cartoon else _wants_static_frame_pairing(raw_prompt)
     intensity = instruction.intensity
     if abs(float(intensity) - float(DEFAULT_INTENSITY)) < 1e-9:
         learned_i = _intensity_from_learned_motion(knowledge)
@@ -276,7 +289,15 @@ def build_spec_from_instruction(
     tone_val = getattr(instruction, "tone", None)
     # Style/tone can refine lighting when style implies a look
     if style_val and lighting == "neutral":
-        style_to_lighting = {"cinematic": "neutral", "noir": "noir", "abstract": "moody", "minimal": "documentary", "realistic": "documentary", "anime": "golden_hour"}
+        style_to_lighting = {
+            "cinematic": "neutral",
+            "noir": "noir",
+            "abstract": "moody",
+            "minimal": "documentary",
+            "realistic": "documentary",
+            "anime": "golden_hour",
+            "cartoon": "documentary",
+        }
         lighting = style_to_lighting.get(style_val, lighting)
     if tone_val and lighting == "neutral":
         tone_to_lighting = {"dreamy": "golden_hour", "dark": "noir", "bright": "documentary", "calm": "documentary", "energetic": "neon", "moody": "moody"}
@@ -392,7 +413,17 @@ def build_spec_from_instruction(
                 motion_std = 0.4
         else:
             motion_sync = 0.7
-    if camera == DEFAULT_CAMERA and not lock_look:
+    if wants_cartoon:
+        camera = "static"
+        motion_sync = 0.92
+        motion_level = min(float(motion_level or 6.0), 7.5)
+        audio_genre = "none"
+        audio_vocals = False
+        if (style_val or "").lower() not in ("cartoon", "anime"):
+            style_val = "cartoon"
+        if (audio_presence or "").lower() in ("music", "full"):
+            audio_presence = "ambient"
+    if camera == DEFAULT_CAMERA and not lock_look and not wants_cartoon:
         pool = _pool_from_knowledge(knowledge, "learned_camera", "origin_camera", _CAMERA_VALID)
         camera = secure_choice(pool) if pool else secure_choice([v for v in CAMERA_ORIGINS["motion_type"] if v in _CAMERA_VALID] or list(_CAMERA_VALID))
 
@@ -444,6 +475,7 @@ def build_spec_from_instruction(
     # Scene graph (Phase 2+): entities → keyframed layers + bounce SFX timings
     from .scene_graph import (
         build_scene_graph_from_instruction,
+        cartoon_hold_snap_keyframes,
         sfx_events_from_scene_graph,
         walk_cycle_keyframes,
     )
@@ -458,6 +490,26 @@ def build_spec_from_instruction(
     entities = [] if wants_pure else list(getattr(instruction, "entities", None) or [])
     if wants_pure:
         instruction.entities = []
+    if wants_cartoon and not any(isinstance(e, dict) and e.get("kind") == "character" for e in entities):
+        entities = [
+            {
+                "id": "e0",
+                "kind": "character",
+                "label": "person",
+                "color_hint": None,
+                "directionality": "none",
+                "trajectory": "right",
+                "bounce": False,
+                "sfx_on": [],
+                "expression": "neutral",
+                "personality": "neutral",
+                "gag": "none",
+                "is_prop": False,
+                "prop_motion": "none",
+                "z": 2,
+            }
+        ] + [e for e in entities if isinstance(e, dict)]
+        instruction.entities = entities
     script_beats: list[dict] | None = None
     music_sections: list[str] | None = None
 
@@ -596,14 +648,17 @@ def build_spec_from_instruction(
     _WALK_SAFE_GAGS = frozenset(("none", "squash", "wink", ""))
     for layer in graph.layers:
         gag = (getattr(layer, "gag", None) or "none").lower()
-        if (
-            layer.kind == "character"
-            and len(layer.keyframes) <= 2
-            and gag in _WALK_SAFE_GAGS
-        ):
-            direction = "left"
-            if layer.keyframes and layer.keyframes[-1].x > layer.keyframes[0].x:
-                direction = "right"
+        if layer.kind != "character" or gag not in _WALK_SAFE_GAGS:
+            continue
+        direction = "left"
+        if layer.keyframes and layer.keyframes[-1].x > layer.keyframes[0].x:
+            direction = "right"
+        if wants_cartoon:
+            layer.keyframes = cartoon_hold_snap_keyframes(
+                duration=duration_hint,
+                direction=direction,
+            )
+        elif len(layer.keyframes) <= 2:
             layer.keyframes = walk_cycle_keyframes(
                 duration=duration_hint,
                 direction=direction,
@@ -644,7 +699,7 @@ def build_spec_from_instruction(
         pure_colors = None
 
     # Match camera to subject motion when the prompt never named a move
-    if camera == DEFAULT_CAMERA and entities:
+    if camera == DEFAULT_CAMERA and entities and not wants_cartoon:
         from ..procedural.look import camera_for_subject_motion
         camera = camera_for_subject_motion(entities)
 
@@ -702,7 +757,7 @@ def build_spec_from_instruction(
         film_look=bool(
             depth_parallax
             or (style_val or "").lower() in ("realistic", "photoreal")
-        ),
+        ) and not wants_cartoon,
         render_engine=(
             "enhanced"
             if (style_val or "").lower() in ("realistic", "photoreal")
@@ -713,7 +768,7 @@ def build_spec_from_instruction(
         pure_sounds=pure_sounds,
         sound_pairing=sound_pairing,
         camera_steadiness=(
-            "locked" if wants_pairing else _resolve_camera_steadiness(instruction, camera, shot)
+            "locked" if (wants_pairing or wants_cartoon) else _resolve_camera_steadiness(instruction, camera, shot)
         ),
         color_temperature=_resolve_color_temperature(instruction, lighting),
         instance=instance,

@@ -111,6 +111,8 @@ class TestLookAlgorithms(unittest.TestCase):
         center = int(anime[12, 12].mean())
         edge = int(anime[8, 12].mean())
         self.assertLess(edge, center)
+        cartoon = apply_style_look(frame, "cartoon")
+        self.assertFalse(np.array_equal(frame, cartoon))
 
     def test_tracking_pan_centers_subject(self):
         self.assertAlmostEqual(tracking_pan_x(0.8), 0.3)

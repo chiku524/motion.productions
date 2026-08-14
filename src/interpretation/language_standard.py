@@ -63,6 +63,7 @@ BUILTIN_LINGUISTIC: dict[str, dict[str, str]] = {
     "style": {
         "cinematic": "cinematic", "documentary": "realistic", "abstract": "abstract",
         "minimal": "minimal", "realistic": "realistic", "anime": "anime",
+        "cartoon": "cartoon",
         "film": "cinematic", "natural": "realistic", "noir": "realistic",
     },
 }

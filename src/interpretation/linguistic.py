@@ -117,7 +117,7 @@ def extract_linguistic_mappings(
                     })
     if style_str:
         for w in words:
-            if w in ("cinematic", "abstract", "minimal", "realistic", "anime"):
+            if w in ("cinematic", "abstract", "minimal", "realistic", "anime", "cartoon"):
                 if (w, "style") not in seen:
                     seen.add((w, "style"))
                     out.append({

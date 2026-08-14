@@ -1270,6 +1270,66 @@ def generate_procedural_prompt(
     return None
 
 
+_CARTOON_SETTINGS = [
+    "kitchen", "apartment", "cafe", "bedroom", "office", "street", "park", "subway",
+]
+_CARTOON_SUBJECTS = ["person", "kid", "teen", "character"]
+_CARTOON_ACTIONS = [
+    "holds still then takes a step",
+    "holds still then turns",
+    "stands still then waves",
+    "holds still then looks at a phone",
+    "walks two steps then holds",
+    "sits then stands",
+]
+_CARTOON_EXPR = ["happy", "calm", "playful", "shy", "sad", "excited"]
+
+
+def generate_cartoon_prompt(
+    *,
+    knowledge: dict[str, Any] | None = None,
+    avoid: set[str] | None = None,
+) -> str | None:
+    """
+    Unique modern-day cartoon shots for the dedicated cartoon loop.
+
+    Named-subject prompts (not pixel pairing): a locked character in a
+    contemporary setting, cel/cartoon look, hold-then-snap timing.
+    Colors come from the registry when present so each run is a new pairing
+    of look + setting + action — not a fixed catalog replay.
+    """
+    avoid = avoid or set()
+    names = _named_registry_colors(knowledge)
+    for _ in range(36):
+        color_a = secure_choice(names)
+        rest = [n for n in names if n != color_a] or names
+        color_b = secure_choice(rest)
+        subject = secure_choice(_CARTOON_SUBJECTS)
+        setting = secure_choice(_CARTOON_SETTINGS)
+        action = secure_choice(_CARTOON_ACTIONS)
+        expr = secure_choice(_CARTOON_EXPR)
+        article = _mini_article(subject)
+        look = secure_choice(("cel cartoon", "modern cartoon"))
+        templates = [
+            (
+                f"{look}: {article} {color_a} {subject} {action} in a {setting}, "
+                f"{color_b} walls, {expr} face, cartoon hold then snap, anime look"
+            ),
+            (
+                f"{look}: {article} {subject} in a {setting} wearing {color_a}, "
+                f"{action}, {color_b} interior, cartoon hold then snap"
+            ),
+            (
+                f"{look}: {article} {expr} {subject} {action} in a {setting}, "
+                f"{color_a} and {color_b}, anime look"
+            ),
+        ]
+        prompt = " ".join(secure_choice(templates).split()).strip()
+        if prompt not in avoid and not _is_near_duplicate(prompt, avoid):
+            return prompt
+    return None
+
+
 def generate_prompt_batch(
     n: int,
     *,

@@ -13,6 +13,9 @@
 # Legacy alias: --profile loops == Core 4 (same as free)
 #   docker compose -f docker-compose.local.yml --profile loops up -d --build
 #
+# Cartoon discovery + generation (named-subject cel shots; extra D1 writes):
+#   docker compose -f docker-compose.local.yml --profile cartoon up -d --build
+#
 # Video AI Node FFmpeg (recipe engine):
 #   docker compose -f docker-compose.local.yml --profile video-ai up -d --build
 #
@@ -169,6 +172,26 @@ services:
       DISCOVERIES_CHUNK_PAUSE_SECONDS: "3.5"
     ports:
       - "8087:8080"
+
+  # Opt-in: modern-day cartoon discovery + generation (not Core 4)
+  cartoon:
+    <<: *python-worker
+    profiles: ["cartoon"]
+    environment:
+      API_BASE: ${API_BASE:-https://motion.productions}
+      MOTION_API_SECRET: ${MOTION_API_SECRET:-}
+      HEALTH_PORT: "8080"
+      PYTHONUNBUFFERED: "1"
+      LOOP_EXTRACTION_FOCUS: window
+      LOOP_STATIC_FOCUS: "none"
+      LOOP_WORKFLOW_TYPE: cartoon
+      LOOP_WORKER_OFFSET_SECONDS: "45"
+      LOOP_DELAY_SECONDS: "120"
+      LOOP_DURATION_SECONDS: "2.5"
+      DISCOVERIES_MAX_ITEMS: "8"
+      DISCOVERIES_CHUNK_PAUSE_SECONDS: "3.5"
+    ports:
+      - "8088:8080"
 
   # Node + FFmpeg recipe renderer (Video AI engine=recipe)
   video-ai-render:

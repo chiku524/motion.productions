@@ -784,11 +784,13 @@ body {
 .library-badge-exploiter { background: rgba(34, 197, 94, 0.2); color: #16a34a; }
 .library-badge-main { background: rgba(148, 163, 184, 0.25); color: var(--color-text-muted); }
 .library-badge-web { background: rgba(168, 85, 247, 0.2); color: #7c3aed; }
+.library-badge-cartoon { background: rgba(251, 146, 60, 0.22); color: #ea580c; }
 .loop-badge { font-size: 0.6875rem; font-weight: 600; text-transform: uppercase; margin-right: 0.35rem; }
 .loop-badge-explorer { color: var(--color-primary); }
 .loop-badge-exploiter { color: #16a34a; }
 .loop-badge-main { color: var(--color-text-muted); }
 .loop-badge-web { color: #7c3aed; }
+.loop-badge-cartoon { color: #ea580c; }
 .loop-badge-loop { color: var(--color-text-muted); }
 .library-prompt {
   font-size: 0.875rem;

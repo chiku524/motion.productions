@@ -218,6 +218,7 @@ STYLE_PHRASE_TO_STYLE: dict[str, str] = {
     "abstract": "abstract",
     "minimal": "minimal",
     "anime": "anime",
+    "cartoon": "cartoon",
     "realistic": "realistic",
 }
 
@@ -232,6 +233,7 @@ KEYWORD_TO_STYLE: dict[str, str] = {
     "documentary": "realistic",
     "natural": "realistic",
     "anime": "anime",
+    "cartoon": "cartoon",
 }
 DEFAULT_STYLE = "cinematic"
 
@@ -335,6 +337,10 @@ KEYWORD_TO_MOTION_RHYTHM: dict[str, str] = {
     "wave": "wave",
     "random": "random",
     "erratic": "random",
+    "snap": "snap",
+    "snaps": "snap",
+    "hold": "hold",
+    "holds": "hold",
 }
 
 # Audio: tempo, mood, presence (Domain: Audio)
@@ -425,6 +431,9 @@ KEYWORD_TO_ENTITY_KIND: dict[str, str] = {
     "human": "character",
     "silhouette": "character",
     "walker": "character",
+    "kid": "character",
+    "teen": "character",
+    "adult": "character",
     "tree": "tree",
     "trees": "tree",
     "pine": "tree",
@@ -526,6 +535,13 @@ KEYWORD_TO_SETTING: dict[str, str] = {
     "avenue": "street",
     "park": "park",
     "garden": "park",
+    "kitchen": "kitchen",
+    "apartment": "apartment",
+    "cafe": "cafe",
+    "bedroom": "bedroom",
+    "office": "office",
+    "subway": "subway",
+    "crosswalk": "street",
 }
 
 # Setting → default palette / lighting / gradient when prompt doesn't override strongly
@@ -552,6 +568,12 @@ SETTING_VISUAL_DEFAULTS: dict[str, dict[str, str]] = {
     "snow": {"palette": "mono", "lighting": "documentary", "gradient": "vertical"},
     "street": {"palette": "neon", "lighting": "documentary", "gradient": "horizontal"},
     "park": {"palette": "forest", "lighting": "documentary", "gradient": "vertical"},
+    "kitchen": {"palette": "default", "lighting": "documentary", "gradient": "vertical"},
+    "apartment": {"palette": "mono", "lighting": "documentary", "gradient": "vertical"},
+    "cafe": {"palette": "warm_sunset", "lighting": "golden_hour", "gradient": "vertical"},
+    "bedroom": {"palette": "dreamy", "lighting": "moody", "gradient": "radial"},
+    "office": {"palette": "mono", "lighting": "documentary", "gradient": "vertical"},
+    "subway": {"palette": "night", "lighting": "neon", "gradient": "horizontal"},
 }
 
 # Character expression (Phase D) — drawn on head+body primitive

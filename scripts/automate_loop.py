@@ -33,7 +33,7 @@ def _loop_extraction_focus() -> str:
 def _loop_state_worker() -> str:
     """Per-worker KV key so explorer/balanced counters are not last-writer-wins on shared loop_state."""
     w = (os.environ.get("LOOP_WORKFLOW_TYPE") or "").strip().lower()
-    return w if w in ("explorer", "exploiter", "main", "balanced") else "main"
+    return w if w in ("explorer", "exploiter", "main", "balanced", "cartoon") else "main"
 
 
 def baseline_state() -> dict:
@@ -84,6 +84,7 @@ def pick_prompt(
     from src.automation import generate_procedural_prompt
     from src.automation.prompt_gen import (
         generate_pixel_pairing_prompt,
+        generate_cartoon_prompt,
         generate_targeted_blended_prompt,
         generate_targeted_color_family_prompt,
         generate_targeted_narrative_prompt,
@@ -115,6 +116,15 @@ def pick_prompt(
     static_focus = (os.environ.get("LOOP_STATIC_FOCUS") or "both").strip().lower()
     extraction_focus = _loop_extraction_focus()
     workflow_type = (os.environ.get("LOOP_WORKFLOW_TYPE") or "").strip().lower()
+    if workflow_type == "cartoon":
+        cartoon = generate_cartoon_prompt(knowledge=knowledge, avoid=recent)
+        if cartoon:
+            logger.info("Cartoon prompt: %s", cartoon[:70] + ("..." if len(cartoon) > 70 else ""))
+            return (cartoon, {"source": "cartoon"})
+        return (
+            "cel cartoon: a person holds still then turns in a kitchen, cartoon hold then snap, anime look",
+            {"source": "cartoon"},
+        )
     prefer_fidelity = (
         extraction_focus == "window"
         or workflow_type in ("main", "balanced")
@@ -433,6 +443,12 @@ def run() -> None:
                 duration = float(learning_duration)
             else:
                 duration = duration_for_run(state["run_count"], args.duration)
+        if workflow_type == "cartoon":
+            raw_cd = (os.environ.get("LOOP_DURATION_SECONDS") or "2.5").strip()
+            try:
+                duration = max(1.0, min(6.0, float(raw_cd)))
+            except (ValueError, TypeError):
+                duration = 2.5
 
         try:
             job = api_request_with_retry(

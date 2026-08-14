@@ -76,6 +76,19 @@ docker compose -f docker-compose.local.yml --profile loops-full up -d --build
 # Adds exploiter on 8084 — only when 500/503s stay rare for a stretch
 ```
 
+**Opt-in cartoon loop** (named-subject cel shots; extra D1 writes, not Core 4):
+
+```bash
+docker compose -f docker-compose.local.yml --profile cartoon up -d --build
+# Can combine with Core 4: --profile free --profile cartoon
+```
+
+| Service | Host port | Role | Delay |
+|---------|-----------|------|--------|
+| cartoon | `8088` | Modern-day cartoon discovery + generation (~2.5s hold-then-snap shots) | 120s |
+
+This worker never uses pixel-pairing prompts. Explorer / balanced / sound stay on their own missions. Jobs show a **Cartoon** badge. Requires the Worker to accept `workflow_type=cartoon` (deployed with this change).
+
 **D1 write contract (avoid 7429 / discovery storms):**
 - Shared env: `DISCOVERIES_MAX_ITEMS` (default **8**), `DISCOVERIES_CHUNK_PAUSE_SECONDS` (default **3.5**). Blends count as weight 3 toward the budget so Free D1 stays under ~50 queries/request. Empty `job_id`-only discovery posts skip the write lease.
 - Single-writer lease on `POST /api/knowledge/discoveries` → 429 + wait (not a crash).

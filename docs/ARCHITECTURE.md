@@ -156,7 +156,7 @@ Clean organization: every file is in its respective directory.
 | Script | Purpose |
 |--------|--------|
 | `worker_start.py` | Fly/Docker dispatcher; `WORKER_START_SCRIPT` selects role. |
-| `automate_loop.py` | Learning loop (explorer / exploiter / balanced). |
+| `automate_loop.py` | Learning loop (explorer / exploiter / balanced / cartoon). |
 | `generate_bridge.py` | Pending jobs → generate → upload. |
 | `interpret_loop.py` | Interpretation / linguistics worker (no render). |
 | `sound_loop.py` | Pure sound discovery worker (no render). |

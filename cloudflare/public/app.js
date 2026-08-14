@@ -177,11 +177,12 @@ function workflowLabel(wt) {
   if (wt === 'exploiter') return 'Exploit';
   if (wt === 'web') return 'Web';
   if (wt === 'main') return 'Main';
+  if (wt === 'cartoon') return 'Cartoon';
   return 'Loop';
 }
 
 function workflowBadgeClass(wt) {
-  if (wt === 'explorer' || wt === 'exploiter' || wt === 'web' || wt === 'main') return `library-badge-${wt}`;
+  if (wt === 'explorer' || wt === 'exploiter' || wt === 'web' || wt === 'main' || wt === 'cartoon') return `library-badge-${wt}`;
   return 'library-badge-loop';
 }
 
@@ -334,8 +335,8 @@ async function loadLoopStatus() {
     }
 
     const runs = data.recent_runs || [];
-    const runLabel = (wt) => (wt === 'explorer' ? 'Explore' : wt === 'exploiter' ? 'Exploit' : wt === 'web' ? 'Web' : wt === 'main' ? 'Main' : 'Loop');
-    const runBadgeClass = (wt) => (wt === 'explorer' || wt === 'exploiter' || wt === 'web' || wt === 'main' ? `loop-badge-${wt}` : 'loop-badge-loop');
+    const runLabel = (wt) => (wt === 'explorer' ? 'Explore' : wt === 'exploiter' ? 'Exploit' : wt === 'web' ? 'Web' : wt === 'main' ? 'Main' : wt === 'cartoon' ? 'Cartoon' : 'Loop');
+    const runBadgeClass = (wt) => (wt === 'explorer' || wt === 'exploiter' || wt === 'web' || wt === 'main' || wt === 'cartoon' ? `loop-badge-${wt}` : 'loop-badge-loop');
     loopRecent.innerHTML = runs.length
       ? runs.map((r) => {
           const label = runLabel(r.workflow_type);

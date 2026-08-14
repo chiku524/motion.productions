@@ -358,6 +358,74 @@ class TestMiniSceneFidelity(unittest.TestCase):
         self.assertGreater(_patch_coherence(changed_sync), _patch_coherence(changed_indep))
         self.assertGreater(float(np.mean(np.abs(r1 - r0))), 0.5)
 
+    def test_cartoon_prompt_is_named_subject_not_pairing(self):
+        from src.automation.prompt_gen import generate_cartoon_prompt
+
+        knowledge = {
+            "color_by_name": {
+                "amber veil": {"key": "a", "r": 200, "g": 140, "b": 40},
+                "teal mist": {"key": "b", "r": 20, "g": 160, "b": 170},
+            }
+        }
+        prompt = generate_cartoon_prompt(knowledge=knowledge, avoid=set())
+        self.assertIsNotNone(prompt)
+        low = prompt.lower()
+        self.assertTrue("cel cartoon" in low or "modern cartoon" in low, prompt)
+        self.assertTrue(any(s in low for s in ("person", "kid", "teen", "character")), prompt)
+        self.assertTrue(any(s in low for s in ("kitchen", "apartment", "cafe", "bedroom", "office", "street", "park", "subway")), prompt)
+        self.assertTrue("hold" in low or "snap" in low, prompt)
+        self.assertNotIn("pixel pairing", low)
+        self.assertNotIn("static frame", low)
+        self.assertNotIn("motion window", low)
+
+    def test_cartoon_spec_cel_hold_snap_identity(self):
+        prompt = (
+            "cel cartoon: a teal person holds still then turns in a kitchen, "
+            "amber walls, cartoon hold then snap, anime look"
+        )
+        instruction = interpret_user_prompt(prompt)
+        instruction.duration_seconds = 2.5
+        spec = build_spec_from_instruction(instruction, knowledge={})
+        self.assertEqual(spec.creation_mode, "blended")
+        self.assertIn(spec.style, ("cartoon", "anime"))
+        self.assertFalse(spec.film_look)
+        self.assertEqual(spec.camera_motion, "static")
+        self.assertEqual(spec.camera_steadiness, "locked")
+        self.assertEqual(spec.audio_genre, "none")
+        self.assertGreaterEqual(float(spec.motion_sync or 0), 0.85)
+        self.assertEqual(getattr(instruction, "setting", None), "kitchen")
+        kinds = {l.get("kind") for l in (spec.scene_layers or [])}
+        self.assertIn("character", kinds)
+        char = next(l for l in spec.scene_layers if l.get("kind") == "character")
+        kfs = char.get("keyframes") or []
+        self.assertGreaterEqual(len(kfs), 4)
+        xs = [float(k.get("x")) for k in kfs]
+        self.assertEqual(xs[0], xs[1])
+        self.assertNotEqual(xs[1], xs[2])
+
+    def test_cartoon_workflow_pick_prompt_never_pairing(self):
+        import importlib.util
+        import os
+        from pathlib import Path
+
+        path = Path(__file__).resolve().parents[1] / "scripts" / "automate_loop.py"
+        spec = importlib.util.spec_from_file_location("automate_loop_cartoon_test", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        old = os.environ.get("LOOP_WORKFLOW_TYPE")
+        os.environ["LOOP_WORKFLOW_TYPE"] = "cartoon"
+        try:
+            prompt, meta = mod.pick_prompt({"recent_prompts": []}, knowledge={}, coverage={})
+        finally:
+            if old is None:
+                os.environ.pop("LOOP_WORKFLOW_TYPE", None)
+            else:
+                os.environ["LOOP_WORKFLOW_TYPE"] = old
+        self.assertEqual(meta.get("source"), "cartoon")
+        low = (prompt or "").lower()
+        self.assertIn("cartoon", low)
+        self.assertNotIn("pixel pairing", low)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -201,7 +201,7 @@ Each workflow is one **continuous loop** that repeats the same steps. Only **pro
 
 1. **Load config** — Loop enabled, delay, duration, exploit ratio (from API or env).
 2. **Pick prompt** — Depends on workflow (see below).
-3. **Create job** — `POST /api/jobs` with prompt, duration, `workflow_type` (explorer | exploiter | main).
+3. **Create job** — `POST /api/jobs` with prompt, duration, `workflow_type` (explorer | exploiter | main | cartoon).
 4. **Interpret** — `interpret_user_prompt(prompt)` → instruction (palette, motion, gradient, camera, audio, etc.).
 5. **Create spec** — `build_spec_from_instruction(instruction, knowledge)` → SceneSpec (no fixed lists; registry + origins only).
 6. **Render** — `generate_full_video(...)` → frames + procedural audio → MP4.
@@ -252,6 +252,15 @@ Each workflow is one **continuous loop** that repeats the same steps. Only **pro
 - **Goal:** Discovery of new pure (per-instant) sounds on par with the system. Frame workers handle pure colors + pure sounds from video; window worker handles blended + semantic within 1-second windows.
 - **Env:** `API_BASE`, `SOUND_LOOP_DELAY_SECONDS` (default 15), `SOUND_LOOP_DURATION_SECONDS` (default 2.5). No job creation; no video upload.
 
+### Cartoon (Workflow F — named-subject cel discovery + generation)
+
+- **Opt-in only.** Compose `--profile cartoon` (port 8088). Not part of Core 4 / `--profile free`. Extra D1 writes, same chunk caps as other loops.
+- **Env:** `LOOP_WORKFLOW_TYPE=cartoon`, `LOOP_EXTRACTION_FOCUS=window`, `LOOP_DURATION_SECONDS=2.5`, `LOOP_DELAY_SECONDS=120`.
+- **Prompt selection:** **100% cartoon.** `generate_cartoon_prompt()` only — unique named-subject shots (character + modern-day setting + registry colors + hold-then-snap). Never pixel pairing, never explorer/balanced prompt mix.
+- **Creation:** Cel look (`style=cartoon` or `anime`, no film grain), locked camera, `motion_sync` high, character identity held across frames, snap in the middle of the ~2.5s window. Same object path as other named-subject prompts; timing and grade are the cartoon reading of the pixel field.
+- **Growth:** Window extraction (entities, narrative settings, motion). Novel kitchens / apartments / looks land in the same registries; other workers do not switch to cartoon prompts.
+- **Badge:** jobs use `workflow_type=cartoon` (**Cartoon** on the site).
+
 ---
 
 ## 11. Summary
@@ -263,6 +272,7 @@ Each workflow is one **continuous loop** that repeats the same steps. Only **pro
 | A workflow only for dynamic? | Yes. **1 worker** with `LOOP_EXTRACTION_FOCUS=window` grows only dynamic + narrative (blends over 1s windows). |
 | A workflow only for static? | Yes. **2 workers** with `LOOP_EXTRACTION_FOCUS=frame` grow only static (per-frame color + sound; authentic names). |
 | A workflow only for pure sound? | Yes. **Sound-only** runs `sound_loop.py`; no video; generates audio → extract → grow static_sound → sync. |
+| A workflow only for cartoon? | Yes. **Opt-in** `--profile cartoon`. Named-subject cel shots only; does not change explorer/sound/balanced prompts. |
 | What actually differs? | **Extraction focus**: frame (per-frame only) vs window (per-window only) vs all. **Prompt choice** (explorer/exploiter/main) is independent. **Sound-only** is a separate loop (no video). |
 | Fourth workflow (Interpretation)? | Yes. **Interpretation** runs `interpret_loop.py`; no create/render; stores prompt + instruction in D1; main loop uses `interpretation_prompts` from for-creation when picking prompts. |
 | Fifth workflow (Sound-only)? | Yes. **Sound-only** runs `sound_loop.py`; no create/render; grows static_sound only; uses knowledge (learned_audio) for next-cycle discovery. |

@@ -124,7 +124,7 @@ def apply_style_look(
     out = frame.astype(np.float32)
     gray = 0.299 * out[..., 0] + 0.587 * out[..., 1] + 0.114 * out[..., 2]
     gray3 = gray[..., None]
-    if s == "anime":
+    if s in ("anime", "cartoon"):
         # Harder chroma, posterize, ink-line edges
         out = gray3 + (out - gray3) * 1.55
         out = np.round(out / 32.0) * 32.0
