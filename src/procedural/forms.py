@@ -62,6 +62,17 @@ def create_form(
         form.update(_wave_form(rng))
     elif kind == "character":
         form.update(_character_form(rng, text))
+    elif kind == "bird":
+        form.update(_bird_form(rng, text, face))
+    elif kind == "star":
+        form.update(_star_form(rng, text))
+    elif kind == "vehicle":
+        form.update(_vehicle_form(rng, text, face))
+    elif kind == "composed":
+        form.update(_composed_form(rng, text, label))
+    else:
+        form["radius_mul"] = rng.uniform(0.78, 1.22)
+        form["aspect"] = rng.uniform(0.82, 1.18)
     return form
 
 
@@ -260,6 +271,111 @@ def cloud_mask(
             ),
         )
     return np.clip(mask, 0, 1)
+
+
+def bird_mask(
+    xx: np.ndarray,
+    yy: np.ndarray,
+    cx: float,
+    cy: float,
+    radius: float,
+    form: dict[str, Any],
+) -> np.ndarray:
+    r = max(1e-6, float(radius))
+    face = 1.0 if float(form.get("face", 1.0)) >= 0 else -1.0
+    lx = (xx - cx) * face
+    ly = yy - cy
+    body = _soft_ellipse_local(lx, ly, 0.0, 0.0, r * float(form.get("body_rx", 0.5)), r * float(form.get("body_ry", 0.28)), soft=0.02)
+    head = _soft_ellipse_local(lx, ly, r * 0.42, -r * 0.12, r * float(form.get("head_s", 0.26)), r * float(form.get("head_s", 0.26)) * 0.9, soft=0.016)
+    beak = _soft_ellipse_local(lx, ly, r * 0.68, -r * 0.10, r * float(form.get("beak_rx", 0.14)), r * 0.06, soft=0.012)
+    lift = r * float(form.get("wing_lift", 0.55))
+    wing_u = _soft_ellipse_local(lx, ly, -r * 0.05, -lift, r * float(form.get("wing_rx", 0.5)), r * float(form.get("wing_ry", 0.14)), soft=0.018)
+    wing_d = _soft_ellipse_local(lx, ly, -r * 0.02, lift * 0.45, r * float(form.get("wing_rx", 0.5)) * 0.7, r * float(form.get("wing_ry", 0.14)) * 0.7, soft=0.016)
+    tail = _soft_ellipse_local(lx, ly, -r * float(form.get("body_rx", 0.5)) * 1.15, 0.0, r * float(form.get("tail_rx", 0.24)), r * float(form.get("tail_ry", 0.12)), soft=0.016)
+    return union_masks(body, head, beak, wing_u, wing_d, tail, k=0.02)
+
+
+def star_mask(
+    xx: np.ndarray,
+    yy: np.ndarray,
+    cx: float,
+    cy: float,
+    radius: float,
+    form: dict[str, Any],
+) -> np.ndarray:
+    import math
+    r = max(1e-6, float(radius))
+    n = max(5, min(8, int(form.get("points", 5))))
+    inner = r * float(form.get("inner", 0.3))
+    outer = r * float(form.get("outer", 0.9))
+    phase = float(form.get("phase", 0.0))
+    mask = _soft_disk(xx, yy, cx, cy, r * float(form.get("core", 0.22)), soft=0.02)
+    for i in range(n):
+        ang = phase + (2.0 * math.pi * i) / n
+        px = cx + math.cos(ang) * outer * 0.55
+        py = cy + math.sin(ang) * outer * 0.55
+        spike = _soft_ellipse(xx, yy, px, py, inner * 0.55, outer * 0.42, soft=0.02)
+        mask = union_masks(mask, spike, k=0.018)
+    return np.clip(mask, 0, 1)
+
+
+def vehicle_mask(
+    xx: np.ndarray,
+    yy: np.ndarray,
+    cx: float,
+    cy: float,
+    radius: float,
+    form: dict[str, Any],
+) -> np.ndarray:
+    r = max(1e-6, float(radius))
+    face = 1.0 if float(form.get("face", 1.0)) >= 0 else -1.0
+    bw = r * float(form.get("body_w", 0.9))
+    bh = r * float(form.get("body_h", 0.28))
+    body = _soft_box(xx, yy, cx, cy + r * 0.06, bw, bh, soft=0.02)
+    cabin = _soft_box(
+        xx, yy,
+        cx + face * r * 0.08,
+        cy - r * 0.18,
+        r * float(form.get("cabin_w", 0.4)),
+        r * float(form.get("cabin_h", 0.28)),
+        soft=0.018,
+    )
+    span = r * float(form.get("wheel_span", 0.45))
+    ws = r * float(form.get("wheel_s", 0.18))
+    wheel_y = cy + bh + ws * 0.35
+    w1 = _soft_disk(xx, yy, cx - face * span, wheel_y, ws, soft=0.016)
+    w2 = _soft_disk(xx, yy, cx + face * span * 0.85, wheel_y, ws, soft=0.016)
+    return union_masks(body, cabin, w1, w2, k=0.018)
+
+
+def composed_mask(
+    xx: np.ndarray,
+    yy: np.ndarray,
+    cx: float,
+    cy: float,
+    radius: float,
+    form: dict[str, Any],
+) -> np.ndarray:
+    r = max(1e-6, float(radius))
+    core = _soft_ellipse(
+        xx, yy, cx, cy,
+        r * float(form.get("core_rx", 0.42)),
+        r * float(form.get("core_ry", 0.32)),
+        soft=0.022,
+    )
+    parts = [core]
+    for blob in form.get("blobs") or []:
+        if not isinstance(blob, dict):
+            continue
+        parts.append(_soft_ellipse(
+            xx, yy,
+            cx + r * float(blob.get("dx", 0.0)),
+            cy + r * float(blob.get("dy", 0.0)),
+            r * float(blob.get("rx", 0.28)),
+            r * float(blob.get("ry", 0.22)),
+            soft=0.02,
+        ))
+    return union_masks(*parts, k=0.02) if parts else core
 
 
 def building_parts(
@@ -471,6 +587,69 @@ def _wave_form(rng: random.Random) -> dict[str, Any]:
         "speed": rng.uniform(2.0, 4.4),
         "phase": rng.uniform(0.0, 6.28),
         "thick": rng.uniform(0.26, 0.42),
+    }
+
+
+def _bird_form(rng: random.Random, text: str, face: float) -> dict[str, Any]:
+    small = any(w in text for w in ("sparrow", "finch", "wren", "small"))
+    return {
+        "species": "sparrow" if small else rng.choice(("gull", "crow", "swift", "heron")),
+        "face": face,
+        "body_rx": rng.uniform(0.42, 0.62) * (0.85 if small else 1.0),
+        "body_ry": rng.uniform(0.22, 0.34),
+        "wing_rx": rng.uniform(0.38, 0.62),
+        "wing_ry": rng.uniform(0.10, 0.18),
+        "wing_lift": rng.uniform(0.35, 0.85),
+        "tail_rx": rng.uniform(0.18, 0.32),
+        "tail_ry": rng.uniform(0.08, 0.16),
+        "beak_rx": rng.uniform(0.10, 0.18),
+        "head_s": rng.uniform(0.22, 0.32),
+    }
+
+
+def _star_form(rng: random.Random, text: str) -> dict[str, Any]:
+    n = 5 if "star" in text else rng.choice((5, 6, 7))
+    return {
+        "species": f"{n}-point",
+        "points": n,
+        "inner": rng.uniform(0.22, 0.38),
+        "outer": rng.uniform(0.72, 1.05),
+        "phase": rng.uniform(0.0, 1.2),
+        "core": rng.uniform(0.16, 0.28),
+    }
+
+
+def _vehicle_form(rng: random.Random, text: str, face: float) -> dict[str, Any]:
+    bike = any(w in text for w in ("bike", "bicycle", "cycle", "motorcycle"))
+    return {
+        "species": "bike" if bike else rng.choice(("car", "van", "bus")),
+        "face": face,
+        "body_w": rng.uniform(0.72, 1.05) if not bike else rng.uniform(0.55, 0.75),
+        "body_h": rng.uniform(0.22, 0.38) if not bike else rng.uniform(0.12, 0.18),
+        "cabin_w": rng.uniform(0.32, 0.48),
+        "cabin_h": rng.uniform(0.22, 0.38),
+        "wheel_s": rng.uniform(0.14, 0.22) if not bike else rng.uniform(0.18, 0.26),
+        "wheel_span": rng.uniform(0.38, 0.55),
+        "bike": bike,
+    }
+
+
+def _composed_form(rng: random.Random, text: str, label: str) -> dict[str, Any]:
+    """Unique blob-stack silhouette keyed by the noun, not a shared template."""
+    n = 3 + (sum(ord(c) for c in (label or text or "obj")) % 4)
+    blobs: list[dict[str, float]] = []
+    for _i in range(n):
+        blobs.append({
+            "dx": rng.uniform(-0.55, 0.55),
+            "dy": rng.uniform(-0.50, 0.50),
+            "rx": rng.uniform(0.18, 0.48),
+            "ry": rng.uniform(0.14, 0.40),
+        })
+    return {
+        "species": (label or "object").strip().lower()[:40] or "object",
+        "blobs": blobs,
+        "core_rx": rng.uniform(0.32, 0.55),
+        "core_ry": rng.uniform(0.22, 0.42),
     }
 
 

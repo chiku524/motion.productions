@@ -76,6 +76,24 @@ _DURATION_PATTERN = re.compile(
 # Style keywords (optional)
 _STYLE_KEYWORDS: set[str] = {"cinematic", "anime", "abstract", "minimal", "realistic"}
 
+_ENTITY_NOISE_WORDS = frozenset({
+    "with", "from", "into", "then", "than", "this", "that", "when", "while", "have",
+    "walk", "walking", "walks", "bounce", "bouncing", "bounces", "drift", "drifting",
+    "fly", "flying", "flies", "swim", "swimming", "jump", "jumping", "jumps",
+    "stand", "standing", "sway", "swaying", "roll", "rolling", "slide", "sliding",
+    "move", "moving", "pulse", "pulsing", "fall", "falls", "falling", "enter",
+    "enters", "exit", "exits", "explain", "explaining", "teach", "teaching",
+    "lesson", "tutorial", "scene", "clip", "make", "short", "loop", "soft",
+    "spoken", "vocals", "music", "beat", "groove", "feel", "mood", "vibe",
+    "left", "right", "down", "toward", "away", "under", "over", "through",
+    "happy", "calm", "playful", "shy", "sad", "angry", "excited", "nervous",
+    "slow", "fast", "warm", "cool", "dark", "bright", "clean", "bold",
+    "ambient", "cinematic", "techno", "house", "deep", "tense", "dreamy",
+    "uplifting", "melancholy", "dramatic", "playful", "cheerful", "peaceful",
+    "hour", "hours", "second", "seconds", "minute", "minutes", "across", "like",
+    "just", "very", "some", "more", "than", "onto", "upon", "near", "beside",
+})
+
 # Tone keywords (optional)
 _TONE_KEYWORDS: set[str] = {"dreamy", "dark", "bright", "calm", "energetic", "moody"}
 
@@ -573,7 +591,117 @@ def _resolve_entities(words: list[str], prompt: str) -> list[dict]:
                 "prop_scale": 1.0,
                 "z": 0 if is_prop and kind in ("tree", "building", "wave", "cloud") else 2,
             })
+    reserved = _reserved_non_entity_words()
+    extra = 0
+    for w in words:
+        if extra >= 2:
+            break
+        if w in KEYWORD_TO_ENTITY_KIND or w in reserved or w in _ENTITY_NOISE_WORDS:
+            continue
+        if len(w) < 4 or not w.isalpha():
+            continue
+        key = f"composed:{w}"
+        if key in seen:
+            continue
+        seen.add(key)
+        entities.append({
+            "id": f"e{len(entities)}",
+            "kind": "composed",
+            "label": w,
+            "color_hint": color_hint,
+            "directionality": direction,
+            "trajectory": traj,
+            "bounce": bounce,
+            "sfx_on": ["bounce"] if bounce else [],
+            "expression": "neutral",
+            "personality": "neutral",
+            "gag": "squash" if bounce else "none",
+            "is_prop": False,
+            "prop_motion": traj if traj != "none" else "none",
+            "prop_x": 0.5,
+            "prop_y": 0.5,
+            "prop_scale": 1.0,
+            "z": 2,
+        })
+        extra += 1
     return entities
+
+
+def _reserved_non_entity_words() -> set[str]:
+    reserved: set[str] = set()
+    for table in (
+        KEYWORD_TO_PALETTE, KEYWORD_TO_MOTION, KEYWORD_TO_INTENSITY, KEYWORD_TO_GRADIENT,
+        KEYWORD_TO_CAMERA, KEYWORD_TO_SHAPE, KEYWORD_TO_SHOT, KEYWORD_TO_TRANSITION,
+        KEYWORD_TO_LIGHTING, KEYWORD_TO_GENRE, KEYWORD_TO_PACING,
+        KEYWORD_TO_COMPOSITION_BALANCE, KEYWORD_TO_COMPOSITION_SYMMETRY, KEYWORD_TO_TENSION,
+        KEYWORD_TO_AUDIO_TEMPO, KEYWORD_TO_AUDIO_MOOD, KEYWORD_TO_AUDIO_PRESENCE,
+        KEYWORD_TO_AUDIO_GENRE, KEYWORD_TO_MOTION_DIRECTIONALITY, KEYWORD_TO_MOTION_SMOOTHNESS,
+        KEYWORD_TO_MOTION_RHYTHM, KEYWORD_TO_SFX_KIND, KEYWORD_TO_EXPRESSION,
+        KEYWORD_TO_PERSONALITY, KEYWORD_TO_SETTING,
+    ):
+        reserved.update(table.keys())
+    reserved.update(_STYLE_KEYWORDS)
+    return reserved
+
+
+def _attach_named_registry_entities(
+    entities: list[dict],
+    knowledge: dict | None,
+    prompt_lower: str,
+) -> list[dict]:
+    """When the prompt names a learned entity, attach its stored form so that value appears."""
+    if not knowledge:
+        return entities
+    learned = knowledge.get("learned_entities") or []
+    if not isinstance(learned, list):
+        return entities
+    out = list(entities)
+    seen_kinds = {str(e.get("kind") or "") for e in out if isinstance(e, dict)}
+    seen_labels = {str(e.get("label") or "").lower() for e in out if isinstance(e, dict)}
+    for row in learned:
+        if not isinstance(row, dict):
+            continue
+        name = (row.get("name") or row.get("label") or "").strip()
+        if not _word_in_prompt(name, prompt_lower):
+            continue
+        kind = str(row.get("kind") or "composed").strip().lower() or "composed"
+        ej = row.get("entity_json") if isinstance(row.get("entity_json"), dict) else {}
+        form = ej.get("form") if isinstance(ej, dict) and isinstance(ej.get("form"), dict) else row.get("form")
+        attached = False
+        for ent in out:
+            if not isinstance(ent, dict):
+                continue
+            label_l = str(ent.get("label") or "").lower()
+            if label_l == name.lower() or (ent.get("kind") == kind and kind not in ("circle", "character")):
+                if isinstance(form, dict) and form:
+                    ent["form"] = form
+                ent["label"] = name
+                attached = True
+                break
+        if attached:
+            continue
+        if name.lower() in seen_labels:
+            continue
+        seen_labels.add(name.lower())
+        seen_kinds.add(kind)
+        out.append({
+            "id": f"named_{kind}_{len(out)}",
+            "kind": kind,
+            "label": name,
+            "form": form if isinstance(form, dict) else {},
+            "color_hint": row.get("color_hint"),
+            "directionality": row.get("directionality") or "none",
+            "trajectory": row.get("trajectory") or "none",
+            "bounce": bool(row.get("bounce")),
+            "sfx_on": [],
+            "expression": "neutral",
+            "personality": "neutral",
+            "gag": "none",
+            "is_prop": kind in ("tree", "fish", "wave", "building", "cloud"),
+            "prop_motion": row.get("trajectory") or "none",
+            "z": 2,
+        })
+    return out
 
 
 def _resolve_audio_vocals(words: list[str]) -> bool:
@@ -825,6 +953,7 @@ def interpret_user_prompt(
     motion_rhythm = _resolve_motion_rhythm(words)
     sfx_kinds = _resolve_sfx_kinds(words)
     entities = _resolve_entities(words, prompt)
+    entities = _attach_named_registry_entities(entities, knowledge, raw_lower)
     # Placeholder sfx_events (t_sec filled by creation when duration known)
     sfx_events: list[dict] = [{"kind": k, "t_sec": None, "strength": 0.8} for k in sfx_kinds]
     # Music genre implies music presence unless silence requested

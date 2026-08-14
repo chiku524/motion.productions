@@ -9,11 +9,10 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-_ENTITY_KINDS = frozenset({
-    "circle", "rect", "arrow", "character",
-    "tree", "fish", "wave", "building", "cloud",
-})
-_PROP_KINDS = frozenset({"tree", "fish", "wave", "building", "cloud"})
+from ..knowledge.completion_targets import ENTITY_KINDS
+
+_ENTITY_KINDS = frozenset(ENTITY_KINDS)
+_PROP_KINDS = frozenset({"tree", "fish", "wave", "building", "cloud", "bird", "star", "vehicle"})
 
 
 @dataclass
@@ -340,7 +339,8 @@ def build_scene_graph_from_instruction(
             continue
         kind = str(ent.get("kind") or "circle")
         if kind not in _ENTITY_KINDS:
-            kind = "circle"
+            kind = "composed"
+        stored = ent.get("form") if isinstance(ent.get("form"), dict) else None
         traj = str(ent.get("trajectory") or "none")
         bounce = bool(ent.get("bounce"))
         gag = str(ent.get("gag") or ("squash" if bounce else "none")).lower()
@@ -377,6 +377,8 @@ def build_scene_graph_from_instruction(
             setting=setting,
             trajectory=prop_motion if prop_motion != "none" else traj,
         )
+        if stored:
+            form = {**form, **stored}
         if not ent.get("color_hint") and not (
             isinstance(prop_color, (list, tuple)) and len(prop_color) >= 3
         ):
@@ -406,7 +408,7 @@ def build_scene_graph_from_instruction(
                     water_y=py,
                     peak_y=peak_y,
                 )
-            elif prop_motion in ("left", "right", "up", "down") and kind in ("wave", "cloud", "fish"):
+            elif prop_motion in ("left", "right", "up", "down") and kind in ("wave", "cloud", "fish", "bird", "vehicle"):
                 raw_kfs = drift_prop_keyframes(duration=duration, trajectory=prop_motion, y=py, scale=pscale)
             else:
                 raw_kfs = static_prop_keyframes(

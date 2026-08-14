@@ -13,25 +13,25 @@ from typing import Any
 
 from ..procedural.forms import form_seed
 
-PROP_KINDS = ("tree", "fish", "wave", "building", "cloud")
+PROP_KINDS = ("tree", "fish", "wave", "building", "cloud", "bird", "star", "vehicle")
 
 # setting → (kind, min_count, max_count) authored per video — not cloned positions
 SETTING_KIND_WEIGHTS: dict[str, list[tuple[str, int, int]]] = {
-    "forest": [("tree", 3, 6), ("cloud", 0, 2)],
-    "park": [("tree", 2, 5), ("cloud", 0, 2)],
-    "ocean": [("wave", 1, 2), ("fish", 1, 2), ("cloud", 0, 2)],
-    "beach": [("wave", 1, 2), ("cloud", 1, 3)],
-    "underwater": [("fish", 2, 4), ("wave", 0, 1)],
-    "city": [("building", 2, 5), ("cloud", 0, 2)],
-    "neon": [("building", 2, 4), ("cloud", 0, 1)],
-    "street": [("building", 2, 4), ("cloud", 0, 2)],
-    "night": [("building", 1, 3), ("cloud", 0, 2)],
-    "mountain": [("tree", 1, 3), ("cloud", 1, 3)],
-    "day": [("cloud", 1, 3)],
-    "golden_hour": [("cloud", 1, 3), ("tree", 0, 2)],
-    "desert": [("cloud", 0, 2)],
-    "rain": [("cloud", 1, 3), ("building", 0, 2)],
-    "snow": [("cloud", 1, 3), ("tree", 1, 3)],
+    "forest": [("tree", 1, 3), ("bird", 0, 2), ("cloud", 0, 2)],
+    "park": [("tree", 1, 3), ("bird", 0, 2), ("cloud", 0, 2)],
+    "ocean": [("wave", 1, 2), ("fish", 0, 2), ("bird", 0, 1), ("cloud", 0, 2)],
+    "beach": [("wave", 1, 2), ("cloud", 0, 2), ("bird", 0, 2)],
+    "underwater": [("fish", 1, 3), ("wave", 0, 1)],
+    "city": [("building", 1, 3), ("vehicle", 0, 2), ("cloud", 0, 2)],
+    "neon": [("building", 1, 3), ("vehicle", 0, 1), ("star", 0, 2)],
+    "street": [("building", 1, 3), ("vehicle", 0, 2), ("cloud", 0, 1)],
+    "night": [("building", 0, 2), ("star", 1, 3), ("cloud", 0, 2)],
+    "mountain": [("tree", 0, 2), ("bird", 0, 2), ("cloud", 1, 3)],
+    "day": [("cloud", 0, 2), ("bird", 0, 2)],
+    "golden_hour": [("cloud", 1, 2), ("tree", 0, 2), ("bird", 0, 1)],
+    "desert": [("cloud", 0, 2), ("star", 0, 1)],
+    "rain": [("cloud", 1, 2), ("building", 0, 2)],
+    "snow": [("cloud", 1, 2), ("tree", 0, 2)],
 }
 
 # Default colors per prop kind (overridden by color_hint / palette)
@@ -41,6 +41,9 @@ PROP_COLORS: dict[str, tuple[int, int, int]] = {
     "wave": (70, 140, 200),
     "building": (70, 75, 95),
     "cloud": (230, 235, 245),
+    "bird": (40, 50, 70),
+    "star": (250, 230, 140),
+    "vehicle": (180, 70, 60),
 }
 
 
@@ -171,6 +174,33 @@ def _place_kind(kind: str, rng: random.Random) -> tuple[float, float, float, str
             False,
             0,
         )
+    if kind == "bird":
+        return (
+            rng.uniform(0.10, 0.88),
+            rng.uniform(0.12, 0.38),
+            rng.uniform(0.45, 0.85),
+            rng.choice(("left", "right")),
+            False,
+            2,
+        )
+    if kind == "star":
+        return (
+            rng.uniform(0.08, 0.92),
+            rng.uniform(0.06, 0.28),
+            rng.uniform(0.35, 0.70),
+            "none",
+            False,
+            0,
+        )
+    if kind == "vehicle":
+        return (
+            rng.uniform(0.12, 0.80),
+            rng.uniform(0.62, 0.78),
+            rng.uniform(0.70, 1.15),
+            rng.choice(("left", "right")),
+            False,
+            1,
+        )
     # fish
     jump = rng.random() < 0.45
     return (
@@ -195,6 +225,12 @@ def _make_prop(
         label = _tree_species_label(rng, setting_key)
     elif kind == "fish":
         label = rng.choice(("fish", "goldfish", "reef fish", "tuna"))
+    elif kind == "bird":
+        label = rng.choice(("bird", "sparrow", "gull", "crow"))
+    elif kind == "vehicle":
+        label = rng.choice(("car", "van", "bike"))
+    elif kind == "star":
+        label = rng.choice(("star", "star"))
     return {
         "id": f"prop_{kind}_{index}_{int(x * 1000)}_{int(scale * 100)}",
         "kind": kind,
@@ -238,16 +274,19 @@ def props_for_setting(
     existing = existing_kinds or set()
     out: list[dict[str, Any]] = []
     n = 0
+    cap = max_props
+    if len(existing) >= 2:
+        cap = min(cap, 3)
     for kind, lo, hi in weights:
         if kind not in PROP_KINDS:
             continue
         count = rng.randint(lo, hi)
-        if kind in existing and kind in ("fish", "wave", "cloud"):
-            count = 0 if kind == "fish" else min(count, 1)
-            if kind == "fish":
+        if kind in existing and kind in ("fish", "wave", "cloud", "bird", "vehicle"):
+            count = 0 if kind in ("fish", "vehicle") else min(count, 1)
+            if kind in ("fish", "vehicle"):
                 continue
         for _ in range(count):
-            if len(out) >= max_props:
+            if len(out) >= cap:
                 break
             out.append(_make_prop(kind, rng, setting_key, n))
             n += 1

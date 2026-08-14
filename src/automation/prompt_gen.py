@@ -556,7 +556,10 @@ def generate_targeted_entity_prompt(
     seen_kinds = {str(e.get("kind") or "").lower() for e in learned}
     seen_traj = {str(e.get("trajectory") or "").lower() for e in learned}
     # Prefer scenic props when under-represented (photoreal-ready object coverage)
-    kinds = ["circle", "rect", "arrow", "character", "tree", "fish", "wave", "building", "cloud"]
+    kinds = [
+        "circle", "rect", "arrow", "character", "tree", "fish", "wave", "building", "cloud",
+        "bird", "star", "vehicle", "composed",
+    ]
     trajs = ["left", "right", "up", "down", "toward", "away"]
     counts = {k: 0 for k in kinds}
     for e in learned:
@@ -580,6 +583,10 @@ def generate_targeted_entity_prompt(
         "wave": secure_choice(["wave", "ocean wave"]),
         "building": secure_choice(["building", "tower", "skyscraper"]),
         "cloud": secure_choice(["cloud", "drifting cloud"]),
+        "bird": secure_choice(["bird", "sparrow", "gull"]),
+        "star": "star",
+        "vehicle": secure_choice(["car", "van", "bike"]),
+        "composed": secure_choice(["kite", "lantern", "mushroom", "rocket"]),
     }
     label = labels.get(kind, "shape")
     color = secure_choice(["red", "blue", "green", "yellow", "amber", "teal", "neon", "warm", "cool"])
@@ -611,6 +618,14 @@ def generate_targeted_entity_prompt(
     elif kind in ("tree", "building", "cloud", "wave"):
         verb = "swaying" if kind in ("tree", "building") else ("drifting" if kind == "cloud" else "rolling")
         prompt = f"{label}s {verb} {traj}{setting_bit} with {music}"
+    elif kind == "bird":
+        prompt = f"a {color} {label} flying {traj}{setting_bit} with {music}"
+    elif kind == "star":
+        prompt = f"a {color} star drifting {traj}{setting_bit} with {music}"
+    elif kind == "vehicle":
+        prompt = f"a {color} {label} driving {traj}{setting_bit} with {music}"
+    elif kind == "composed":
+        prompt = f"a {color} {label} drifting {traj}{setting_bit} with {music}"
     elif kind == "fish":
         prompt = f"a {color} fish {'jumping' if bounce else 'swimming'} {traj}{setting_bit} with {music}"
     elif bounce:
@@ -771,13 +786,17 @@ _MINI_COLORS = [
 _MINI_BALL_NOUNS = ["ball", "orb", "sphere"]
 _MINI_CHAR_NOUNS = ["person", "character", "figure"]
 _MINI_PROP_NOUNS: dict[str, list[str]] = {
-    "tree": ["tree", "pine"],
-    "fish": ["fish"],
+    "tree": ["tree", "pine", "oak", "maple"],
+    "fish": ["fish", "goldfish", "koi"],
     "wave": ["wave"],
     "building": ["building", "tower"],
     "cloud": ["cloud"],
     "arrow": ["arrow"],
     "rect": ["block", "box"],
+    "bird": ["bird", "sparrow", "gull"],
+    "star": ["star"],
+    "vehicle": ["car", "van", "bike"],
+    "composed": ["kite", "lantern", "mushroom", "lamp", "flower", "boat", "rocket", "robot"],
 }
 _MINI_TRAJ = ["left", "right", "up", "down"]
 _MINI_TRAJ_CAM = ["left", "right", "toward the camera", "away"]
@@ -850,7 +869,10 @@ def _compose_mini_scene(mode: str) -> str:
     setting = secure_choice(_SETTING_PHRASES)
     if mode == "educational":
         topic = secure_choice(_MINI_EDU_TOPICS)
-        noun = secure_choice(_MINI_BALL_NOUNS)
+        if secure_random() < 0.45:
+            noun = secure_choice(_MINI_PROP_NOUNS["composed"] + _MINI_PROP_NOUNS["star"])
+        else:
+            noun = secure_choice(_MINI_BALL_NOUNS)
         art = _mini_article(noun)
         return secure_choice([
             f"explain {topic} with a bouncing {color} {noun} and soft spoken vocals",
@@ -860,42 +882,59 @@ def _compose_mini_scene(mode: str) -> str:
         ])
     if mode == "weather":
         weather = secure_choice(_MINI_WEATHER)
-        if secure_random() < 0.55:
+        r_w = secure_random()
+        if r_w < 0.35:
             who = secure_choice(_MINI_CHAR_NOUNS)
             traj = secure_choice(["left", "right"])
             expr = secure_choice(_MINI_EXPR + [""])
             bit = f"{expr} " if expr else ""
             return _finish_mini(f"a {bit}{who} walking {traj} {weather}".strip())
-        noun = secure_choice(_MINI_BALL_NOUNS)
-        traj = secure_choice(_MINI_TRAJ)
-        verb = "bouncing" if secure_random() < 0.65 else "drifting"
-        return _finish_mini(f"a {color} {noun} {verb} {traj} {weather}")
+        if r_w < 0.55:
+            noun = secure_choice(_MINI_BALL_NOUNS)
+            traj = secure_choice(_MINI_TRAJ)
+            verb = "bouncing" if secure_random() < 0.65 else "drifting"
+            return _finish_mini(f"a {color} {noun} {verb} {traj} {weather}")
+        kind = secure_choice(["bird", "cloud", "star", "composed"])
+        label = secure_choice(_MINI_PROP_NOUNS[kind])
+        return _finish_mini(f"a {color} {label} drifting left {weather}")
     if mode == "multibeat":
         set_bit = f" {setting}" if secure_random() < 0.7 else ""
-        if secure_random() < 0.45:
+        r_m = secure_random()
+        if r_m < 0.35:
             who = secure_choice(_MINI_CHAR_NOUNS)
             expr = secure_choice(_MINI_EXPR)
             return _finish_mini(
                 f"a {expr} {who} walks in then waves then walks away{set_bit}"
             )
-        noun = secure_choice(_MINI_BALL_NOUNS)
+        if r_m < 0.55:
+            noun = secure_choice(_MINI_BALL_NOUNS)
+            return _finish_mini(
+                f"a {color} {noun} enters left then bounces then exits right{set_bit}"
+            )
+        noun = secure_choice(_MINI_PROP_NOUNS["composed"] + _MINI_PROP_NOUNS["bird"] + _MINI_PROP_NOUNS["vehicle"])
         return _finish_mini(
-            f"a {color} {noun} enters left then bounces then exits right{set_bit}"
+            f"a {color} {noun} enters left then drifts then exits right{set_bit}"
         )
-    # setting / general
+    # setting / general — keep ball/person as a minority, not the default
     set_bit = f" {setting}" if (mode == "setting" or secure_random() < 0.5) else ""
     r = secure_random()
-    if r < 0.36:
+    if r < 0.16:
         who = secure_choice(_MINI_CHAR_NOUNS)
         traj = secure_choice(_MINI_TRAJ_CAM)
         expr = secure_choice(_MINI_EXPR + [""])
         bit = f"{expr} " if expr else ""
         return _finish_mini(f"a {bit}{who} walking {traj}{set_bit}".strip())
-    if r < 0.72:
+    if r < 0.28:
         noun = secure_choice(_MINI_BALL_NOUNS)
         traj = secure_choice(_MINI_TRAJ + ["diagonally"])
         verb = "bouncing" if secure_random() < 0.7 else "drifting"
         return _finish_mini(f"a {color} {noun} {verb} {traj}{set_bit}")
+    if r < 0.46:
+        kind_a = secure_choice(list(_MINI_PROP_NOUNS.keys()))
+        kind_b = secure_choice([k for k in _MINI_PROP_NOUNS if k != kind_a] or [kind_a])
+        a = secure_choice(_MINI_PROP_NOUNS[kind_a])
+        b = secure_choice(_MINI_PROP_NOUNS[kind_b])
+        return _finish_mini(f"a {color} {a} and a {b} drifting apart{set_bit}")
     kind = secure_choice(list(_MINI_PROP_NOUNS.keys()))
     label = secure_choice(_MINI_PROP_NOUNS[kind])
     traj = secure_choice(["left", "right"])
@@ -907,6 +946,10 @@ def _compose_mini_scene(mode: str) -> str:
         "fish": "swimming",
         "arrow": "flying",
         "rect": "sliding",
+        "bird": "flying",
+        "star": "drifting",
+        "vehicle": "driving",
+        "composed": "drifting",
     }
     verb = verbs.get(kind, "drifting")
     if kind == "fish" and secure_random() < 0.4:
@@ -914,7 +957,7 @@ def _compose_mini_scene(mode: str) -> str:
     art = _mini_article(label)
     if kind == "arrow" and secure_random() < 0.4:
         return _finish_mini(f"{art} {label} {verb} toward the camera{set_bit}")
-    return _finish_mini(f"{art} {label} {verb} {traj}{set_bit}")
+    return _finish_mini(f"{art} {color} {label} {verb} {traj}{set_bit}")
 
 
 def mutate_liked_prompt(prompt: str, *, avoid: set[str] | None = None) -> str | None:

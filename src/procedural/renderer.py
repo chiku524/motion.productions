@@ -16,14 +16,18 @@ from ..lighting.grading import (
 )
 from .data.palettes import PALETTES
 from .forms import (
+    bird_mask,
     building_parts,
     cloud_mask,
+    composed_mask,
     fish_eye,
     fish_mask,
     layer_form,
     rotate_into_local,
+    star_mask,
     tree_parts,
     union_masks,
+    vehicle_mask,
     wave_mask,
     _hash_noise,
     _soft_box,
@@ -734,11 +738,42 @@ def _render_layers_rgba(
                 out_rgb, out_a, mask, (cr, cg, cb), xx_l, yy_l, cx, cy, radius,
                 lighting_model, texture_mod, opacity * 0.7, material=kind,
             )
-        else:
-            dist = np.sqrt((xx_l - cx) ** 2 + (yy_l - cy) ** 2)
-            mask = np.clip(1.0 - dist / max(1e-6, radius), 0, 1) ** 1.5
+        elif kind == "bird":
+            form = layer_form(layer, kind)
+            mask = bird_mask(xx_l, yy_l, cx, cy, radius, form)
             out_rgb, out_a = _blend_shaded_layer(
                 out_rgb, out_a, mask, (cr, cg, cb), xx_l, yy_l, cx, cy, radius,
+                lighting_model, texture_mod, opacity, material=kind,
+            )
+        elif kind == "star":
+            form = layer_form(layer, kind)
+            mask = star_mask(xx_l, yy_l, cx, cy, radius, form)
+            out_rgb, out_a = _blend_shaded_layer(
+                out_rgb, out_a, mask, (cr, cg, cb), xx_l, yy_l, cx, cy, radius,
+                lighting_model, texture_mod, opacity, material="circle",
+            )
+        elif kind == "vehicle":
+            form = layer_form(layer, kind)
+            mask = vehicle_mask(xx_l, yy_l, cx, cy, radius, form)
+            out_rgb, out_a = _blend_shaded_layer(
+                out_rgb, out_a, mask, (cr, cg, cb), xx_l, yy_l, cx, cy, radius,
+                lighting_model, texture_mod, opacity, material="rect",
+            )
+        elif kind == "composed":
+            form = layer_form(layer, kind)
+            mask = composed_mask(xx_l, yy_l, cx, cy, radius, form)
+            out_rgb, out_a = _blend_shaded_layer(
+                out_rgb, out_a, mask, (cr, cg, cb), xx_l, yy_l, cx, cy, radius,
+                lighting_model, texture_mod, opacity, material="circle",
+            )
+        else:
+            form = layer_form(layer, kind)
+            rr = radius * float(form.get("radius_mul", 1.0))
+            aspect = float(form.get("aspect", 1.0))
+            from .forms import _soft_ellipse
+            mask = _soft_ellipse(xx_l, yy_l, cx, cy, rr, rr * aspect, soft=0.03)
+            out_rgb, out_a = _blend_shaded_layer(
+                out_rgb, out_a, mask, (cr, cg, cb), xx_l, yy_l, cx, cy, rr,
                 lighting_model, texture_mod, opacity, material=kind,
             )
 

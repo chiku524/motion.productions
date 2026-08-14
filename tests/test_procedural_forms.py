@@ -182,6 +182,32 @@ class TestProceduralForms(unittest.TestCase):
         self.assertNotIn("learned0", ids)
         self.assertNotIn("fish", kinds)
 
+    def test_named_registry_entity_appears_when_prompt_cites_it(self):
+        instruction = interpret_user_prompt(
+            "a Crimson Dart jumping in the ocean",
+            knowledge={
+                "learned_entities": [{
+                    "kind": "fish",
+                    "name": "Crimson Dart",
+                    "label": "Crimson Dart",
+                    "trajectory": "right",
+                    "bounce": True,
+                    "form": {"species": "goldfish", "body_rx": 0.91, "tail_spread": 0.44},
+                }],
+            },
+        )
+        kinds = {e.get("kind") for e in (instruction.entities or [])}
+        self.assertIn("fish", kinds)
+        named = [e for e in instruction.entities if (e.get("label") or "") == "Crimson Dart"]
+        self.assertTrue(named)
+        self.assertEqual(named[0].get("form", {}).get("species"), "goldfish")
+
+    def test_composed_noun_is_not_collapsed_to_circle(self):
+        instruction = interpret_user_prompt("a red kite drifting left with calm ambient music")
+        kinds = [e.get("kind") for e in (instruction.entities or [])]
+        self.assertIn("composed", kinds)
+        self.assertTrue(any(e.get("label") == "kite" for e in instruction.entities))
+
     def test_prompt_fish_gets_form_on_layer(self):
         prompt = "an orange fish jumping in the ocean with a whoosh"
         instruction = interpret_user_prompt(prompt)

@@ -234,6 +234,8 @@ class TestMiniSceneFidelity(unittest.TestCase):
                 for w in (
                     "ball", "orb", "block", "box", "arrow", "person", "character", "figure",
                     "tree", "pine", "oak", "fish", "wave", "building", "tower", "cloud",
+                    "bird", "sparrow", "gull", "star", "car", "van", "bike", "kite",
+                    "lantern", "mushroom", "rocket",
                 )
             ),
             f"unexpected entity phrasing: {prompt}",

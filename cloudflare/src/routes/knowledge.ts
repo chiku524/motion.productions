@@ -810,24 +810,37 @@ if (path === "/api/knowledge/for-creation" && request.method === "GET") {
       directionality: string | null;
       count: number;
       name: string | null;
+      entity_json: string | null;
     };
     const entityResult = await db
       .prepare(
-        "SELECT profile_key, kind, trajectory, bounce, color_hint, label, directionality, count, name FROM learned_entities ORDER BY count DESC LIMIT ?"
+        "SELECT profile_key, kind, trajectory, bounce, color_hint, label, directionality, count, name, entity_json FROM learned_entities ORDER BY count DESC LIMIT ?"
       )
       .bind(limit)
       .all<EntityRow>();
-    learned_entities = (entityResult.results || []).map((r) => ({
-      key: r.profile_key,
-      kind: r.kind,
-      trajectory: r.trajectory ?? undefined,
-      bounce: !!r.bounce,
-      color_hint: r.color_hint,
-      label: r.label,
-      directionality: r.directionality,
-      count: r.count,
-      name: r.name,
-    }));
+    learned_entities = (entityResult.results || []).map((r) => {
+      let entity_json: Record<string, unknown> | undefined;
+      if (r.entity_json) {
+        try {
+          entity_json = JSON.parse(r.entity_json) as Record<string, unknown>;
+        } catch {
+          entity_json = undefined;
+        }
+      }
+      return {
+        key: r.profile_key,
+        kind: r.kind,
+        trajectory: r.trajectory ?? undefined,
+        bounce: !!r.bounce,
+        color_hint: r.color_hint,
+        label: r.label,
+        directionality: r.directionality,
+        count: r.count,
+        name: r.name,
+        entity_json,
+        form: entity_json && typeof entity_json.form === "object" ? entity_json.form : undefined,
+      };
+    });
   } catch {
     learned_entities = [];
   }

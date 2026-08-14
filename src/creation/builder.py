@@ -446,8 +446,8 @@ def build_spec_from_instruction(
             script_beats = script_beats_to_dicts(narr)
             music_sections = [b.music_section for b in narr.beats]
 
-    # Geometry is created per video from the prompt. Registry rows supply
-    # palette/motion/sound values only — never cloned object meshes.
+    # Geometry is created per video from the prompt + seed. Named learned_entities
+    # appear only when the prompt cites them (form recipes), never as cloned extras.
 
     # Phase 5: character walk cycles when entity kind is character
     for ent in entities:

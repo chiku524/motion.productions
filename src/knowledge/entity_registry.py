@@ -7,6 +7,9 @@ from __future__ import annotations
 from typing import Any
 
 
+from .completion_targets import ENTITY_KINDS
+
+
 def entity_profile_key(
     kind: str,
     *,
@@ -38,8 +41,8 @@ def _normalize_entity(ent: dict[str, Any]) -> dict[str, Any] | None:
     if not isinstance(ent, dict):
         return None
     kind = str(ent.get("kind") or "circle").strip().lower()
-    if kind not in ("circle", "rect", "arrow", "character", "tree", "fish", "wave", "building", "cloud"):
-        kind = "circle"
+    if kind not in ENTITY_KINDS:
+        kind = "composed"
     traj = str(ent.get("trajectory") or "none").strip().lower() or "none"
     bounce = bool(ent.get("bounce"))
     color_hint = ent.get("color_hint")
@@ -52,6 +55,7 @@ def _normalize_entity(ent: dict[str, Any]) -> dict[str, Any] | None:
     if bounce and gag == "none":
         gag = "squash"
     label = str(ent.get("label") or kind).strip()[:80]
+    form = ent.get("form") if isinstance(ent.get("form"), dict) else None
     key = entity_profile_key(
         kind,
         trajectory=traj,
@@ -62,7 +66,7 @@ def _normalize_entity(ent: dict[str, Any]) -> dict[str, Any] | None:
         personality=personality,
         gag=gag,
     )
-    return {
+    out = {
         "key": key,
         "kind": kind,
         "trajectory": traj,
@@ -75,6 +79,9 @@ def _normalize_entity(ent: dict[str, Any]) -> dict[str, Any] | None:
         "gag": gag,
         "sfx_on": list(ent.get("sfx_on") or []),
     }
+    if form:
+        out["form"] = form
+    return out
 
 
 def entities_from_instruction_or_spec(
@@ -135,6 +142,7 @@ def entities_from_instruction_or_spec(
                 "personality": layer.get("personality") or "neutral",
                 "gag": layer.get("gag") or "none",
                 "sfx_on": layer.get("sfx_on") or [],
+                "form": layer.get("form") if isinstance(layer.get("form"), dict) else None,
             })
             if not norm or norm["key"] in seen:
                 continue
@@ -181,6 +189,7 @@ def grow_entities_from_spec(
                 "personality": ent.get("personality") or "neutral",
                 "gag": ent.get("gag") or "none",
                 "sfx_on": ent.get("sfx_on") or [],
+                "form": ent.get("form") or {},
             },
         }
         if prompt:
