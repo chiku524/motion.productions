@@ -24,7 +24,7 @@ class TestBuilderAndSync(unittest.TestCase):
             self.assertTrue(all(0 <= c <= 255 for c in item))
 
     def test_build_pure_color_pool_with_static_and_learned(self):
-        """_build_pure_color_pool merges origin + static_colors + learned_colors without duplicates."""
+        """_build_pure_color_pool prefers static_colors; learned_colors only if static is empty."""
         from src.creation.builder import _build_pure_color_pool
         from src.interpretation.schema import InterpretedInstruction
 
@@ -32,7 +32,7 @@ class TestBuilderAndSync(unittest.TestCase):
         knowledge = {
             "static_colors": {
                 "key1": {"r": 10, "g": 20, "b": 30},
-                "key2": {"r": 255, "g": 0, "b": 0},  # red - may duplicate origin
+                "key2": {"r": 255, "g": 0, "b": 0},
             },
             "learned_colors": {
                 "lc1": {"r": 100, "g": 150, "b": 200},
@@ -40,9 +40,16 @@ class TestBuilderAndSync(unittest.TestCase):
         }
         pool = _build_pure_color_pool(knowledge, instruction, avoid_palette=set())
         self.assertIn((10, 20, 30), pool)
-        self.assertIn((100, 150, 200), pool)
+        self.assertNotIn((100, 150, 200), pool)
         self.assertTrue(any(c == (255, 0, 0) for c in pool))
         self.assertGreaterEqual(len(pool), 17)
+
+        learned_only = {
+            "static_colors": {},
+            "learned_colors": {"lc1": {"r": 100, "g": 150, "b": 200}},
+        }
+        pool2 = _build_pure_color_pool(learned_only, instruction, avoid_palette=set())
+        self.assertIn((100, 150, 200), pool2)
 
     def test_build_pure_color_pool_clamps_rgb(self):
         """_build_pure_color_pool clamps RGB to 0-255."""

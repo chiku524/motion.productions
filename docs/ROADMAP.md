@@ -115,7 +115,7 @@ Video generation software that can utilize any aspect within the movie industry 
 |------|-------------|--------|
 | 7.1 | 2.5D / depth: parallax, layered depth | Done — true multi-plane compositing when `depth_parallax` (z-grouped layers + atmospheric plates); legacy UV warp only as fallback |
 | 7.2 | Asset libraries: textures, shapes, icons | Done — `get_asset_texture` wired into backgrounds/layers via setting→texture map |
-| 7.3 | 3D primitives or external model integration | Done (foundation); full photoreal renderer still the destination |
+| 7.3 | 3D primitives or external model integration | Partial — 2.5D parallax and material plates; no mesh/3D loader |
 | 7.4 | Photoreal path that consumes the same interpreted instruction + registries | Partial — `src/photoreal` backend protocol + `enhanced` procedural stand-in (`render_engine=enhanced\|photoreal`); true generative/asset photoreal still pending (Video AI lab labels photoreal as stand-in) |
 
 **Also wired (Aug 2026 Tier A–E):**
@@ -179,8 +179,8 @@ This track outlines the path to **educational yet entertaining animated videos, 
 | Duration | Up to 2 min (segment concat) | ✓ 2 min supported |
 | Educational structure | Templates, text overlay | ✓ Partial |
 | Visual style | Abstract gradients, motion | Animated characters, objects |
-| Characters | None | Characters with simple animation |
-| Objects/props | Shape overlays only | Discrete objects, props |
+| Characters | Stylized 2D head/body + walk keyframes | Characters with simple animation |
+| Objects/props | Scene-graph props (tree/building/cloud/…) | Discrete objects, props |
 | Script | Prompt → single interpretation | Multi-scene script with dialogue |
 | Entertainment | Genre, pacing, tension | Characters, humor, narrative arc |
 

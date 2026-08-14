@@ -112,10 +112,12 @@ def process_job(job: dict, api_base: str, config: dict, learn: bool) -> bool:
                 except Exception:
                     linguistic_registry = None
                 if instruction is None:
+                    knowledge = get_knowledge_for_creation(config, api_base=api_base)
                     instruction = interpret_user_prompt(
                         prompt,
                         default_duration=duration,
                         linguistic_registry=linguistic_registry,
+                        knowledge=knowledge,
                     )
                 if spec is None:
                     knowledge = get_knowledge_for_creation(config, api_base=api_base)

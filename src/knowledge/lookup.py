@@ -79,6 +79,7 @@ def get_knowledge_for_creation(
             knowledge["origin_motion"] = data.get("origin_motion", [])
             knowledge["interpretation_prompts"] = data.get("interpretation_prompts", [])
             knowledge["static_colors"] = data.get("static_colors", {})
+            knowledge["color_by_name"] = data.get("color_by_name", {})
             knowledge["static_sound"] = data.get("static_sound", [])
             knowledge["narrative"] = data.get("narrative", {})
         except Exception as e:

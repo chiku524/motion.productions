@@ -78,8 +78,8 @@ if (path === "/api/knowledge/discoveries" && request.method === "POST") {
     blends?: Array<{ name: string; domain: string; inputs: Record<string, unknown>; output: Record<string, unknown>; primitive_depths?: Record<string, unknown>; source_prompt?: string }>;
     motion?: Array<{ key: string; motion_level: number; motion_std: number; motion_trend: string; motion_direction?: string; motion_rhythm?: string; depth_breakdown?: Record<string, unknown>; source_prompt?: string; name?: string }>;
     lighting?: Array<{ key: string; brightness: number; contrast: number; saturation: number; depth_breakdown?: Record<string, unknown>; source_prompt?: string; name?: string }>;
-    composition?: Array<{ key: string; center_x: number; center_y: number; luminance_balance: number; source_prompt?: string; name?: string }>;
-    graphics?: Array<{ key: string; edge_density: number; spatial_variance: number; busyness: number; source_prompt?: string; name?: string }>;
+    composition?: Array<{ key: string; center_x: number; center_y: number; luminance_balance: number; source_prompt?: string; name?: string; depth_breakdown?: Record<string, unknown> }>;
+    graphics?: Array<{ key: string; edge_density: number; spatial_variance: number; busyness: number; source_prompt?: string; name?: string; depth_breakdown?: Record<string, unknown> }>;
     temporal?: Array<{
       key: string;
       duration: number;
@@ -141,15 +141,8 @@ if (path === "/api/knowledge/discoveries" && request.method === "POST") {
   // Diagnostics-only posts (job_id, no items) must not take the write lease — they were
   // stampeding Core-4 workers and causing 429s that dropped real color/sound syncs.
   if (!listHasItems && !narrativeHasItems) {
-    if (jobIdEarly) {
-      try {
-        await db.prepare("INSERT INTO discovery_runs (id, job_id) VALUES (?, ?)")
-          .bind(uuid(), jobIdEarly).run();
-      } catch {
-        /* duplicate or missing table */
-      }
-    }
-    return json({ status: "recorded", results }, 201);
+    // Diagnostics-only posts must not inflate discovery_rate (that metric is novel growth).
+    return json({ status: "recorded", results, items_processed: 0 }, 201);
   }
 
   const lease = await acquireDiscoveryLease(env);
@@ -351,6 +344,9 @@ if (path === "/api/knowledge/discoveries" && request.method === "POST") {
       await db.prepare(
         "INSERT INTO learned_composition (id, profile_key, center_x, center_y, luminance_balance, count, sources_json, name) VALUES (?, ?, ?, ?, ?, 1, ?, ?)"
       ).bind(uuid(), c.key, c.center_x, c.center_y, c.luminance_balance, c.source_prompt ? JSON.stringify([c.source_prompt.slice(0, 80)]) : null, name).run();
+      if (c.depth_breakdown && typeof c.depth_breakdown === "object") {
+        await upsertLearnedDynamicMeta(db, "composition", c.key, JSON.stringify(c.depth_breakdown));
+      }
     }
     results.composition++;
     itemsProcessed++;
@@ -366,6 +362,9 @@ if (path === "/api/knowledge/discoveries" && request.method === "POST") {
       await db.prepare(
         "INSERT INTO learned_graphics (id, profile_key, edge_density, spatial_variance, busyness, count, sources_json, name) VALUES (?, ?, ?, ?, ?, 1, ?, ?)"
       ).bind(uuid(), g.key, g.edge_density, g.spatial_variance, g.busyness, g.source_prompt ? JSON.stringify([g.source_prompt.slice(0, 80)]) : null, name).run();
+      if (g.depth_breakdown && typeof g.depth_breakdown === "object") {
+        await upsertLearnedDynamicMeta(db, "graphics", g.key, JSON.stringify(g.depth_breakdown));
+      }
     }
     results.graphics++;
     itemsProcessed++;
@@ -546,7 +545,11 @@ if (path === "/api/knowledge/discoveries" && request.method === "POST") {
       /* ignore */
     }
   }
-  const resp: { status: string; results: Record<string, number>; truncated?: boolean } = { status: "recorded", results };
+  const resp: { status: string; results: Record<string, number>; truncated?: boolean; items_processed?: number } = {
+    status: "recorded",
+    results,
+    items_processed: itemsProcessed,
+  };
   if (truncated) resp.truncated = true;
   return json(resp, 201);
   } catch (e) {
@@ -590,6 +593,7 @@ if (path === "/api/knowledge/for-creation" && request.method === "GET") {
     db.prepare("SELECT motion_type FROM learned_camera ORDER BY count DESC LIMIT ?").bind(limit),
     db.prepare("SELECT prompt, instruction_json FROM interpretations WHERE status = 'done' AND instruction_json IS NOT NULL ORDER BY updated_at DESC LIMIT ?").bind(interpLimit),
     db.prepare("SELECT color_key, r, g, b, name, count, created_at FROM static_colors ORDER BY count DESC LIMIT ?").bind(colorScan),
+    db.prepare("SELECT color_key, r, g, b, name, count, created_at FROM static_colors ORDER BY count ASC, created_at DESC LIMIT ?").bind(limit),
     db.prepare("SELECT sound_key, tone, timbre, amplitude, name, count, created_at FROM static_sound ORDER BY count DESC LIMIT ?").bind(Math.min(colorScan, 200)),
     db.prepare("SELECT aspect, entry_key, value, name, count FROM narrative_entries ORDER BY count DESC LIMIT ?").bind(Math.min(colorScan, 200)),
   ]);
@@ -720,7 +724,27 @@ if (path === "/api/knowledge/for-creation" && request.method === "GET") {
       family: classifyColorFamily(r.r, r.g, r.b),
     };
   }
-  const staticSoundRows = (batchResults[9].results || []) as StaticSoundRow[];
+  const underfilledRows = (batchResults[9].results || []) as StaticColorRow[];
+  for (const r of underfilledRows) {
+    if (static_colors[r.color_key]) continue;
+    static_colors[r.color_key] = {
+      r: r.r,
+      g: r.g,
+      b: r.b,
+      name: r.name ?? undefined,
+      count: r.count,
+      created_at: r.created_at ?? undefined,
+      family: classifyColorFamily(r.r, r.g, r.b),
+    };
+  }
+  const color_by_name: Record<string, { key: string; r: number; g: number; b: number }> = {};
+  for (const [key, data] of Object.entries(static_colors)) {
+    const nm = (data.name || "").trim().toLowerCase();
+    if (nm && !color_by_name[nm]) {
+      color_by_name[nm] = { key, r: data.r, g: data.g, b: data.b };
+    }
+  }
+  const staticSoundRows = (batchResults[10].results || []) as StaticSoundRow[];
   const static_sound = staticSoundRows.map((r) => ({
     key: r.sound_key,
     tone: r.tone ?? undefined,
@@ -730,7 +754,7 @@ if (path === "/api/knowledge/for-creation" && request.method === "GET") {
     count: r.count,
     created_at: r.created_at ?? undefined,
   }));
-  const narrativeRows = (batchResults[10].results || []) as NarrativeRow[];
+  const narrativeRows = (batchResults[11].results || []) as NarrativeRow[];
   const narrative: Record<string, Array<{ key: string; value?: string; name?: string; count: number }>> = {};
   // Cap per aspect so one hot aspect cannot crowd out others (explorer/creation alignment).
   const perAspectCap = Math.max(4, Math.ceil(limit / 7));
@@ -818,6 +842,7 @@ if (path === "/api/knowledge/for-creation" && request.method === "GET") {
     origin_motion,
     interpretation_prompts,
     static_colors,
+    color_by_name,
     static_sound,
     narrative,
   };

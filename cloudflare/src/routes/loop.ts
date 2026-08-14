@@ -257,6 +257,8 @@ if (path === "/api/loop/progress" && request.method === "GET") {
     }
   }
   const discoveryRate = totalRuns > 0 ? Math.round((withDiscovery / totalRuns) * 100) : 0;
+  // discovery_rate_pct = jobs whose last non-empty discoveries POST recorded a discovery_runs row.
+  // Empty job_id-only pings no longer count (that was inflating the 95% target).
 
   // Exploit / explore counts from loop state (KV) for export and monitoring
   let exploit_count = 0;

@@ -109,6 +109,13 @@ def run() -> None:
                 _cached_fetch("linguistic", cache, CACHE_TTL_SECONDS, fetch_linguistic_registry, api_base)
                 if api_base else {}
             )
+            knowledge = (
+                _cached_fetch(
+                    "knowledge", cache, CACHE_TTL_SECONDS,
+                    get_knowledge_for_creation, None, api_base=api_base,
+                )
+                if api_base else {}
+            )
             for item in items:
                 uid = item.get("id")
                 prompt = item.get("prompt", "").strip()
@@ -119,6 +126,7 @@ def run() -> None:
                         prompt,
                         default_duration=6.0,
                         linguistic_registry=linguistic_registry or None,
+                        knowledge=knowledge or None,
                     )
                     payload = instruction.to_api_dict() if hasattr(instruction, "to_api_dict") else instruction.to_dict()
                     api_request_with_retry(
@@ -154,6 +162,7 @@ def run() -> None:
                                     prompt,
                                     default_duration=6.0,
                                     linguistic_registry=linguistic_registry or None,
+                                    knowledge=knowledge or None,
                                 )
                                 payload = instruction.to_api_dict() if hasattr(instruction, "to_api_dict") else instruction.to_dict()
                                 batch.append({"prompt": prompt, "instruction": payload, "source": "backfill"})
@@ -227,6 +236,7 @@ def run() -> None:
                                 prompt,
                                 default_duration=6.0,
                                 linguistic_registry=linguistic_registry,
+                                knowledge=knowledge or None,
                             )
                             payload = instruction.to_api_dict() if hasattr(instruction, "to_api_dict") else instruction.to_dict()
                             api_request_with_retry(

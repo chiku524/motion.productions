@@ -122,6 +122,60 @@ def growth_metrics(added: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# Must match Worker processing order in knowledge.ts (truncation remainder).
+_WORKER_DISCOVERY_ORDER: tuple[tuple[str, str | None], ...] = (
+    ("static_colors", None),
+    ("static_sound", None),
+    ("narrative", "genre"),
+    ("narrative", "mood"),
+    ("narrative", "plots"),
+    ("narrative", "settings"),
+    ("narrative", "themes"),
+    ("narrative", "style"),
+    ("narrative", "scene_type"),
+    ("colors", None),
+    ("blends", None),
+    ("time", None),
+    ("motion", None),
+    ("lighting", None),
+    ("composition", None),
+    ("graphics", None),
+    ("temporal", None),
+    ("technical", None),
+    ("audio_semantic", None),
+    ("gradient", None),
+    ("camera", None),
+    ("transition", None),
+    ("depth", None),
+    ("entities", None),
+)
+
+
+def _flatten_discovery_items(payload: dict[str, Any]) -> list[tuple[str, str | None, Any]]:
+    items: list[tuple[str, str | None, Any]] = []
+    for key, aspect in _WORKER_DISCOVERY_ORDER:
+        if key == "narrative":
+            for item in ((payload.get("narrative") or {}).get(aspect) or []):
+                items.append(("narrative", aspect, item))
+        else:
+            for item in payload.get(key) or []:
+                items.append((key, None, item))
+    return items
+
+
+def _rebuild_discovery_payload(
+    items: list[tuple[str, str | None, Any]],
+) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for key, aspect, item in items:
+        if key == "narrative":
+            narr = out.setdefault("narrative", {})
+            narr.setdefault(aspect or "themes", []).append(item)
+        else:
+            out.setdefault(key, []).append(item)
+    return out
+
+
 def post_discoveries(
     api_base: str,
     discoveries: dict[str, Any],
@@ -133,6 +187,7 @@ def post_discoveries(
     Batches into small chunks with a short pause between posts to reduce D1 500/503 storms.
     Returns merged API response. Uses retry on 5xx/connection errors.
     When job_id is provided, records for discovery rate metric (on last chunk).
+    If the Worker truncates a chunk, remaining items are posted without job_id.
     """
     import time
     import os
@@ -146,19 +201,20 @@ def post_discoveries(
         return {}
     pause = float(os.environ.get("DISCOVERIES_CHUNK_PAUSE_SECONDS", DISCOVERIES_CHUNK_PAUSE_SECONDS))
     merged: dict[str, Any] = {"status": "recorded", "results": {}}
-    total = len(chunks)
-    for i, chunk in enumerate(chunks):
-        if i > 0 and pause > 0:
+    pending = list(chunks)
+    posted = 0
+    while pending:
+        chunk = pending.pop(0)
+        if posted > 0 and pause > 0:
             time.sleep(pause)
+        posted += 1
         keys = [k for k in chunk.keys() if k != "job_id"]
         n_items = sum(
             len(v) if isinstance(v, list) else sum(len(x) for x in v.values() if isinstance(x, list))
             for k, v in chunk.items()
             if k != "job_id"
         )
-        print(f"  discoveries chunk {i + 1}/{total} ({n_items} items: {', '.join(keys)})", flush=True)
-        # Worker may take a while under load; use 90s to reduce read timeouts.
-        # Extra retries: write-lease 429s are common under Core-4 multi-chunk posts.
+        print(f"  discoveries chunk {posted} ({n_items} items: {', '.join(keys)})", flush=True)
         resp = api_request_with_retry(
             api_base, "POST", "/api/knowledge/discoveries", data=chunk, timeout=90, max_retries=8
         )
@@ -166,6 +222,13 @@ def post_discoveries(
         res = resp.get("results", {})
         for k, v in res.items():
             merged["results"][k] = merged["results"].get(k, 0) + v
+        if resp.get("truncated") and posted < 12:
+            processed = int(resp.get("items_processed") or 0)
+            leftover = _flatten_discovery_items(chunk)[processed:]
+            if leftover:
+                rest = _rebuild_discovery_payload(leftover)
+                pending = _chunk_discoveries(rest) + pending
+                merged["truncated"] = False
     return merged
 
 

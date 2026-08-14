@@ -214,12 +214,12 @@ Clean organization: every file is in its respective directory.
 See [docs/ROADMAP.md](ROADMAP.md) for the 7-phase plan toward industry-level (including photoreal) video generation:
 
 - **Phase 1** (Done): Gradient types, camera motion, shape overlays
-- **Phase 2**: Cinematography and scene structure
-- **Phase 3**: Lighting and color
-- **Phase 4**: Text and graphics
-- **Phase 5**: Narrative and genre
-- **Phase 6**: Sound
-- **Phase 7**: Higher realism / photoreal path on the same registries
+- **Phase 2** (Done, rarely exercised at 1s loop duration): Cinematography and scene structure
+- **Phase 3** (Done): Lighting and color
+- **Phase 4** (Done): Text and graphics
+- **Phase 5** (Done as procedural scaffolding): Narrative and genre
+- **Phase 6** (Done): Sound
+- **Phase 7** (Partial): Higher realism / photoreal is an enhanced procedural stand-in on the same registries
 
 ---
 

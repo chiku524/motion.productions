@@ -152,6 +152,21 @@ def _oklab_to_rgb_arrays(L, a, b):
     )
 
 
+def palette_stops_from_rgb(r: float, g: float, b: float) -> list[tuple[int, int, int]]:
+    """Four gradient stops around one registry RGB so creation can use a named color as a palette."""
+    ri = max(0, min(255, int(round(float(r)))))
+    gi = max(0, min(255, int(round(float(g)))))
+    bi = max(0, min(255, int(round(float(b)))))
+    dark = (max(0, ri // 2), max(0, gi // 2), max(0, bi // 2))
+    mid = (ri, gi, bi)
+    light = (
+        min(255, ri + (255 - ri) // 2),
+        min(255, gi + (255 - gi) // 2),
+        min(255, bi + (255 - bi) // 2),
+    )
+    return [dark, mid, mid, light]
+
+
 def _linear_to_srgb_np(c):
     import numpy as np
 

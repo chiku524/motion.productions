@@ -667,19 +667,107 @@ def _validate_prompt(prompt: str) -> str:
     return s
 
 
+def _word_in_prompt(name: str, prompt_lower: str) -> bool:
+    """True when name appears as a whole word/phrase in the prompt."""
+    n = (name or "").strip().lower()
+    if len(n) < 4:
+        return False
+    return re.search(rf"(?<![a-z0-9]){re.escape(n)}(?![a-z0-9])", prompt_lower) is not None
+
+
+def _apply_registry_knowledge(
+    prompt_lower: str,
+    knowledge: dict | None,
+    *,
+    palette: str,
+    palette_hints: list[str],
+    color_primitive_lists: list[list[tuple[int, int, int]]],
+    setting: str | None,
+    theme: str | None,
+    genre_resolved: str,
+    audio_hints: list[str],
+) -> tuple[
+    str,
+    list[str],
+    list[list[tuple[int, int, int]]],
+    str | None,
+    str | None,
+    str,
+    list[str],
+]:
+    """Override keyword defaults when the prompt names a registry entry."""
+    if not knowledge:
+        return palette, palette_hints, color_primitive_lists, setting, theme, genre_resolved, audio_hints
+    from ..knowledge.color_space import palette_stops_from_rgb
+
+    color_hits: list[tuple[str, list[tuple[int, int, int]]]] = []
+    for _key, data in (knowledge.get("static_colors") or {}).items():
+        if not isinstance(data, dict):
+            continue
+        name = (data.get("name") or "").strip()
+        if not _word_in_prompt(name, prompt_lower):
+            continue
+        try:
+            stops = palette_stops_from_rgb(data["r"], data["g"], data["b"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        color_hits.append((name, stops))
+    color_hits.sort(key=lambda x: len(x[0]), reverse=True)
+    if color_hits:
+        name, stops = color_hits[0]
+        palette = name
+        palette_hints = [name] + [h for h in palette_hints if h.lower() != name.lower()]
+        color_primitive_lists = [stops] + [
+            lst for lst in color_primitive_lists if lst != stops
+        ]
+
+    for item in knowledge.get("static_sound") or []:
+        if not isinstance(item, dict):
+            continue
+        name = (item.get("name") or "").strip()
+        if _word_in_prompt(name, prompt_lower) and name not in audio_hints:
+            audio_hints = [name] + audio_hints
+
+    narrative = knowledge.get("narrative") or {}
+    if isinstance(narrative, dict):
+        for aspect, entries in narrative.items():
+            if not isinstance(entries, list):
+                continue
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                label = (entry.get("name") or entry.get("value") or entry.get("key") or "").strip()
+                if not _word_in_prompt(label, prompt_lower) and not _word_in_prompt(
+                    str(entry.get("value") or ""), prompt_lower
+                ):
+                    continue
+                value = (entry.get("value") or entry.get("key") or label).strip()
+                aspect_l = str(aspect).strip().lower()
+                if aspect_l in ("settings", "setting") and not setting:
+                    setting = value
+                elif aspect_l in ("themes", "theme") and not theme:
+                    theme = value
+                elif aspect_l == "genre" and genre_resolved in ("general", DEFAULT_GENRE):
+                    genre_resolved = value
+
+    return palette, palette_hints, color_primitive_lists, setting, theme, genre_resolved, audio_hints
+
+
 def interpret_user_prompt(
     prompt: str,
     *,
     default_duration: float | None = None,
     seed: int | None = None,
     linguistic_registry: dict[str, dict[str, str]] | None = None,
+    knowledge: dict | None = None,
 ) -> InterpretedInstruction:
     """
     Precisely interpret what the user is instructing.
 
     Parses: palette, motion, intensity, duration, style, tone, negations.
+    When knowledge is provided, named static_colors / static_sound / narrative
+    entries in the prompt override keyword-table defaults.
     Returns an InterpretedInstruction with resolved values.
-    Validates prompt input for accuracy and precision.
     """
     prompt = normalize_prompt_for_interpretation(_validate_prompt(prompt or ""))
     raw_lower = prompt.lower()
@@ -787,6 +875,25 @@ def interpret_user_prompt(
     # Resolve palette hints to primitive RGB lists (prompt → values, not names)
     default_rgbs = PALETTES.get(DEFAULT_PALETTE, list(PALETTES.values())[0])
     color_primitive_lists = [list(PALETTES.get(h, default_rgbs)) for h in palette_hints]
+    (
+        palette,
+        palette_hints,
+        color_primitive_lists,
+        setting,
+        theme,
+        genre_resolved,
+        audio_hints,
+    ) = _apply_registry_knowledge(
+        raw_lower,
+        knowledge,
+        palette=palette,
+        palette_hints=palette_hints,
+        color_primitive_lists=color_primitive_lists,
+        setting=setting,
+        theme=theme,
+        genre_resolved=genre_resolved,
+        audio_hints=audio_hints,
+    )
 
     return InterpretedInstruction(
         palette_name=palette,

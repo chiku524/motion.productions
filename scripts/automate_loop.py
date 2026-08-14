@@ -691,6 +691,7 @@ def run() -> None:
                     prompt,
                     default_duration=duration,
                     linguistic_registry=linguistic_registry,
+                    knowledge=knowledge,
                 )
             if spec is None:
                 spec = build_spec_from_instruction(
@@ -834,22 +835,8 @@ def run() -> None:
                     logger.warning("Missing discovery (job_id=%s): %s", job_id, e)
                     print(f"  (discoveries sync: {e})")
 
-            # Guaranteed discovery run recording — ensures diagnostics show ✓ disc even when
-            # post_all_discoveries or grow_and_sync failed or threw before recording.
-            # Retry once after delay on D1/5xx so progress is recorded under load.
-            try:
-                from src.knowledge.remote_sync import post_discoveries
-                post_discoveries(args.api_base, {"job_id": job_id})
-            except (APIError, Exception) as e:
-                if isinstance(e, APIError) and e.status_code and 500 <= e.status_code < 600:
-                    logger.info("Discovery recording failed (D1/5xx), retrying in 12s: %s", e)
-                    time.sleep(12)
-                    try:
-                        post_discoveries(args.api_base, {"job_id": job_id})
-                    except Exception as e2:
-                        logger.warning("Missing discovery (job_id=%s): post_discoveries retry — %s", job_id, e2)
-                else:
-                    logger.warning("Missing discovery (job_id=%s): post_discoveries — %s", job_id, e)
+            # Discovery_runs is recorded on the last non-empty discoveries chunk.
+            # Empty job_id-only posts no longer inflate discovery_rate.
 
             try:
                 # Explicit retries to reduce "missing learning" from transient 5xx/429/connection (audit §1.2)

@@ -10,14 +10,20 @@ export const SOUND_ORIGIN_PRIMARIES = [...GENERATED_SOUND_ORIGIN_PRIMARIES] as r
 
 export async function resolveUniqueBlendName(env: Env, base: string): Promise<string> {
   const db = getDb(env);
-  let candidate = base;
+  const cleaned = (base || "").replace(/\d+$/, "").trim() || "Haven";
   for (let i = 0; i < 100; i++) {
+    const candidate = i === 0 ? toTitleCase(cleaned) : toTitleCase(inventSemanticWord(nameSeed(cleaned, i)));
     const inReserve = await db.prepare("SELECT name FROM name_reserve WHERE name = ?").bind(candidate).first();
     const inBlends = await db.prepare("SELECT name FROM learned_blends WHERE name = ?").bind(candidate).first();
     if (!inReserve && !inBlends) return candidate;
-    candidate = i === 0 ? base + "2" : base + (i + 2);
   }
-  return base + (Math.floor(Math.random() * 9000) + 1000);
+  return toTitleCase(inventSemanticWord(nameSeed(cleaned, Date.now() % 0x7fffffff)));
+}
+
+function nameSeed(s: string, i: number): number {
+  let h = 2166136261;
+  for (let c = 0; c < s.length; c++) h = Math.imul(h ^ s.charCodeAt(c), 16777619);
+  return Math.abs((h + i * 7919) | 0) % 0x7fffffff;
 }
 
 // Semantic name parts (mirrors Python blend_names.py) — no gibberish
@@ -298,8 +304,7 @@ export async function generateUniqueName(env: Env): Promise<string> {
       if (!inReserve && !inBlends && !inStatic && !inLearned) return name;
     }
   }
-  const n = (Math.floor(Math.random() * 100000) + 1) % 100000;
-  return "Novel" + n.toString().padStart(5, "0");
+  return toTitleCase(inventSemanticWord(Math.floor(Math.random() * 0x7fffffff)));
 }
 
 export async function logEvent(env: Env, eventType: string, jobId: string | null, payload: Record<string, unknown> | null): Promise<void> {

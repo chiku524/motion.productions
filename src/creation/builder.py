@@ -19,6 +19,7 @@ from ..knowledge.origins import GRAPHICS_ORIGINS, CAMERA_ORIGINS
 from ..procedural.data.keywords import (
     DEFAULT_CAMERA,
     DEFAULT_GRADIENT,
+    DEFAULT_INTENSITY,
     DEFAULT_LIGHTING,
     DEFAULT_MOTION,
     DEFAULT_PALETTE,
@@ -139,6 +140,24 @@ def _motion_from_registry(
     return motion
 
 
+def _intensity_from_learned_motion(knowledge: dict[str, Any] | None) -> float | None:
+    """Map learned motion_level (typically 0–25) onto SceneSpec.intensity (0–1)."""
+    learned = (knowledge or {}).get("learned_motion") or []
+    levels: list[float] = []
+    for m in learned:
+        if not isinstance(m, dict) or "motion_level" not in m:
+            continue
+        try:
+            levels.append(float(m.get("motion_level") or 0))
+        except (TypeError, ValueError):
+            continue
+    if not levels:
+        return None
+    sample = levels[:8]
+    avg = sum(sample) / len(sample)
+    return max(0.15, min(1.0, avg / 20.0))
+
+
 def build_spec_from_instruction(
     instruction: InterpretedInstruction,
     *,
@@ -162,6 +181,10 @@ def build_spec_from_instruction(
     palette = instruction.palette_name
     motion = instruction.motion_type
     intensity = instruction.intensity
+    if abs(float(intensity) - float(DEFAULT_INTENSITY)) < 1e-9:
+        learned_i = _intensity_from_learned_motion(knowledge)
+        if learned_i is not None:
+            intensity = learned_i
     gradient = getattr(instruction, "gradient_type", "vertical") or "vertical"
     camera = getattr(instruction, "camera_motion", "static") or "static"
     shape = getattr(instruction, "shape_overlay", "none") or "none"
@@ -647,10 +670,11 @@ def _build_pure_color_pool(
     if isinstance(static, dict):
         _add_with_count_inverse(static.items())
 
-    # 3. Learned (whole-video) — with count-inverse multiplicity
-    learned = (knowledge or {}).get("learned_colors") or {}
-    if isinstance(learned, dict):
-        _add_with_count_inverse(learned.items())
+    # 3. learned_colors only when static registry is empty (static is the mission-correct store)
+    if not static:
+        learned = (knowledge or {}).get("learned_colors") or {}
+        if isinstance(learned, dict):
+            _add_with_count_inverse(learned.items())
 
     return pool
 
@@ -709,40 +733,32 @@ def _build_palette_from_blending(
         for other in primitive_lists[1:]:
             result = blend_palettes(result, other, weight=0.5)
     else:
-        hints = getattr(instruction, "palette_hints", []) or [fallback_palette_name]
-        hints = [h for h in hints if h not in avoid]
-        # Registry-first: no single hardcoded default; when default/empty, pick 2–3 from full set (wider exploration)
-        if not hints:
+        hints = [h for h in (getattr(instruction, "palette_hints", None) or []) if h not in avoid]
+        static_rgb_pool = _static_rgb_pool(knowledge)
+        default_only = (not hints) or set(hints) <= {fallback_palette_name, "default", DEFAULT_PALETTE}
+        if default_only:
+            # Prefer discovered static RGB over named PALETTES catalog
+            if static_rgb_pool:
+                from ..random_utils import secure_choice as _sc
+                picked: list[tuple[int, int, int]] = []
+                pool_rgb = list(static_rgb_pool)
+                for _ in range(min(4, len(pool_rgb))):
+                    c = _sc(pool_rgb)
+                    if c is not None:
+                        picked.append(c)
+                        pool_rgb = [x for x in pool_rgb if x != c]
+                if picked:
+                    return picked if len(picked) >= 2 else picked + picked
             pool = [k for k in PALETTES if k not in avoid]
             name_to_count: dict[str, int] = {k: 0 for k in pool}
-            if knowledge and (knowledge.get("learned_colors") or knowledge.get("static_colors")):
-                learned = knowledge.get("learned_colors") or {}
-                for _key, data in learned.items():
-                    if isinstance(data, dict):
-                        name = (data.get("name") or "").strip()
-                        if name and name in PALETTES and name not in avoid:
-                            if name not in pool:
-                                pool.append(name)
-                            name_to_count[name] = int(data.get("count", 0) or 0)
-                # Named pure colors: prefer underused static registry entries by name when they map to PALETTES;
-                # otherwise keep RGB triples for direct palette_colors construction below.
-                static_rgb_pool: list[tuple[int, int, int]] = []
-                for _key, data in (knowledge.get("static_colors") or {}).items():
-                    if not isinstance(data, dict):
-                        continue
-                    name = (data.get("name") or "").strip()
-                    if name and name in PALETTES and name not in avoid:
-                        if name not in pool:
-                            pool.append(name)
-                        name_to_count[name] = name_to_count.get(name, 0) + int(data.get("count", 0) or 0)
-                    try:
-                        r, g, b = int(data.get("r")), int(data.get("g")), int(data.get("b"))
-                        static_rgb_pool.append((r, g, b))
-                    except (TypeError, ValueError):
-                        pass
-            else:
-                static_rgb_pool = []
-            # Pick 2–3 distinct palette hints, biased toward underused
+            for _key, data in ((knowledge or {}).get("static_colors") or {}).items():
+                if not isinstance(data, dict):
+                    continue
+                name = (data.get("name") or "").strip()
+                if name and name not in avoid:
+                    if name not in pool:
+                        pool.append(name)
+                    name_to_count[name] = name_to_count.get(name, 0) + int(data.get("count", 0) or 0)
             n_hints = min(3, max(2, len(pool))) if len(pool) >= 2 else 1
             hints = []
             pool_copy = list(pool)
@@ -759,35 +775,28 @@ def _build_palette_from_blending(
                 hints = [fallback_palette_name] if fallback_palette_name not in avoid else list(PALETTES.keys())[:1]
             if not hints:
                 hints = ["default"]
-            # If still only defaults and we have static RGB discoveries, build a custom palette from them
-            if hints == ["default"] and static_rgb_pool:
-                from ..random_utils import secure_choice as _sc
-                picked = []
-                pool_rgb = list(static_rgb_pool)
-                for _ in range(min(4, len(pool_rgb))):
-                    c = _sc(pool_rgb)
-                    if c is not None:
-                        picked.append(c)
-                        pool_rgb = [x for x in pool_rgb if x != c]
-                if picked:
-                    return picked if len(picked) >= 2 else picked + picked
-        result = list(PALETTES.get(hints[0], PALETTES.get("default", list(PALETTES.values())[0])))
-        for name in hints[1:]:
-            other = PALETTES.get(name, PALETTES.get("default", list(PALETTES.values())[0]))
+        resolved: list[list[tuple[int, int, int]]] = []
+        for name in hints:
+            stops = _rgb_stops_for_name(name, knowledge)
+            if stops:
+                resolved.append(stops)
+        if not resolved:
+            resolved = [list(PALETTES.get("default", list(PALETTES.values())[0]))]
+        result = list(resolved[0])
+        for other in resolved[1:]:
             result = blend_palettes(result, other, weight=0.5)
 
-    # Optionally blend with learned color (novel from discoveries) — deterministic by prompt when avoid empty
-    learned = (knowledge or {}).get("learned_colors", {}) or {}
-    if learned and not avoid:
-        items = list(learned.items())[:8]
+    # Tint with a static registry color when the prompt did not name one
+    static = (knowledge or {}).get("static_colors") or {}
+    if static and not avoid:
+        items = list(static.items())[:8]
         if items:
             seed_hint = getattr(instruction, "raw_prompt", "") or ""
             idx = hash(seed_hint) % len(items)
             idx = idx if idx >= 0 else -idx
-            key, data = items[idx]
+            _key, data = items[idx]
             if isinstance(data, dict) and "r" in data and "g" in data and "b" in data:
-                lr, lg, lb = data["r"], data["g"], data["b"]
-                learned_rgb = (float(lr), float(lg), float(lb))
+                learned_rgb = (float(data["r"]), float(data["g"]), float(data["b"]))
                 mid = len(result) // 2
                 blended = blend_colors(
                     (result[mid][0], result[mid][1], result[mid][2]),
@@ -827,6 +836,42 @@ def _build_rhythm_from_blending(instruction: InterpretedInstruction, fallback: s
     from ..knowledge.blending import blend_rhythm
     val = getattr(instruction, "motion_rhythm", None) or fallback
     return blend_rhythm(val, fallback, weight=0.35) if val != fallback else val
+
+
+def _rgb_stops_for_name(
+    name: str,
+    knowledge: dict[str, Any] | None,
+) -> list[tuple[int, int, int]] | None:
+    """Registry RGB by name, then hardcoded PALETTES as primitive fallback."""
+    from ..knowledge.color_space import palette_stops_from_rgb
+
+    needle = (name or "").strip().lower()
+    if not needle:
+        return None
+    for data in ((knowledge or {}).get("static_colors") or {}).values():
+        if not isinstance(data, dict):
+            continue
+        if (data.get("name") or "").strip().lower() != needle:
+            continue
+        try:
+            return palette_stops_from_rgb(data["r"], data["g"], data["b"])
+        except (KeyError, TypeError, ValueError):
+            continue
+    if name in PALETTES:
+        return list(PALETTES[name])
+    return None
+
+
+def _static_rgb_pool(knowledge: dict[str, Any] | None) -> list[tuple[int, int, int]]:
+    pool: list[tuple[int, int, int]] = []
+    for data in ((knowledge or {}).get("static_colors") or {}).values():
+        if not isinstance(data, dict):
+            continue
+        try:
+            pool.append((int(data["r"]), int(data["g"]), int(data["b"])))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return pool
 
 
 def _build_audio_from_blending(

@@ -102,12 +102,13 @@ class ProceduralVideoGenerator(VideoGenerator):
         except Exception:
             linguistic_registry = None
 
+        knowledge = get_knowledge_for_creation(config)
         instruction = interpret_user_prompt(
             prompt,
             default_duration=duration_seconds,
             linguistic_registry=linguistic_registry,
+            knowledge=knowledge,
         )
-        knowledge = get_knowledge_for_creation(config)
         base_spec = build_spec_from_instruction(
             instruction, knowledge=knowledge, creation_seed=seed,
         )
