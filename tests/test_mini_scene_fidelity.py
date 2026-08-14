@@ -197,6 +197,7 @@ class TestMiniSceneFidelity(unittest.TestCase):
         self.assertEqual(spec.audio_genre, "none")
         self.assertTrue(spec.pure_sounds)
         self.assertEqual(len(spec.pure_sounds), 2)
+        self.assertGreaterEqual(len(spec.pure_colors or []), 16)
 
     def test_motion_window_stays_pure_higher_motion(self):
         prompt = "motion window: amber paired with teal in slow drift"
@@ -210,6 +211,7 @@ class TestMiniSceneFidelity(unittest.TestCase):
         self.assertEqual(spec.audio_genre, "none")
         self.assertTrue(spec.pure_sounds)
         self.assertEqual(len(spec.pure_sounds), 4)
+        self.assertGreaterEqual(len(spec.pure_colors or []), 16)
 
     def test_setting_props_forest_trees(self):
         prompt = "a person walking left in a forest with soft vocals"
@@ -310,6 +312,17 @@ class TestMiniSceneFidelity(unittest.TestCase):
         r3, _, _ = _render_pure_per_frame(xx, yy, colors, 0.8, 7, 1.0, motion_level=16.0, motion_val=0.2)
         window_delta = float(np.mean(np.abs(r2 - r3)))
         self.assertGreater(window_delta, static_delta)
+
+    def test_pixels_pair_independently_from_a_large_pool(self):
+        import numpy as np
+        from src.procedural.renderer import _render_pure_per_frame
+
+        xx, yy = np.meshgrid(np.linspace(0, 1, 48), np.linspace(0, 1, 48))
+        colors = [(i * 15, 40, 240 - i * 12) for i in range(16)]
+        r, g, b = _render_pure_per_frame(xx, yy, colors, 0.0, 19, 1.0, motion_level=2.0)
+        neighbor = float(np.mean(np.abs(r[:, 1:] - r[:, :-1])))
+        self.assertGreater(neighbor, 4.0)
+        self.assertGreater(float(np.std(r)), 20.0)
 
 
 if __name__ == "__main__":

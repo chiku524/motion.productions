@@ -183,6 +183,7 @@ _PIXEL_PAIRING_PHRASES = (
     "dynamic pairing",
     "still pixel",
     "color pairing",
+    "independent pixel",
     "sound pairing",
     "static sound",
     "dynamic sound",
@@ -382,10 +383,11 @@ def build_spec_from_instruction(
         pool = _pool_from_knowledge(knowledge, "learned_camera", "origin_camera", _CAMERA_VALID)
         camera = secure_choice(pool) if pool else secure_choice([v for v in CAMERA_ORIGINS["motion_type"] if v in _CAMERA_VALID] or list(_CAMERA_VALID))
 
-    # Pixel pairing: unique 2–4 registry colors this clip; otherwise full discovery pool
+    # Pixel field: a large unique registry pool so each pixel can pair independently.
+    # Frames hold the field still; windows rematch. Not 2–4 colors for the whole clip.
     pair_n = None
     if wants_pairing:
-        pair_n = 4 if window_pairing else (2 if static_frame_pairing else 3)
+        pair_n = 96 if window_pairing else (48 if static_frame_pairing else 64)
     pair_seed = creation_seed if creation_seed is not None else None
     pure_colors = _build_pure_color_pool(
         knowledge,
@@ -805,8 +807,8 @@ def _sample_color_pairing(
     pair_count: int,
     seed: int | None,
 ) -> list[tuple[int, int, int]]:
-    """Unique 2–N registry colors for this clip (named first, then underused / seed-picked)."""
-    n = max(2, min(6, int(pair_count)))
+    """Unique registry colors for this clip's pixel field (named first, then underused)."""
+    n = max(16, min(128, int(pair_count)))
     pair_seed = int(seed) if seed is not None else 1
     named = _prompt_named_rgbs(knowledge, instruction)
     unique_pool: list[tuple[int, int, int]] = []
@@ -843,8 +845,8 @@ def _build_pure_color_pool(
     Build registry colors for pixel pairing / pure-per-frame creation.
 
     Default (pair_count unset): origin primitives + static_colors (count-inverse).
-    When pair_count is set: a unique 2–N pairing for this clip from named prompt
-    colors plus underused discoveries — new combination each loop.
+    When pair_count is set: a unique large field for this clip from named prompt
+    colors plus underused discoveries — each pixel pairs independently from it.
     """
     _ = avoid_palette
     pool: list[tuple[int, int, int]] = []

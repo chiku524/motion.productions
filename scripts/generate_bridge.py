@@ -102,6 +102,7 @@ def process_job(job: dict, api_base: str, config: dict, learn: bool) -> bool:
             )
             from src.knowledge.growth_per_instance import grow_all_from_video
             from src.knowledge.narrative_registry import grow_narrative_from_spec
+            from src.knowledge.pixel_emergence import merge_emergence_payloads
 
             # Prefer the spec/instruction that actually drove the render
             instruction = getattr(generator, "_last_instruction", None)
@@ -169,6 +170,11 @@ def process_job(job: dict, api_base: str, config: dict, learn: bool) -> bool:
                 sample_every = learning_cfg.get("sample_every", 2)
                 if duration < 15 and sample_every > 1:
                     sample_every = 1
+                knowledge = {}
+                try:
+                    knowledge = get_knowledge_for_creation(config, api_base=api_base)
+                except Exception:
+                    knowledge = {}
                 added, novel_for_sync = grow_all_from_video(
                     path,
                     prompt=prompt,
@@ -179,6 +185,7 @@ def process_job(job: dict, api_base: str, config: dict, learn: bool) -> bool:
                     collect_novel_for_sync=True,
                     spec=spec,
                     extraction_focus=extraction_focus,
+                    knowledge=knowledge,
                 )
                 if any(added.values()):
                     metrics = growth_metrics(added)
@@ -199,6 +206,12 @@ def process_job(job: dict, api_base: str, config: dict, learn: bool) -> bool:
                     if any(narrative_added.values()):
                         print(f"  Narrative registry: {sum(narrative_added.values())} new — {narrative_added}")
 
+                narrative_novel, entity_novel = merge_emergence_payloads(
+                    novel_for_sync, narrative_novel, list(novel_for_sync.get("entities") or [])
+                )
+                if entity_novel:
+                    novel_for_sync["entities"] = entity_novel
+
                 if extraction_focus == "frame":
                     post_static_discoveries(
                         api_base,
@@ -206,6 +219,10 @@ def process_job(job: dict, api_base: str, config: dict, learn: bool) -> bool:
                         novel_for_sync.get("static_sound") or [],
                         job_id=job_id,
                     )
+                    if narrative_novel and any(narrative_novel.values()):
+                        post_narrative_discoveries(api_base, narrative_novel, job_id=job_id)
+                    if entity_novel:
+                        post_dynamic_discoveries(api_base, {"entities": entity_novel}, job_id=job_id)
                 elif extraction_focus == "window":
                     post_dynamic_discoveries(api_base, novel_for_sync, job_id=job_id)
                     if narrative_novel and any(narrative_novel.values()):

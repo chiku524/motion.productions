@@ -114,8 +114,12 @@ def growth_metrics(added: dict[str, Any]) -> dict[str, Any]:
         v for k, v in added.items()
         if k.startswith(dynamic_prefix) and isinstance(v, (int, float))
     )
+    emergence_total = sum(
+        v for k, v in added.items()
+        if str(k).startswith("emergence_") and isinstance(v, (int, float))
+    )
     return {
-        "total_added": static_total + dynamic_total,
+        "total_added": static_total + dynamic_total + emergence_total,
         "static_added": static_total,
         "dynamic_added": dynamic_total,
         "by_aspect": {k: v for k, v in added.items() if v},

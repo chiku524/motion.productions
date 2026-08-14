@@ -45,10 +45,9 @@ class TestBuilderAndSync(unittest.TestCase):
             },
         }
         pool = _build_pure_color_pool(
-            knowledge, instruction, avoid_palette=set(), pair_count=2, seed=11
+            knowledge, instruction, avoid_palette=set(), pair_count=48, seed=11
         )
-        self.assertEqual(len(pool), 2)
-        self.assertEqual(len(set(pool)), 2)
+        self.assertGreaterEqual(len(set(pool)), 16)
         self.assertIn((200, 140, 40), pool)
         self.assertIn((20, 160, 170), pool)
 

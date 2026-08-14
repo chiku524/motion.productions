@@ -218,12 +218,12 @@ def _render_pure_per_frame(
     motion_val: float | None = None,
 ) -> tuple["np.ndarray", "np.ndarray", "np.ndarray"]:
     """
-    Pair registry colors across pixels.
+    Each pixel independently pairs two colors from the registry pool.
 
-    Each pixel is a pairing of two colors from this clip's unique set. Low
-    motion_level keeps the pairing still (static frames). High motion_level plus
-    motion_val rematches pairings over time (dynamic windows). Layout varies by
-    seed so loops are not one mesh look.
+    A slower spatial field groups nearby pixels so those pairings can mass into
+    objects, settings, and scenery — without drawing premade layers. Low
+    motion_level holds the field still (static frames). High motion_level plus
+    motion_val rematches pairings over time (dynamic windows).
     """
     n_colors = len(pure_colors)
     if n_colors == 0:
@@ -249,15 +249,21 @@ def _render_pure_per_frame(
     else:
         w = 0.5 + 0.5 * np.sin((xx + yy + t_shift) * (1.4 + 0.5 * field) * np.pi)
 
-    h = (
-        np.floor(xx * 9.0 + field * 4.0).astype(np.int64)
-        + np.floor(yy * 7.0).astype(np.int64) * 11
-        + seed * 13
+    h_pix, w_pix = xx.shape
+    px = np.floor(xx * max(w_pix, 2)).astype(np.int64)
+    py = np.floor(yy * max(h_pix, 2)).astype(np.int64)
+    pix = (px * np.int64(73856093)) ^ (py * np.int64(19349663)) ^ (np.int64(seed) * np.int64(83492791))
+    # Coarse region: nearby pixels share a local pairing family so masses can form
+    region = (
+        np.floor(xx * 5.0 + field * 2.0).astype(np.int64)
+        + np.floor(yy * 4.0).astype(np.int64) * 17
     )
     pair_drift = np.floor(t_shift * 5.0).astype(np.int64) if t_amt > 0.12 else 0
-    idx_a = np.mod(np.abs(h) + pair_drift, n_colors)
-    step = 1 if n_colors < 2 else 1 + np.mod(np.abs(h // 5), n_colors - 1)
-    idx_b = np.mod(idx_a + step, n_colors)
+    idx_a = np.mod(np.abs(pix + region * 13 + pair_drift), n_colors)
+    idx_b = np.mod(np.abs((pix // 3) + region * 29 + pair_drift * 2), n_colors)
+    if n_colors > 1:
+        same = idx_a == idx_b
+        idx_b = np.where(same, np.mod(idx_a + 1, n_colors), idx_b)
     one_minus = 1.0 - w
     r = R_arr[idx_a] * one_minus + R_arr[idx_b] * w
     g = G_arr[idx_a] * one_minus + G_arr[idx_b] * w

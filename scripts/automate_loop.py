@@ -567,6 +567,7 @@ def run() -> None:
                     spec=spec,
                     extraction_focus=extraction_focus,
                     static_focus=static_focus,
+                    knowledge=knowledge,
                 )
                 if any(added.values()):
                     metrics = growth_metrics(added)
@@ -585,11 +586,16 @@ def run() -> None:
                             instruction, spec, prompt=prompt, collect_novel_for_sync=bool(args.api_base)
                         )
                         if entity_added:
-                            novel_for_sync["entities"] = entity_novel
                             added["dynamic_entities"] = added.get("dynamic_entities", 0) + entity_added
                             logger.info("Growth [entities]: %s profiles", entity_added)
                     except Exception as e:
                         logger.warning("Entity growth failed: %s", e)
+                from src.knowledge.pixel_emergence import merge_emergence_payloads
+                narrative_novel, entity_novel = merge_emergence_payloads(
+                    novel_for_sync, narrative_novel, entity_novel
+                )
+                if entity_novel:
+                    novel_for_sync["entities"] = entity_novel
                 if args.api_base:
                     if extraction_focus == "frame":
                         post_static_discoveries(
@@ -598,6 +604,12 @@ def run() -> None:
                             novel_for_sync.get("static_sound") or [],
                             job_id=job_id,
                         )
+                        if narrative_novel and any(narrative_novel.values()):
+                            post_narrative_discoveries(args.api_base, narrative_novel, job_id=job_id)
+                        if entity_novel:
+                            post_dynamic_discoveries(
+                                args.api_base, {"entities": entity_novel}, job_id=job_id
+                            )
                     elif extraction_focus == "window":
                         post_dynamic_discoveries(args.api_base, novel_for_sync, job_id=job_id)
                         if narrative_novel and any(narrative_novel.values()):

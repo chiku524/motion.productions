@@ -1238,6 +1238,7 @@ def grow_all_from_video(
     spec: Any = None,
     extraction_focus: str = "all",
     static_focus: str = "both",
+    knowledge: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """
     Unified growth: single video read for both static and dynamic extraction.
@@ -1266,6 +1267,8 @@ def grow_all_from_video(
         "dynamic_audio_semantic": 0,
         "dynamic_transition": 0,
         "dynamic_depth": 0,
+        "emergence_settings": 0,
+        "emergence_entities": 0,
     }
     novel_for_sync: dict[str, Any] = {
         "static_colors": [],
@@ -1282,6 +1285,8 @@ def grow_all_from_video(
         "audio_semantic": [],
         "transition": [],
         "depth": [],
+        "entities": [],
+        "narrative": {},
     }
     path = Path(video_path)
     if not path.exists():
@@ -1391,5 +1396,25 @@ def grow_all_from_video(
             fake_window = {"audio_semantic": audio_semantic}
             if ensure_dynamic_audio_semantic_in_registry(fake_window, source_prompt=prompt, config=config, out_novel=out_audio_semantic, registry_cache=registry_cache):
                 added["dynamic_audio_semantic"] += 1
+
+    try:
+        from .pixel_emergence import grow_emergence_from_frames
+
+        em_kind = "window" if do_window else "frame"
+        em_added, em_novel = grow_emergence_from_frames(
+            frames,
+            prompt=prompt,
+            knowledge=knowledge,
+            config=config,
+            kind=em_kind,
+        )
+        added["emergence_settings"] = int(em_added.get("settings") or 0)
+        added["emergence_entities"] = int(em_added.get("entities") or 0)
+        if collect_novel_for_sync:
+            novel_for_sync["entities"] = list(em_novel.get("entities") or [])
+            novel_for_sync["narrative"] = dict(em_novel.get("narrative") or {})
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning("pixel emergence growth failed", exc_info=True)
 
     return added, novel_for_sync

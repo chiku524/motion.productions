@@ -527,9 +527,9 @@ def generate_targeted_color_family_prompt(
     sa = secure_choice(sounds)
     sb = secure_choice([s for s in sounds if s != sa] or sounds)
     templates = [
-        f"static frame: {cue} {hue} paired with {other}, static sound pairing of {sa} with {sb}",
+        f"static frame: independent pixel pairings of {cue} {hue} with {other}, static sound pairing of {sa} with {sb}",
         f"per-frame pairing of {cue} {hue} with {other}, static sound pairing of {sa} with {sb}",
-        f"still pixel pairing: {cue} {hue} with {other}, static sound pairing of {sa} with {sb}",
+        f"still pixel pairing: pixel field of {cue} {hue} with {other}, static sound pairing of {sa} with {sb}",
         f"static frame pairing of {cue} {hue} with {other}, static sound pairing of {sa} with {sb}",
         f"pixel pairing of {cue} {hue} with {other}, static sound pairing of {sa} with {sb}",
     ]
@@ -1009,8 +1009,8 @@ def generate_pixel_pairing_prompt(
 ) -> str | None:
     """
     Unique frame (static) or window (dynamic) prompts from named registry colors
-    and sounds. Color and sound are separate spectra; both are unique pairings
-    from primitives + discoveries — not catalog objects or genre beds.
+    and sounds. Each pixel pairs independently from a large field; masses of
+    those pairings can emerge as objects, settings, and scenery after render.
     """
     avoid = avoid or set()
     names = _named_registry_colors(knowledge)
@@ -1028,24 +1028,25 @@ def generate_pixel_pairing_prompt(
         rest = [n for n in names if n != a] or names
         b = secure_choice(rest)
         c = secure_choice(names)
+        d = secure_choice(names)
         sa = secure_choice(sounds)
         srest = [s for s in sounds if s != sa] or sounds
         sb = secure_choice(srest)
         motion = secure_choice(motions)
         if window:
             templates = [
-                f"motion window: {a} paired with {b} in {motion}, dynamic sound pairing of {sa} with {sb}",
+                f"motion window: independent pixel pairings of {a}, {b}, and {c} in {motion}, dynamic sound pairing of {sa} with {sb}",
                 f"dynamic pairing of {a} and {b} over a moving window, dynamic sound pairing of {sa} with {sb}",
-                f"window blend: {a} paired with {b} and {c}, dynamic sound pairing of {sa} with {sb}",
+                f"window blend: pixel field of {a}, {b}, and {c} rematching, dynamic sound pairing of {sa} with {sb}",
                 f"pixel pairing of {a} with {b} drifting across a motion window, dynamic sound pairing of {sa} with {sb}",
-                f"motion window pairing of {a} and {c}, dynamic sound pairing of {sa} with {sb}",
+                f"motion window pairing of {a}, {c}, and {d}, dynamic sound pairing of {sa} with {sb}",
             ]
         else:
             templates = [
-                f"static frame: {a} paired with {b}, static sound pairing of {sa} with {sb}",
+                f"static frame: independent pixel pairings of {a}, {b}, and {c}, static sound pairing of {sa} with {sb}",
                 f"per-frame pairing of {a} and {b}, static sound pairing of {sa} with {sb}",
-                f"still pixel pairing: {a} with {b} and {c}, static sound pairing of {sa} with {sb}",
-                f"static frame pairing of {a} with {b}, static sound pairing of {sa} with {sb}",
+                f"still pixel pairing: pixel field of {a}, {b}, and {c}, static sound pairing of {sa} with {sb}",
+                f"static frame pairing of {a} with {b} and {c}, static sound pairing of {sa} with {sb}",
                 f"pixel pairing of {a} with {b}, static sound pairing of {sa} with {sb}",
             ]
         prompt = secure_choice(templates)
