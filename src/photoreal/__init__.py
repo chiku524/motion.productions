@@ -15,7 +15,8 @@ import numpy as np
 from ..procedural.parser import SceneSpec
 from .consumer import apply_photoreal_grade, bind_spec_to_registries, catalog_from_knowledge
 from .environment import composite_environment, render_environment_plate
-from .mesh import mesh_recipe_for_kind, overlay_mesh_subjects
+from .mesh import mesh_recipe_for_kind, overlay_mesh_subjects, rasterize_mesh
+from .obj import Mesh, load_mesh, parse_gltf, parse_obj, tessellate_parts, write_obj
 
 __all__ = [
     "PhotorealBackend",
@@ -27,9 +28,16 @@ __all__ = [
     "catalog_from_knowledge",
     "composite_environment",
     "get_render_backend",
+    "Mesh",
+    "load_mesh",
     "mesh_recipe_for_kind",
     "overlay_mesh_subjects",
+    "parse_gltf",
+    "parse_obj",
+    "rasterize_mesh",
     "render_environment_plate",
+    "tessellate_parts",
+    "write_obj",
 ]
 
 

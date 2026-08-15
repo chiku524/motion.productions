@@ -269,6 +269,64 @@ class TestPhotorealMesh(unittest.TestCase):
         self.assertGreater(len(np.unique(out.reshape(-1, 3), axis=0)), 8)
 
 
+class TestPhotorealObjLoader(unittest.TestCase):
+    def test_obj_round_trip(self):
+        from src.photoreal.obj import parse_obj, tessellate_parts, write_obj
+        from src.photoreal.mesh import mesh_recipe_for_kind
+
+        parts = mesh_recipe_for_kind("circle", {"radius_mul": 1.0})
+        mesh = tessellate_parts(parts, radius=0.2)
+        self.assertGreater(len(mesh.faces), 8)
+        text = write_obj(mesh)
+        back = parse_obj(text)
+        self.assertEqual(len(back.vertices), len(mesh.vertices))
+        self.assertEqual(len(back.faces), len(mesh.faces))
+
+    def test_load_obj_file(self):
+        from src.photoreal.obj import load_mesh
+
+        path = Path(__file__).resolve().parent / "fixtures" / "unit_cube.obj"
+        mesh = load_mesh(path)
+        self.assertTrue(mesh)
+        self.assertEqual(len(mesh.faces), 12)
+        self.assertEqual(len(mesh.vertices), 8)
+
+    def test_compact_gltf(self):
+        from src.photoreal.obj import parse_gltf
+
+        mesh = parse_gltf({
+            "vertices": [[0, 0, 0], [0.2, 0, 0], [0, 0.2, 0]],
+            "faces": [[0, 1, 2]],
+        })
+        self.assertEqual(len(mesh.faces), 1)
+        self.assertEqual(len(mesh.normals), 3)
+
+    def test_overlay_uses_layer_obj(self):
+        from src.photoreal.mesh import overlay_mesh_subjects
+        from src.photoreal.obj import tessellate_part, write_obj
+
+        unit = tessellate_part("box", 0.0, 0.0, 0.18, 0.18)
+        spec = SceneSpec(
+            palette_name="default",
+            motion_type="slow",
+            intensity=0.8,
+            raw_prompt="a crate",
+            scene_layers=[{
+                "kind": "rect",
+                "color": [40, 180, 90],
+                "z": 1,
+                "mesh_obj": write_obj(unit),
+                "keyframes": [
+                    {"t": 0, "x": 0.5, "y": 0.5, "scale": 1.2, "rot": 0, "opacity": 1},
+                    {"t": 1, "x": 0.5, "y": 0.5, "scale": 1.2, "rot": 0, "opacity": 1},
+                ],
+            }],
+        )
+        frame = np.zeros((48, 48, 3), dtype=np.uint8)
+        out = overlay_mesh_subjects(frame, spec, t=0.1)
+        self.assertGreater(float(out.mean()), 2.0)
+
+
 class TestLoopAuthenticityWiring(unittest.TestCase):
     def test_resolve_duration_honors_balanced_env(self):
         mod = _load_automate_loop()

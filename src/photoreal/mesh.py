@@ -8,6 +8,7 @@ normals and the same key/fill/rim/ambient model as the 2.5D path.
 """
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from ..procedural.parser import SceneSpec
@@ -219,6 +220,75 @@ _RASTER = {
 }
 
 
+def rasterize_mesh(
+    mesh: Any,
+    width: int,
+    height: int,
+    albedo: tuple[int, int, int],
+    lighting_model: tuple[float, float, float, float],
+) -> tuple["np.ndarray", "np.ndarray"]:  # noqa: F821
+    """Z-buffer rasterize a triangle Mesh in normalized x/y (0–1) coordinates."""
+    import numpy as np
+
+    from .obj import Mesh
+
+    h, w = int(height), int(width)
+    rgb = np.zeros((h, w, 3), dtype=np.float32)
+    alpha = np.zeros((h, w), dtype=np.float32)
+    if not isinstance(mesh, Mesh) or not mesh.faces:
+        return rgb, alpha
+    vs = np.asarray(mesh.vertices, dtype=np.float32)
+    ns = np.asarray(mesh.normals, dtype=np.float32)
+    if vs.ndim != 2 or vs.shape[0] < 3:
+        return rgb, alpha
+    if ns.shape != vs.shape:
+        ns = np.zeros_like(vs)
+        ns[:, 2] = 1.0
+    zbuf = np.full((h, w), -1e9, dtype=np.float32)
+    px = vs[:, 0] * float(w - 1)
+    py = vs[:, 1] * float(h - 1)
+    pz = vs[:, 2]
+    shade_albedo = (float(albedo[0]), float(albedo[1]), float(albedo[2]))
+    yy_i, xx_i = np.mgrid[0:h, 0:w]
+    for a, b, c in mesh.faces:
+        if min(a, b, c) < 0 or max(a, b, c) >= len(vs):
+            continue
+        x0, y0, z0 = float(px[a]), float(py[a]), float(pz[a])
+        x1, y1, z1 = float(px[b]), float(py[b]), float(pz[b])
+        x2, y2, z2 = float(px[c]), float(py[c]), float(pz[c])
+        denom = (y1 - y2) * (x0 - x2) + (x2 - x1) * (y0 - y2)
+        if abs(denom) < 1e-8:
+            continue
+        minx = max(0, int(math.floor(min(x0, x1, x2))))
+        maxx = min(w - 1, int(math.ceil(max(x0, x1, x2))))
+        miny = max(0, int(math.floor(min(y0, y1, y2))))
+        maxy = min(h - 1, int(math.ceil(max(y0, y1, y2))))
+        if minx > maxx or miny > maxy:
+            continue
+        xs = xx_i[miny : maxy + 1, minx : maxx + 1].astype(np.float32)
+        ys = yy_i[miny : maxy + 1, minx : maxx + 1].astype(np.float32)
+        w0 = ((y1 - y2) * (xs - x2) + (x2 - x1) * (ys - y2)) / denom
+        w1 = ((y2 - y0) * (xs - x2) + (x0 - x2) * (ys - y2)) / denom
+        w2 = 1.0 - w0 - w1
+        inside = (w0 >= -1e-4) & (w1 >= -1e-4) & (w2 >= -1e-4)
+        if not bool(inside.any()):
+            continue
+        z = w0 * z0 + w1 * z1 + w2 * z2
+        nx = w0 * ns[a, 0] + w1 * ns[b, 0] + w2 * ns[c, 0]
+        ny = w0 * ns[a, 1] + w1 * ns[b, 1] + w2 * ns[c, 1]
+        nz = w0 * ns[a, 2] + w1 * ns[b, 2] + w2 * ns[c, 2]
+        nlen = np.sqrt(nx * nx + ny * ny + nz * nz) + 1e-6
+        shade = _shade(shade_albedo, nx / nlen, ny / nlen, nz / nlen, lighting_model)
+        sl = zbuf[miny : maxy + 1, minx : maxx + 1]
+        closer = inside & (z > sl)
+        sl[closer] = z[closer]
+        patch = rgb[miny : maxy + 1, minx : maxx + 1]
+        ap = alpha[miny : maxy + 1, minx : maxx + 1]
+        patch[closer] = shade[closer]
+        ap[closer] = 1.0
+    return rgb, alpha
+
+
 def rasterize_parts(
     parts: list[dict[str, Any]],
     xx: "np.ndarray",  # noqa: F821
@@ -305,8 +375,55 @@ def overlay_mesh_subjects(
         if catalog_t:
             albedo = nearest_registry_color(albedo, catalog_t)
         form = layer_form(layer, kind)
-        parts = mesh_recipe_for_kind(kind, form)
-        rgb, a = rasterize_parts(parts, xx, yy, cx, cy, radius, albedo, lighting)
+        rgb, a = _raster_layer_mesh(
+            layer, kind, form, cx, cy, radius, albedo, lighting, w, h, xx, yy,
+        )
         a = a * opacity
         out = out * (1.0 - a[..., None]) + rgb * a[..., None]
     return np.clip(out, 0, 255).astype(np.uint8)
+
+
+def _raster_layer_mesh(
+    layer: dict[str, Any],
+    kind: str,
+    form: dict[str, Any],
+    cx: float,
+    cy: float,
+    radius: float,
+    albedo: tuple[int, int, int],
+    lighting: tuple[float, float, float, float],
+    width: int,
+    height: int,
+    xx: "np.ndarray",  # noqa: F821
+    yy: "np.ndarray",  # noqa: F821
+) -> tuple["np.ndarray", "np.ndarray"]:  # noqa: F821
+    """Prefer an OBJ/glTF on the layer; otherwise tessellate the kind recipe."""
+    from .obj import load_mesh, tessellate_parts, translate_mesh
+
+    source = layer.get("mesh") or layer.get("mesh_path") or layer.get("mesh_obj")
+    mesh = load_mesh(source) if source else None
+    if mesh:
+        rgb, a = rasterize_mesh(_place_mesh(mesh, cx, cy), width, height, albedo, lighting)
+        if float(a.max()) > 0.05:
+            return rgb, a
+    parts = mesh_recipe_for_kind(kind, form)
+    generated = _place_mesh(tessellate_parts(parts, radius=radius), cx, cy)
+    rgb, a = rasterize_mesh(generated, width, height, albedo, lighting)
+    if float(a.max()) > 0.05:
+        return rgb, a
+    return rasterize_parts(parts, xx, yy, cx, cy, radius, albedo, lighting)
+
+
+def _place_mesh(mesh: Any, cx: float, cy: float) -> Any:
+    """Translate a local/unit mesh onto the layer pose; leave world-space meshes."""
+    from .obj import translate_mesh
+
+    if not mesh or not mesh.vertices:
+        return mesh
+    xs = [v[0] for v in mesh.vertices]
+    ys = [v[1] for v in mesh.vertices]
+    mx = sum(xs) / len(xs)
+    my = sum(ys) / len(ys)
+    if 0.12 <= mx <= 0.88 and 0.12 <= my <= 0.88:
+        return mesh
+    return translate_mesh(mesh, cx - mx, cy - my)
