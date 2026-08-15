@@ -40,6 +40,8 @@ x-python-worker: &python-worker
     # Live-edit Python without rebuild (deps / Dockerfile changes still need --build)
     - ./src:/app/src
     - ./scripts:/app/scripts
+    # Loop origin + imported object meshes (cartoon.json is gitignored; host file is source)
+    - ./knowledge:/app/knowledge
   restart: unless-stopped
 
 services:
@@ -191,10 +193,6 @@ services:
       DISCOVERIES_MAX_ITEMS: "8"
       DISCOVERIES_CHUNK_PAUSE_SECONDS: "3.5"
       LOOP_ORIGIN_PATH: /app/knowledge/loop_origins/cartoon.json
-    volumes:
-      - ./src:/app/src
-      - ./scripts:/app/scripts
-      - ./knowledge:/app/knowledge
     ports:
       - "8088:8080"
 
