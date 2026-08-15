@@ -134,9 +134,10 @@ class TestPhotorealConsumer(unittest.TestCase):
         instruction = interpret_user_prompt("a person walks through a forest")
         instruction.duration_seconds = 5.0
         spec = build_spec_from_instruction(instruction, knowledge={})
-        self.assertEqual(spec.render_engine, "photoreal")
-        self.assertTrue(spec.film_look)
-        self.assertTrue(spec.scene_layers)
+        self.assertEqual(spec.render_engine, "procedural")
+        self.assertEqual(spec.creation_mode, "pure_per_frame")
+        self.assertFalse(spec.scene_layers)
+        self.assertTrue(spec.pure_colors)
 
     def test_pixel_pairing_stays_procedural(self):
         instruction = interpret_user_prompt(
@@ -395,10 +396,11 @@ class TestOriginObjectImport(unittest.TestCase):
             "mesh_obj": "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n",
         }]}}
         spec = build_spec_from_instruction(instruction, knowledge=knowledge)
-        self.assertTrue(any(
-            layer.get("origin_object_id") == "origin_0_tree"
-            for layer in (spec.scene_layers or [])
-        ))
+        self.assertEqual(spec.creation_mode, "pure_per_frame")
+        self.assertFalse(spec.scene_layers)
+        self.assertTrue(spec.pure_colors)
+        attached = ((spec.instance or {}).get("loop_origin") or {}).get("objects") or []
+        self.assertTrue(any(isinstance(o, dict) and o.get("id") == "origin_0_tree" for o in attached))
 
 
 class TestLoopAuthenticityWiring(unittest.TestCase):

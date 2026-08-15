@@ -85,7 +85,9 @@ class TestLookAlgorithms(unittest.TestCase):
         instruction = interpret_user_prompt("a person walking left")
         instruction.duration_seconds = 5.0
         spec = build_spec_from_instruction(instruction, knowledge={})
-        self.assertEqual(spec.camera_motion, "tracking")
+        self.assertEqual(spec.camera_motion, "static")
+        self.assertEqual(spec.camera_steadiness, "locked")
+        self.assertEqual(spec.creation_mode, "pure_per_frame")
 
     def test_builder_locks_camera_for_bounce(self):
         instruction = interpret_user_prompt("a red ball bouncing left")

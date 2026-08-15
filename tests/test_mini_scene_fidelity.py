@@ -32,11 +32,12 @@ class TestMiniSceneFidelity(unittest.TestCase):
 
         instruction.duration_seconds = 5.0
         spec = build_spec_from_instruction(instruction, knowledge={})
-        self.assertEqual(spec.audio_genre, "deep_house")
-        self.assertTrue(spec.audio_vocals)
-        self.assertTrue(spec.scene_layers, "expected scene layers from entities")
-        self.assertEqual(spec.scene_layers[0].get("kind"), "circle")
-        self.assertTrue(spec.sfx_events, "expected bounce SFX timings")
+        self.assertEqual(spec.creation_mode, "pure_per_frame")
+        self.assertFalse(spec.scene_layers)
+        self.assertEqual(spec.audio_genre, "none")
+        self.assertTrue(spec.pure_colors)
+        self.assertTrue(spec.pure_sounds)
+        self.assertTrue(spec.sound_pairing)
 
     def test_person_walking_house(self):
         prompt = "a person walking toward the camera with uplifting house music and vocals"
@@ -51,8 +52,10 @@ class TestMiniSceneFidelity(unittest.TestCase):
 
         instruction.duration_seconds = 5.0
         spec = build_spec_from_instruction(instruction, knowledge={})
-        self.assertTrue(spec.scene_layers)
-        self.assertTrue(any(layer.get("kind") == "character" for layer in spec.scene_layers))
+        self.assertEqual(spec.creation_mode, "pure_per_frame")
+        self.assertFalse(spec.scene_layers)
+        self.assertTrue(spec.pure_colors)
+        self.assertTrue(any(e.get("kind") == "character" for e in instruction.entities))
 
     def test_blue_ball_techno(self):
         prompt = "a blue ball bouncing right with techno music"
@@ -98,58 +101,37 @@ class TestMiniSceneFidelity(unittest.TestCase):
         self.assertEqual(ent.get("personality"), "playful")
         instruction.duration_seconds = 5.0
         spec = build_spec_from_instruction(instruction, knowledge={})
-        self.assertTrue(spec.scene_layers)
-        layer = next(layer for layer in spec.scene_layers if layer.get("kind") == "character")
-        self.assertEqual(layer.get("expression"), "happy")
-        self.assertEqual(layer.get("personality"), "playful")
+        self.assertEqual(spec.creation_mode, "pure_per_frame")
+        self.assertFalse(spec.scene_layers)
+        self.assertEqual(ent.get("expression"), "happy")
+        self.assertEqual(ent.get("personality"), "playful")
 
     def test_beat_time_windows_and_squash(self):
         prompt = "a red ball enters from the left then bounces then exits right with whoosh"
         instruction = interpret_user_prompt(prompt)
         instruction.duration_seconds = 5.0
         spec = build_spec_from_instruction(instruction, knowledge={})
-        self.assertTrue(spec.scene_layers)
-        # Continuous subject (path_segments) or staggered timed windows
-        foreground = [
-            L for L in spec.scene_layers
-            if L.get("kind") in ("circle", "rect", "arrow", "character")
-        ]
-        self.assertTrue(foreground)
-        has_segments = any(
-            isinstance(e, dict) and e.get("path_segments")
-            for e in (getattr(instruction, "entities", None) or [])
-        )
-        starts = [layer.get("keyframes", [{}])[0].get("t", 0) for layer in spec.scene_layers]
+        self.assertEqual(spec.creation_mode, "pure_per_frame")
+        self.assertFalse(spec.scene_layers)
+        self.assertTrue(spec.pure_colors)
+        self.assertTrue(instruction.entities, "prompt still names the bouncing subject")
         self.assertTrue(
-            has_segments
-            or any(float(s) > 0.05 for s in starts)
-            or len(spec.scene_layers) >= 2
+            any(e.get("bounce") or e.get("kind") == "circle" for e in instruction.entities)
         )
-        bouncing = [layer for layer in spec.scene_layers if layer.get("bounce") or layer.get("gag") == "squash"]
-        self.assertTrue(
-            bouncing
-            or any(layer.get("gag") for layer in spec.scene_layers)
-            or has_segments
-        )
-        # Phase E: freeform beats wire timed overlays + music sections
-        self.assertTrue(spec.script_beats, "expected script_beats from freeform then-clauses")
-        self.assertGreaterEqual(len(spec.script_beats), 2)
-        self.assertTrue(any(b.get("text") for b in spec.script_beats))
-        self.assertEqual(len(spec.music_sections or []), len(spec.script_beats))
-        self.assertTrue(any(b.get("callout") for b in spec.script_beats))
 
     def test_setting_themed_blended_background(self):
-        """Mini-scenes with entities must use blended mode + setting, not rainbow pure mesh."""
+        """Named-subject prompts stay a registry field; setting still binds hint colors."""
         prompt = "a red ball bouncing left at sunset with warm ambient vocals"
         instruction = interpret_user_prompt(prompt)
         self.assertEqual(getattr(instruction, "setting", None), "golden_hour")
         instruction.duration_seconds = 5.0
         spec = build_spec_from_instruction(instruction, knowledge={})
-        self.assertEqual(spec.creation_mode, "blended")
-        self.assertTrue(spec.pure_colors is None or spec.pure_colors == [])
+        self.assertEqual(spec.creation_mode, "pure_per_frame")
+        self.assertFalse(spec.scene_layers)
+        self.assertTrue(spec.pure_colors)
         self.assertEqual(spec.setting, "golden_hour")
-        self.assertIn(spec.palette_name, ("warm_sunset", "fire", "default"))
-        self.assertTrue(spec.scene_layers)
+        origins = {(255, 165, 0), (255, 0, 0), (255, 255, 0), (255, 192, 203)}
+        self.assertTrue(origins.intersection(set(spec.pure_colors)))
 
     def test_neon_city_setting(self):
         prompt = "a person walking right through a neon city with techno music"
@@ -157,8 +139,10 @@ class TestMiniSceneFidelity(unittest.TestCase):
         self.assertIn(getattr(instruction, "setting", None), ("city", "neon"))
         instruction.duration_seconds = 5.0
         spec = build_spec_from_instruction(instruction, knowledge={})
-        self.assertEqual(spec.creation_mode, "blended")
+        self.assertEqual(spec.creation_mode, "pure_per_frame")
+        self.assertFalse(spec.scene_layers)
         self.assertIn(spec.setting, ("city", "neon"))
+        self.assertTrue(spec.pure_colors)
 
     def test_pixel_pairing_prompt_frame_and_window(self):
         from src.automation.prompt_gen import generate_pixel_pairing_prompt
@@ -184,6 +168,27 @@ class TestMiniSceneFidelity(unittest.TestCase):
         )
         self.assertTrue("sound" in wlow or "paired with" in wlow, window)
 
+    def test_user_prompt_is_registry_field(self):
+        prompt = "Sunset over the ocean, dreamy"
+        instruction = interpret_user_prompt(prompt)
+        instruction.duration_seconds = 6.0
+        spec = build_spec_from_instruction(instruction, knowledge={})
+        self.assertEqual(spec.creation_mode, "pure_per_frame")
+        self.assertEqual(spec.render_engine, "procedural")
+        self.assertFalse(spec.scene_layers)
+        self.assertTrue(spec.pure_colors)
+        self.assertTrue(spec.pure_sounds)
+        self.assertIn(spec.sound_pairing, ("frame", "window"))
+        self.assertEqual(spec.audio_genre, "none")
+        self.assertEqual(spec.camera_motion, "static")
+        warm_or_water = {
+            (255, 165, 0), (255, 0, 0), (255, 255, 0), (255, 192, 203),
+            (0, 0, 255), (0, 0, 128), (0, 128, 128), (0, 255, 255),
+            (255, 192, 203), (128, 0, 128),
+        }
+        self.assertTrue(warm_or_water.intersection(set(spec.pure_colors)))
+        self.assertLessEqual(len(spec.pure_colors), 12)
+
     def test_abstract_mesh_stays_pure_no_layers(self):
         prompt = "static frame: amber paired with teal"
         instruction = interpret_user_prompt(prompt)
@@ -196,7 +201,8 @@ class TestMiniSceneFidelity(unittest.TestCase):
         self.assertEqual(spec.audio_genre, "none")
         self.assertTrue(spec.pure_sounds)
         self.assertEqual(len(spec.pure_sounds), 2)
-        self.assertGreaterEqual(len(spec.pure_colors or []), 16)
+        self.assertGreaterEqual(len(spec.pure_colors or []), 6)
+        self.assertLessEqual(len(spec.pure_colors or []), 12)
         self.assertEqual(float(spec.motion_sync or 0), 1.0)
         self.assertEqual(spec.camera_motion, "static")
         self.assertEqual(spec.camera_steadiness, "locked")
@@ -213,7 +219,8 @@ class TestMiniSceneFidelity(unittest.TestCase):
         self.assertEqual(spec.audio_genre, "none")
         self.assertTrue(spec.pure_sounds)
         self.assertEqual(len(spec.pure_sounds), 4)
-        self.assertGreaterEqual(len(spec.pure_colors or []), 16)
+        self.assertGreaterEqual(len(spec.pure_colors or []), 8)
+        self.assertLessEqual(len(spec.pure_colors or []), 24)
         self.assertGreaterEqual(float(spec.motion_sync or 0), 0.5)
         self.assertEqual(spec.camera_motion, "static")
         self.assertEqual(spec.camera_steadiness, "locked")
@@ -224,12 +231,14 @@ class TestMiniSceneFidelity(unittest.TestCase):
         self.assertEqual(getattr(instruction, "setting", None), "forest")
         instruction.duration_seconds = 5.0
         spec = build_spec_from_instruction(instruction, knowledge={})
-        self.assertEqual(spec.creation_mode, "blended")
-        self.assertIsNone(spec.sound_pairing)
-        self.assertIsNone(spec.motion_sync)
-        kinds = {layer.get("kind") for layer in (spec.scene_layers or [])}
-        self.assertIn("tree", kinds)
-        self.assertIn("character", kinds)
+        self.assertEqual(spec.creation_mode, "pure_per_frame")
+        self.assertFalse(spec.scene_layers)
+        self.assertTrue(spec.sound_pairing)
+        self.assertIsNotNone(spec.motion_sync)
+        self.assertTrue(spec.pure_colors)
+        forest = {(0, 255, 0), (128, 128, 0), (165, 42, 42)}
+        self.assertTrue(forest.intersection(set(spec.pure_colors)))
+        self.assertTrue(any(e.get("kind") == "character" for e in instruction.entities))
 
     def test_setting_props_ocean_fish(self):
         prompt = "a fish jumping in the ocean with soft whoosh and calm ambient music"
@@ -238,10 +247,11 @@ class TestMiniSceneFidelity(unittest.TestCase):
         self.assertTrue(any(e.get("kind") == "fish" for e in instruction.entities))
         instruction.duration_seconds = 5.0
         spec = build_spec_from_instruction(instruction, knowledge={})
-        kinds = {layer.get("kind") for layer in (spec.scene_layers or [])}
-        self.assertIn("fish", kinds)
-        # Waves often auto-spawn for ocean setting
-        self.assertTrue("wave" in kinds or "fish" in kinds)
+        self.assertEqual(spec.creation_mode, "pure_per_frame")
+        self.assertFalse(spec.scene_layers)
+        self.assertTrue(spec.pure_colors)
+        ocean = {(0, 0, 255), (0, 0, 128), (0, 128, 128), (0, 255, 255)}
+        self.assertTrue(ocean.intersection(set(spec.pure_colors)))
 
     def test_linguistic_extracts_expression(self):
         from src.interpretation.linguistic import extract_linguistic_mappings
@@ -305,6 +315,26 @@ class TestMiniSceneFidelity(unittest.TestCase):
         mixed = (r > 30) & (b > 30)
         self.assertGreater(int(np.sum(mixed)), 20, "expected interpolated pixels, not hard color cells")
 
+    def test_named_colors_occupy_visible_masses(self):
+        import numpy as np
+        from src.procedural.renderer import _render_pure_per_frame
+
+        xx, yy = np.meshgrid(np.linspace(0, 1, 64), np.linspace(0, 1, 64))
+        named = [(255, 0, 0), (0, 0, 255)]
+        fillers = [(i * 12, 180, 40) for i in range(6)]
+        r, g, b = _render_pure_per_frame(
+            xx, yy, named + fillers, 0.0, 3, 1.0, motion_level=2.0, named_count=2,
+        )
+        rgb = np.stack([r, g, b], axis=-1)
+        d_red = np.linalg.norm(rgb - np.array(named[0], dtype=np.float32), axis=-1)
+        d_blue = np.linalg.norm(rgb - np.array(named[1], dtype=np.float32), axis=-1)
+        near_named = (d_red < 90) | (d_blue < 90)
+        self.assertGreater(
+            float(near_named.mean()),
+            0.18,
+            "prompt-named colors must occupy visible masses, not hash dust",
+        )
+
     def test_window_pairing_moves_more_than_static_frame(self):
         import numpy as np
         from src.procedural.renderer import _render_pure_per_frame
@@ -319,16 +349,17 @@ class TestMiniSceneFidelity(unittest.TestCase):
         window_delta = float(np.mean(np.abs(r2 - r3)))
         self.assertGreater(window_delta, static_delta)
 
-    def test_pixels_pair_independently_from_a_large_pool(self):
+    def test_pixels_form_distinct_masses_from_a_pool(self):
         import numpy as np
         from src.procedural.renderer import _render_pure_per_frame
 
         xx, yy = np.meshgrid(np.linspace(0, 1, 48), np.linspace(0, 1, 48))
         colors = [(i * 15, 40, 240 - i * 12) for i in range(16)]
         r, g, b = _render_pure_per_frame(xx, yy, colors, 0.0, 19, 1.0, motion_level=2.0)
-        neighbor = float(np.mean(np.abs(r[:, 1:] - r[:, :-1])))
-        self.assertGreater(neighbor, 4.0)
-        self.assertGreater(float(np.std(r)), 20.0)
+        self.assertGreater(float(np.std(r)), 15.0)
+        # Interiors of masses are coherent; boundaries still differ.
+        interior = float(np.mean(np.abs(r[8:16, 8:16] - r[8:16, 8:16].mean())))
+        self.assertLess(interior, float(np.std(r)))
 
     def test_synchronized_color_change_is_more_coherent_than_independent(self):
         import numpy as np

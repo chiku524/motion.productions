@@ -126,13 +126,13 @@ class TestProceduralForms(unittest.TestCase):
         self.assertIsNotNone(a.instance)
         self.assertIsNotNone(b.instance)
         self.assertNotEqual(a.instance.get("horizon"), b.instance.get("horizon"))
-        trees_a = [layer["form"]["species"] for layer in (a.scene_layers or []) if layer.get("kind") == "tree"]
-        trees_b = [layer["form"]["species"] for layer in (b.scene_layers or []) if layer.get("kind") == "tree"]
-        self.assertTrue(trees_a)
-        self.assertTrue(trees_b)
-        xa = sorted(round(layer["keyframes"][0]["x"], 3) for layer in (a.scene_layers or []) if layer.get("kind") == "tree")
-        xb = sorted(round(layer["keyframes"][0]["x"], 3) for layer in (b.scene_layers or []) if layer.get("kind") == "tree")
-        self.assertNotEqual(xa, xb)
+        self.assertEqual(a.creation_mode, "pure_per_frame")
+        self.assertEqual(b.creation_mode, "pure_per_frame")
+        self.assertFalse(a.scene_layers)
+        self.assertFalse(b.scene_layers)
+        self.assertTrue(a.pure_colors)
+        self.assertTrue(b.pure_colors)
+        self.assertNotEqual(a.instance.get("tex_salt"), b.instance.get("tex_salt"))
 
     def test_same_prompt_and_seed_same_instance(self):
         prompt = "waves in the ocean with a jumping fish"
@@ -214,15 +214,13 @@ class TestProceduralForms(unittest.TestCase):
         instruction.duration_seconds = 5.0
         a = build_spec_from_instruction(instruction, knowledge={}, creation_seed=4)
         b = build_spec_from_instruction(instruction, knowledge={}, creation_seed=5)
-        fish_a = [layer for layer in (a.scene_layers or []) if layer.get("kind") == "fish"]
-        fish_b = [layer for layer in (b.scene_layers or []) if layer.get("kind") == "fish"]
-        self.assertTrue(fish_a)
-        self.assertTrue(fish_b)
-        self.assertIn("form", fish_a[0])
-        keys = ("body_rx", "body_ry", "tail_spread", "dorsal_rx", "start_x")
-        self.assertTrue(
-            any(fish_a[0]["form"].get(k) != fish_b[0]["form"].get(k) for k in keys)
-        )
+        self.assertEqual(a.creation_mode, "pure_per_frame")
+        self.assertFalse(a.scene_layers)
+        self.assertFalse(b.scene_layers)
+        self.assertTrue(any(e.get("kind") == "fish" for e in instruction.entities))
+        self.assertTrue(a.pure_colors)
+        ocean = {(0, 0, 255), (0, 0, 128), (0, 128, 128), (0, 255, 255)}
+        self.assertTrue(ocean.intersection(set(a.pure_colors)))
 
 
 if __name__ == "__main__":

@@ -47,13 +47,13 @@ Sound stays on its **own spectrum** (static instants vs rematching windows). Thi
 
 ## 4. What the loop must not treat as the primitive
 
-These can still exist as **named readings** after the field has done the work, or when a prompt actually names a subject:
+These can still exist as **named readings** after the field has done the work:
 
 - Camera pan / zoom / handheld (moving the grid instead of changing pixel colors)
-- Premade object layers (tree, person, car) as the default clip
+- Premade object layers (tree, person, car) stamped onto the frame
 - Keyword motion catalogs (`wave`, `pulse`, `fast`) as the generator switch
 
-For **pairing clips** (the default loop): the renderer changes pixel colors; it does not pan the field. Named-subject prompts (`a person walking in a forest`) still use the object path. The **cartoon loop** (`LOOP_WORKFLOW_TYPE=cartoon`, `render_engine=cel`) starts from a **palette-indexed origin field** when a reference clip has been ingested: each sampled frame is snapped onto registry colors (plus ink), stored as compact index maps, then hold/snap is those masses staying still and then changing together. The Pillow room-and-figure kit is only the fallback before an origin field exists.
+For **every default procedural clip** (user prompt or loop): the renderer changes pixel colors; it does not pan the field and it does not stamp premade trees or characters. Named-subject prompts (`a person walking in a forest`) stay a registry color/sound field — objects are *recognized* after render (`pixel_emergence`), not drawn as a kit. The **cartoon loop** (`LOOP_WORKFLOW_TYPE=cartoon`, `render_engine=cel`) is the exception: it starts from a **palette-indexed origin field** when a reference clip has been ingested (sampled frames snapped onto registry colors plus ink, stored as compact index maps; hold/snap is those masses staying still and then changing together). The Pillow room-and-figure kit is only the fallback before an origin field exists.
 
 ---
 
@@ -61,8 +61,8 @@ For **pairing clips** (the default loop): the renderer changes pixel colors; it 
 
 | Step | Where | Rule |
 |------|--------|------|
-| Spec | `src/creation/builder.py` | Pairing frames: hold colors (`motion_level` low, `motion_sync` = 1). Pairing windows: allow color change (`motion_level` high) and set `motion_sync` from smoothness. Camera stays `static` / `locked`. |
-| Render | `src/procedural/renderer.py` `_render_pure_per_frame` | Each pixel pairs independently. Time changes those pairings. `motion_sync` blends **shared** (region) drift vs **independent** (per-pixel) drift. No camera catalog motion on this path. |
+| Spec | `src/creation/builder.py` | Default non-cel path is `pure_per_frame`. Frames: hold colors (`motion_level` low, `motion_sync` = 1). Windows: allow color change (`motion_level` high) and set `motion_sync` from smoothness. Camera stays `static` / `locked`. Named registry colors/sounds dominate the field. |
+| Render | `src/procedural/renderer.py` `_render_pure_per_frame` | The frame is partitioned into **masses**. Each mass pairs two registry colors; named colors get the largest / central masses. Time changes those pairings. `motion_sync` blends **shared** (mass) drift vs **independent** (per-pixel) drift. No camera catalog motion on this path. |
 | Emerge | `src/knowledge/pixel_emergence.py` | After render, masses of pairings (and their change over a window) are matched to registered settings/entities or newly named. |
 | Extract | `extractor_per_instance.py` | Measured motion is still frame-to-frame color difference — the same primitive, observed rather than authored. |
 

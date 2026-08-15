@@ -3,12 +3,11 @@ Build output from extracted knowledge.
 Converts InterpretedInstruction (+ optional knowledge lookup) → SceneSpec for rendering.
 
 Parameterization (data-driven creation): Every decision is driven by registry/API data, not
-hardcoded defaults. Palette: when default/empty, pick from full PALETTES set (and learned
-color names in registry). Motion/gradient/camera: registry-first pools; 50% random vs
-deterministic for motion. Audio: learned_audio + static_sound; 35% pick random entry for
-variety. Pure colors: origin + static_colors + learned_colors. Pure sounds: sample from
-static_sound mesh (3–5 per run) for future audio mixing. No single fixed default that
-ignores the registry.
+hardcoded defaults. Default non-cel path is a registry pixel field (named colors/sounds as
+visible masses). Cartoon/cel is the exception. Palette hints map to origin + named registry
+entries. Motion/gradient/camera: registry-first pools. Audio: named static_sound pairing
+(frame = two instants; window = 3–4 rematching). No single fixed default that ignores the
+registry.
 """
 import logging
 from typing import Any
@@ -263,9 +262,11 @@ def build_spec_from_instruction(
     motion = instruction.motion_type
     raw_prompt = getattr(instruction, "raw_prompt", "") or ""
     wants_cartoon = _wants_cartoon(raw_prompt)
-    wants_pairing = False if wants_cartoon else _wants_pixel_pairing(raw_prompt)
+    # Pairing is the default procedural path. Phrases only pick frame vs window.
+    explicit_pairing = False if wants_cartoon else _wants_pixel_pairing(raw_prompt)
     window_pairing = False if wants_cartoon else _wants_window_pairing(raw_prompt)
     static_frame_pairing = False if wants_cartoon else _wants_static_frame_pairing(raw_prompt)
+    wants_pairing = False if wants_cartoon else True
     intensity = instruction.intensity
     if abs(float(intensity) - float(DEFAULT_INTENSITY)) < 1e-9:
         learned_i = _intensity_from_learned_motion(knowledge)
@@ -409,6 +410,12 @@ def build_spec_from_instruction(
     motion_sync: float | None = None
     if wants_pairing:
         camera = "static"
+        if not window_pairing and not static_frame_pairing and not explicit_pairing:
+            # No targeting phrase: still field when motion is low, rematch when it is not.
+            if float(motion_level or 0) >= 8.0:
+                window_pairing = True
+            else:
+                static_frame_pairing = float(motion_level or 0) <= 3.5
         if window_pairing:
             motion_level = max(float(motion_level or 8.0), 9.0)
             sm = (motion_smoothness or "smooth").lower()
@@ -426,7 +433,7 @@ def build_spec_from_instruction(
             else:
                 motion_std = 0.4
         else:
-            motion_sync = 0.7
+            motion_sync = 0.75
     if wants_cartoon:
         camera = "static"
         motion_sync = 0.92
@@ -441,11 +448,20 @@ def build_spec_from_instruction(
         pool = _pool_from_knowledge(knowledge, "learned_camera", "origin_camera", _CAMERA_VALID)
         camera = secure_choice(pool) if pool else secure_choice([v for v in CAMERA_ORIGINS["motion_type"] if v in _CAMERA_VALID] or list(_CAMERA_VALID))
 
-    # Pixel field: a large unique registry pool so each pixel can pair independently.
-    # Frames hold the field still; windows rematch. Not 2–4 colors for the whole clip.
+    # Pixel field: only colors that will appear as masses (named first).
+    # Frames hold the field still; windows rematch. Explorer windows use more masses.
     pair_n = None
     if wants_pairing:
-        pair_n = 96 if window_pairing else (48 if static_frame_pairing else 64)
+        if window_pairing and explicit_pairing:
+            pair_n = 24
+        elif window_pairing:
+            pair_n = 12
+        elif static_frame_pairing:
+            pair_n = 8
+        elif explicit_pairing:
+            pair_n = 12
+        else:
+            pair_n = 8
     pair_seed = creation_seed if creation_seed is not None else None
     pure_colors = _build_pure_color_pool(
         knowledge,
@@ -454,7 +470,7 @@ def build_spec_from_instruction(
         pair_count=pair_n,
         seed=pair_seed,
     )
-    creation_mode = "pure_per_frame" if pure_colors else "blended"
+    creation_mode = "blended" if wants_cartoon or not pure_colors else "pure_per_frame"
 
     # Unique sound pairing from the registry (own spectrum: static instants vs motion windows)
     from ..audio.pairing import sample_sound_pairing
@@ -463,9 +479,12 @@ def build_spec_from_instruction(
     if wants_pairing:
         sound_pairing = "window" if window_pairing else "frame"
         sound_n = 4 if window_pairing else 2
+        audio_hint_words = " ".join(
+            str(h) for h in (getattr(instruction, "audio_hints", None) or []) if h
+        )
         pure_sounds = sample_sound_pairing(
             knowledge,
-            prompt=raw_prompt,
+            prompt=f"{raw_prompt} {audio_hint_words}".strip(),
             pair_count=sound_n,
             seed=pair_seed,
         ) or None
@@ -501,9 +520,8 @@ def build_spec_from_instruction(
 
     duration_hint = float(getattr(instruction, "duration_seconds", None) or 4.0)
     wants_pure = wants_pairing
+    # Keep instruction.entities for growth/emergence. Do not draw them on the field path.
     entities = [] if wants_pure else list(getattr(instruction, "entities", None) or [])
-    if wants_pure:
-        instruction.entities = []
     if wants_cartoon and not any(isinstance(e, dict) and e.get("kind") == "character" for e in entities):
         entities = [
             {
@@ -527,34 +545,34 @@ def build_spec_from_instruction(
     script_beats: list[dict] | None = None
     music_sections: list[str] | None = None
 
-    # Phase 5 / Roadmap B: educational template → multi-beat entities + SFX
-    # Always build beats/music when a template is set — merge prompt entities as subject look.
-    if not wants_pure and getattr(instruction, "educational_template", None):
+    # Phase 5 / Roadmap B: educational template → timed text/music beats.
+    # Entities/layers only on the cel path; the default field keeps beats as overlays.
+    if getattr(instruction, "educational_template", None):
         topic = (getattr(instruction, "text_overlay", None) or "the topic").strip()
         narr = build_educational_script(
             topic,
             total_duration=max(5.0, duration_hint),
             style=str(getattr(instruction, "educational_template", None) or "educational"),
         )
-        ents, sfx_from_script = script_to_entities_and_sfx(narr)
-        seed = entities[0] if entities and isinstance(entities[0], dict) else None
-        if seed:
-            for e in ents:
-                if not isinstance(e, dict):
-                    continue
-                for key in ("kind", "color_hint", "label", "personality", "directionality"):
-                    if seed.get(key):
-                        e[key] = seed[key]
-                # Keep per-beat expression from the script; fill only if missing
-                e["expression"] = e.get("expression") or seed.get("expression") or "neutral"
-        entities = ents
-        instruction.entities = entities
-        if not getattr(instruction, "sfx_events", None):
-            instruction.sfx_events = sfx_from_script
         script_beats = script_beats_to_dicts(narr)
         music_sections = [b.music_section for b in narr.beats]
         if not text_overlay and narr.beats:
             text_overlay = narr.beats[0].text
+        if not wants_pure:
+            ents, sfx_from_script = script_to_entities_and_sfx(narr)
+            seed = entities[0] if entities and isinstance(entities[0], dict) else None
+            if seed:
+                for e in ents:
+                    if not isinstance(e, dict):
+                        continue
+                    for key in ("kind", "color_hint", "label", "personality", "directionality"):
+                        if seed.get(key):
+                            e[key] = seed[key]
+                    e["expression"] = e.get("expression") or seed.get("expression") or "neutral"
+            entities = ents
+            instruction.entities = entities
+            if not getattr(instruction, "sfx_events", None):
+                instruction.sfx_events = sfx_from_script
 
     # Phase E: free-form "then" mini-scripts override single-entity expansion
     freeform_applied = False
@@ -703,8 +721,8 @@ def build_spec_from_instruction(
             isinstance(e, dict) and e.get("bounce") for e in entities
         ):
             sfx_events = infer_bounce_events(duration_hint)
-    # Weather SFX for rain/snow/forest settings (skip abstract mesh clips)
-    if not wants_pure:
+    # Weather SFX from setting (audio spectrum — not drawn objects)
+    if setting:
         try:
             from ..audio.event_sfx import infer_weather_events
             weather_ev = infer_weather_events(setting, duration_hint)
@@ -713,10 +731,10 @@ def build_spec_from_instruction(
         except ImportError:
             pass
 
-    # Mini-scenes with entities: blended palette gradients (setting themes), not rainbow mesh
-    if (entities or scene_layers) and not wants_pure:
-        creation_mode = "blended"
-        pure_colors = None
+    # Registry field is the picture. Premade layers stay on the cel path only.
+    if wants_pure:
+        scene_layers = None
+        creation_mode = "pure_per_frame" if pure_colors else "blended"
 
     # Match camera to subject motion when the prompt never named a move
     if camera == DEFAULT_CAMERA and entities and not wants_cartoon:
@@ -738,6 +756,13 @@ def build_spec_from_instruction(
     if origin:
         from ..knowledge.reference_origin import slim_loop_origin
         instance = {**(instance or {}), "loop_origin": slim_loop_origin(origin) or origin}
+    if wants_pairing and pure_colors:
+        named_n = len(_priority_field_rgbs(knowledge, instruction))
+        instance = {
+            **(instance or {}),
+            "field_named_count": named_n,
+            "field_mass_count": _mass_count_for_pool(len(pure_colors), window=window_pairing),
+        }
 
     spec = SceneSpec(
         palette_name=palette,
@@ -877,6 +902,113 @@ def _name_in_prompt(name: str, raw: str) -> bool:
     return s in tokens
 
 
+# Palette / setting words → origin primitives the field should show (not PALETTES catalogs).
+_HINT_ORIGIN_FAMILIES: dict[str, tuple[str, ...]] = {
+    "ocean": ("blue", "navy", "teal", "cyan"),
+    "sea": ("blue", "navy", "teal", "cyan"),
+    "water": ("blue", "navy", "teal", "cyan"),
+    "sunset": ("orange", "red", "yellow", "pink"),
+    "sunrise": ("orange", "yellow", "pink"),
+    "warm_sunset": ("orange", "red", "yellow", "pink"),
+    "golden_hour": ("orange", "yellow", "pink"),
+    "fire": ("red", "orange", "yellow"),
+    "forest": ("green", "olive", "brown"),
+    "jungle": ("green", "olive", "brown"),
+    "neon": ("magenta", "cyan", "purple"),
+    "night": ("navy", "black", "purple"),
+    "city": ("gray", "navy", "orange"),
+    "urban": ("gray", "navy", "orange"),
+    "mono": ("gray", "white", "black"),
+    "desert": ("orange", "yellow", "brown"),
+    "snow": ("white", "cyan", "gray"),
+    "rain": ("navy", "gray", "teal"),
+    "dreamy": ("pink", "purple", "cyan"),
+}
+
+
+def _origin_rgb_by_name() -> dict[str, tuple[int, int, int]]:
+    return {
+        name: (int(round(r)), int(round(g)), int(round(b)))
+        for name, (r, g, b) in COLOR_ORIGIN_PRIMITIVES
+    }
+
+
+def _mass_count_for_pool(n_colors: int, *, window: bool) -> int:
+    n = max(2, int(n_colors))
+    if window:
+        return max(12, min(24, n))
+    return max(3, min(6, max(3, (n + 1) // 2)))
+
+
+def _priority_field_rgbs(
+    knowledge: dict[str, Any] | None,
+    instruction: InterpretedInstruction,
+) -> list[tuple[int, int, int]]:
+    """Named registry + hint-family origins the masses must show first."""
+    found: list[tuple[int, int, int]] = []
+    seen: set[tuple[int, int, int]] = set()
+
+    def _add(rgb: tuple[int, int, int] | None) -> None:
+        if rgb is None or rgb in seen:
+            return
+        seen.add(rgb)
+        found.append(rgb)
+
+    for rgb in _prompt_named_rgbs(knowledge, instruction):
+        _add(rgb)
+
+    raw = (getattr(instruction, "raw_prompt", "") or "").lower()
+    hints = [str(h).strip().lower() for h in (getattr(instruction, "palette_hints", None) or []) if h]
+    setting = str(getattr(instruction, "setting", None) or "").strip().lower()
+    if setting:
+        hints.append(setting)
+    for token in raw.replace(":", " ").replace(",", " ").replace(".", " ").split():
+        if token in _HINT_ORIGIN_FAMILIES or token in _origin_rgb_by_name():
+            hints.append(token)
+
+    origins = _origin_rgb_by_name()
+    family_names: set[str] = set()
+    for hint in hints:
+        if hint in origins:
+            _add(origins[hint])
+            family_names.add(hint)
+        for origin_name in _HINT_ORIGIN_FAMILIES.get(hint, ()):
+            family_names.add(origin_name)
+            _add(origins.get(origin_name))
+
+    for lst in getattr(instruction, "color_primitive_lists", None) or []:
+        if not isinstance(lst, (list, tuple)):
+            continue
+        for rgb in lst[:3]:
+            if isinstance(rgb, (list, tuple)) and len(rgb) >= 3:
+                _add((int(rgb[0]), int(rgb[1]), int(rgb[2])))
+
+    by_name = (knowledge or {}).get("color_by_name") or {}
+    static = (knowledge or {}).get("static_colors") or {}
+    hint_needles = [h for h in hints if len(h) >= 3]
+    if isinstance(by_name, dict):
+        for nm, data in by_name.items():
+            label = str(nm or "").strip().lower()
+            if not label:
+                continue
+            if any(h in label or label in h for h in hint_needles) or any(
+                fam in label for fam in family_names
+            ):
+                _add(_rgb_from_color_dict(data) if isinstance(data, dict) else None)
+    if isinstance(static, dict):
+        for data in static.values():
+            if not isinstance(data, dict):
+                continue
+            label = str(data.get("name") or "").strip().lower()
+            if not label:
+                continue
+            if any(h in label or label in h for h in hint_needles) or any(
+                fam in label for fam in family_names
+            ):
+                _add(_rgb_from_color_dict(data))
+    return found
+
+
 def _prompt_named_rgbs(
     knowledge: dict[str, Any] | None,
     instruction: InterpretedInstruction,
@@ -919,9 +1051,9 @@ def _sample_color_pairing(
     seed: int | None,
 ) -> list[tuple[int, int, int]]:
     """Unique registry colors for this clip's pixel field (named first, then underused)."""
-    n = max(16, min(128, int(pair_count)))
+    n = max(4, min(32, int(pair_count)))
     pair_seed = int(seed) if seed is not None else 1
-    named = _prompt_named_rgbs(knowledge, instruction)
+    named = _priority_field_rgbs(knowledge, instruction)
     unique_pool: list[tuple[int, int, int]] = []
     seen: set[tuple[int, int, int]] = set()
     for rgb in named + list(pool):
@@ -956,8 +1088,8 @@ def _build_pure_color_pool(
     Build registry colors for pixel pairing / pure-per-frame creation.
 
     Default (pair_count unset): origin primitives + static_colors (count-inverse).
-    When pair_count is set: a unique large field for this clip from named prompt
-    colors plus underused discoveries — each pixel pairs independently from it.
+    When pair_count is set: named / hint-family colors first, then underused
+    discoveries — only as many as will appear as visible masses.
     """
     _ = avoid_palette
     pool: list[tuple[int, int, int]] = []
@@ -1175,6 +1307,14 @@ def _rgb_stops_for_name(
     needle = (name or "").strip().lower()
     if not needle:
         return None
+    by_name = (knowledge or {}).get("color_by_name") or {}
+    if isinstance(by_name, dict):
+        data = by_name.get(needle) or by_name.get(name)
+        if isinstance(data, dict):
+            try:
+                return palette_stops_from_rgb(data["r"], data["g"], data["b"])
+            except (KeyError, TypeError, ValueError):
+                pass
     for data in ((knowledge or {}).get("static_colors") or {}).values():
         if not isinstance(data, dict):
             continue
@@ -1184,6 +1324,15 @@ def _rgb_stops_for_name(
             return palette_stops_from_rgb(data["r"], data["g"], data["b"])
         except (KeyError, TypeError, ValueError):
             continue
+    for origin_name, (r, g, b) in COLOR_ORIGIN_PRIMITIVES:
+        if origin_name == needle:
+            return palette_stops_from_rgb(r, g, b)
+    family = _HINT_ORIGIN_FAMILIES.get(needle)
+    if family:
+        origins = _origin_rgb_by_name()
+        stops = [origins[n] for n in family if n in origins]
+        if stops:
+            return stops
     if name in PALETTES:
         return list(PALETTES[name])
     return None

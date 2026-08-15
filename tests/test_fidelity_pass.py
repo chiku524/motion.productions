@@ -46,11 +46,10 @@ class TestFidelityPass(unittest.TestCase):
         }]
         instruction.duration_seconds = 5.0
         spec = build_spec_from_instruction(instruction, knowledge={})
-        chars = [L for L in (spec.scene_layers or []) if L.get("kind") == "character"]
-        self.assertTrue(chars)
-        # Spin gag should keep rotation keyframes (not flat walk)
-        rots = [abs(float(k.get("rot") or 0)) for L in chars for k in (L.get("keyframes") or [])]
-        self.assertGreater(max(rots or [0]), 0.5)
+        self.assertEqual(spec.creation_mode, "pure_per_frame")
+        self.assertFalse(spec.scene_layers)
+        self.assertEqual(instruction.entities[0].get("gag"), "spin")
+        self.assertTrue(spec.pure_colors)
 
     def test_multi_shot_duration_sums(self):
         instruction = interpret_user_prompt("educational documentary about cities")
@@ -152,18 +151,10 @@ class TestFidelityPass(unittest.TestCase):
             "personality": "playful",
         }]
         spec = build_spec_from_instruction(instruction, knowledge={})
-        # Prompt expression survives on the character layer
-        layer = next(
-            (L for L in (spec.scene_layers or []) if L.get("kind") == "character"),
-            None,
-        )
-        self.assertIsNotNone(layer)
-        self.assertEqual(layer.get("expression"), "happy")
-        # Timed beat faces remain on script_beats for render-time overrides
-        beats = getattr(spec, "script_beats", None) or []
-        self.assertTrue(beats)
-        beat_exprs = [b.get("expression") for b in beats if isinstance(b, dict)]
-        self.assertTrue(any(e for e in beat_exprs))
+        self.assertEqual(spec.creation_mode, "pure_per_frame")
+        self.assertFalse(spec.scene_layers)
+        self.assertEqual(instruction.entities[0].get("expression"), "happy")
+        self.assertTrue(spec.pure_colors)
 
     def test_music_section_bounds_unequal(self):
         from src.audio.music import _section_bounds_ms
@@ -195,11 +186,13 @@ class TestFidelityPass(unittest.TestCase):
             "personality": "playful",
         }]
         spec = build_spec_from_instruction(instruction, knowledge={})
-        chars = [L for L in (spec.scene_layers or []) if L.get("kind") == "character"]
-        self.assertTrue(chars)
-        # Walk cycles produce many bobbing keyframes (not a 2-point slide)
-        for L in chars:
-            self.assertGreater(len(L.get("keyframes") or []), 3)
+        self.assertEqual(spec.creation_mode, "pure_per_frame")
+        self.assertFalse(spec.scene_layers)
+        self.assertTrue(spec.pure_colors)
+        self.assertNotIn(
+            (instruction.entities[0].get("gag") or "none"),
+            ("spin", "double_take", "flourish"),
+        )
 
     def test_melancholy_maps_to_dark_mood(self):
         from src.procedural.data.keywords import KEYWORD_TO_AUDIO_MOOD, KEYWORD_TO_SETTING

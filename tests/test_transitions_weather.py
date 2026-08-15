@@ -70,7 +70,8 @@ class TestNextPassImprovements(unittest.TestCase):
         instruction.duration_seconds = 4.0
         spec = build_spec_from_instruction(instruction, knowledge={})
         self.assertEqual(spec.setting, "snow")
-        self.assertIn(spec.camera_steadiness, ("handheld", "shaky", "stable"))
+        self.assertEqual(spec.creation_mode, "pure_per_frame")
+        self.assertEqual(spec.camera_steadiness, "locked")
         frame = render_frame(spec, 0.3, 64, 64, seed=2)
         self.assertEqual(frame.shape, (64, 64, 3))
 

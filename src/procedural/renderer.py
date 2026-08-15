@@ -207,6 +207,16 @@ def _apply_setting_backdrop(
     return r, g, b
 
 
+def _mass_count_from_colors(n_colors: int, named_count: int = 0) -> int:
+    """User fields stay 3–6 masses; larger pools (explorer windows) stay readable blobs."""
+    n = max(2, int(n_colors))
+    if n <= 8:
+        return max(3, min(6, max(3, (n + 1) // 2)))
+    if n <= 16:
+        return max(6, min(12, n))
+    return max(12, min(24, n))
+
+
 def _render_pure_per_frame(
     xx: "np.ndarray",
     yy: "np.ndarray",
@@ -217,13 +227,15 @@ def _render_pure_per_frame(
     motion_level: float = 1.0,
     motion_val: float | None = None,
     motion_sync: float = 1.0,
+    named_count: int = 0,
+    mass_count: int | None = None,
 ) -> tuple["np.ndarray", "np.ndarray", "np.ndarray"]:
     """
-    Each pixel independently pairs two colors from the registry pool.
+    Partition the frame into spatial masses. Each mass pairs two registry colors.
 
-    Motion is those pairings changing color over time. motion_sync (0–1) is how
-    locked neighboring pixels are: 1 = a mass changes together (object / motion),
-    0 = each pixel changes on its own (flicker). See docs/PIXEL_FIELD.md.
+    Prompt-named colors occupy the largest / most central masses. Motion is those
+    pairings changing over time. motion_sync (0–1): 1 = a mass rematches together,
+    0 = per-pixel flicker inside the mass. See docs/PIXEL_FIELD.md.
     """
     n_colors = len(pure_colors)
     if n_colors == 0:
@@ -232,46 +244,79 @@ def _render_pure_per_frame(
     G_arr = np.array([c[1] for c in pure_colors], dtype=np.float32)
     B_arr = np.array([c[2] for c in pure_colors], dtype=np.float32)
 
+    n_masses = int(mass_count) if mass_count and mass_count > 0 else _mass_count_from_colors(
+        n_colors, named_count
+    )
+    n_masses = max(2, min(24, n_masses))
+    named_n = max(0, min(int(named_count or 0), n_colors))
+
     t_amt = (float(np.clip(motion_level, 0.0, 25.0)) / 25.0) ** 2
     mv = 0.0 if motion_val is None else float(motion_val)
     t_shift = t * t_amt * 1.8 + mv * t_amt
     sync = float(np.clip(motion_sync, 0.0, 1.0))
     field = _hash_noise(xx, yy, seed, scale=41.0)
-    layout = int(abs(seed)) % 4
-    if layout == 0:
-        w_space = 0.5 + 0.5 * np.sin(yy * (1.6 + 0.8 * field) * np.pi)
-    elif layout == 1:
-        w_space = 0.5 + 0.5 * np.sin(xx * (1.6 + 0.8 * field) * np.pi)
-    elif layout == 2:
-        cx = 0.32 + 0.36 * ((abs(seed) % 17) / 17.0)
-        cy = 0.32 + 0.36 * ((abs(seed) % 13) / 13.0)
-        dist = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
-        w_space = 0.5 + 0.5 * np.sin((dist * 4.0) * np.pi + field * 0.5)
-    else:
-        w_space = 0.5 + 0.5 * np.sin((xx + yy) * (1.4 + 0.5 * field) * np.pi)
+    amp = 0.06 + 0.04 * float(np.clip(intensity, 0.1, 1.0))
+    jx = xx + (field - 0.5) * amp
+    jy = yy + (_hash_noise(xx, yy, seed + 17, scale=37.0) - 0.5) * amp
+
+    cols = int(np.ceil(np.sqrt(n_masses)))
+    rows = int(np.ceil(n_masses / cols))
+    sites_x = np.zeros(n_masses, dtype=np.float32)
+    sites_y = np.zeros(n_masses, dtype=np.float32)
+    weights = np.ones(n_masses, dtype=np.float32)
+    named_masses = max(1, min(n_masses, (named_n + 1) // 2)) if named_n else 1
+    for i in range(n_masses):
+        gx = (i % cols + 0.5) / cols
+        gy = (i // cols + 0.5) / rows
+        jitter = ((abs(seed) * (i + 3) * 17) % 1000) / 1000.0
+        gx = float(np.clip(gx + (jitter - 0.5) * 0.12, 0.06, 0.94))
+        gy = float(np.clip(gy + (((abs(seed) * (i + 5) * 31) % 1000) / 1000.0 - 0.5) * 0.12, 0.06, 0.94))
+        if i < named_masses:
+            gx = 0.45 * gx + 0.55 * 0.5
+            gy = 0.45 * gy + 0.55 * 0.5
+            weights[i] = 1.85 - 0.18 * i
+        sites_x[i] = gx
+        sites_y[i] = gy
+
+    dx = jx[None, ...] - sites_x[:, None, None]
+    dy = jy[None, ...] - sites_y[:, None, None]
+    dist = (dx * dx + dy * dy) / (weights[:, None, None] ** 2 + 1e-8)
+    mass_id = np.argmin(dist, axis=0)
+
+    pair_a = np.zeros(n_masses, dtype=np.int64)
+    pair_b = np.zeros(n_masses, dtype=np.int64)
+    for i in range(n_masses):
+        if named_n >= 2 and i < named_masses:
+            pair_a[i] = (2 * i) % named_n
+            pair_b[i] = (pair_a[i] + 1) % named_n
+        else:
+            base = named_n + 2 * max(0, i - named_masses)
+            pair_a[i] = base % n_colors
+            pair_b[i] = (base + 1) % n_colors
+        if pair_a[i] == pair_b[i] and n_colors > 1:
+            pair_b[i] = (pair_a[i] + 1) % n_colors
+
+    idx_a0 = pair_a[mass_id]
+    idx_b0 = pair_b[mass_id]
+
+    # Within-mass blend so a region is a pairing, not a hard cell.
+    local_x = jx - sites_x[mass_id]
+    local_y = jy - sites_y[mass_id]
+    w_space = 0.5 + 0.5 * np.sin((local_x * 5.5 + local_y * 3.2 + field * 0.8) * np.pi)
 
     h_pix, w_pix = xx.shape
     px = np.floor(xx * max(w_pix, 2)).astype(np.int64)
     py = np.floor(yy * max(h_pix, 2)).astype(np.int64)
     pix = (px * np.int64(73856093)) ^ (py * np.int64(19349663)) ^ (np.int64(seed) * np.int64(83492791))
-    region = (
-        np.floor(xx * 5.0 + field * 2.0).astype(np.int64)
-        + np.floor(yy * 4.0).astype(np.int64) * 17
-    )
-    # Spatial pairing (the still field). Time only adds color-change on top.
-    idx_a0 = np.mod(np.abs(pix + region * 13), n_colors)
-    idx_b0 = np.mod(np.abs((pix // 3) + region * 29), n_colors)
 
-    change = t_amt > 0.12
+    change = t_amt > 0.02
     if change:
-        # Masses share one color-change (objects / motion). Independent pixels each change alone (flicker).
-        mass = np.floor(xx * 3.0).astype(np.int64) + np.floor(yy * 3.0).astype(np.int64) * 3
-        shared_drift = np.floor(t_shift * 8.0 + mass.astype(np.float32) * 2.0).astype(np.int64)
+        shared_drift = np.floor(t_shift * 8.0 + mass_id.astype(np.float32) * 2.0).astype(np.int64)
         pix_drift = np.floor(t_shift * 8.0 + (np.abs(pix) % 997).astype(np.float32) * 0.2).astype(np.int64)
         drift = np.floor(
             sync * shared_drift.astype(np.float32) + (1.0 - sync) * pix_drift.astype(np.float32)
         ).astype(np.int64)
-        shared_w = 0.18 * np.sin(t_shift * np.pi + mass.astype(np.float32) * 0.7)
+        shared_w = 0.18 * np.sin(t_shift * np.pi + mass_id.astype(np.float32) * 0.7)
         pix_w = 0.18 * np.sin(t_shift * np.pi + (np.abs(pix) % 997).astype(np.float32) * 0.05)
         w = np.clip(w_space + sync * shared_w + (1.0 - sync) * pix_w, 0.0, 1.0)
     else:
@@ -1015,11 +1060,16 @@ def render_frame(
         ml = float(getattr(spec, "motion_level", None) or 1.0)
         sync_raw = getattr(spec, "motion_sync", None)
         sync = 1.0 if sync_raw is None else float(sync_raw)
+        inst = getattr(spec, "instance", None) if isinstance(getattr(spec, "instance", None), dict) else {}
+        named_n = int(inst.get("field_named_count") or 0)
+        mass_n = inst.get("field_mass_count")
         r, g, b = _render_pure_per_frame(
             xx, yy, pure_colors, t_abs, seed, intensity,
             motion_level=ml,
             motion_val=float(motion_val),
             motion_sync=sync,
+            named_count=named_n,
+            mass_count=int(mass_n) if mass_n else None,
         )
     else:
         v = _gradient_value(
