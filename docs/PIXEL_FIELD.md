@@ -53,7 +53,7 @@ These can still exist as **named readings** after the field has done the work:
 - Premade object layers (tree, person, car) stamped onto the frame
 - Keyword motion catalogs (`wave`, `pulse`, `fast`) as the generator switch
 
-For **every default procedural clip** (user prompt or loop): the renderer changes pixel colors; it does not pan the field and it does not stamp premade trees or characters. Named-subject prompts (`a person walking in a forest`) stay a registry color/sound field — objects are *recognized* after render (`pixel_emergence`), not drawn as a kit. Loops do not start from a reference MP4 or loop-origin field.
+For **every clip** (user prompt or loop): the renderer changes pixel colors; it does not pan the field and it does not stamp premade trees, rooms, or characters. The word “cartoon” is a linguistic label only — it does not select a stock cel kit. Named-subject prompts (`a person walking in a forest`) stay a registry color/sound field — objects are *recognized* after render (`pixel_emergence`), not drawn as a kit. Loops do not start from a reference MP4 or loop-origin field. Each job seed must produce a distinct field so the registries can learn from new pictures.
 
 ---
 
@@ -61,7 +61,7 @@ For **every default procedural clip** (user prompt or loop): the renderer change
 
 | Step | Where | Rule |
 |------|--------|------|
-| Spec | `src/creation/builder.py` | Default non-cel path is `pure_per_frame`. Frames: hold colors (`motion_level` low, `motion_sync` = 1). Windows: allow color change (`motion_level` high) and set `motion_sync` from smoothness. Camera stays `static` / `locked`. Named registry colors/sounds dominate the field. |
+| Spec | `src/creation/builder.py` | Every clip is `pure_per_frame`. Frames: hold colors (`motion_level` low, `motion_sync` = 1). Windows: allow color change (`motion_level` high) and set `motion_sync` from smoothness. Camera stays `static` / `locked`. Named registry colors/sounds dominate the field. Job seed permutes the field so two clips are not the same picture. |
 | Render | `src/procedural/renderer.py` `_render_pure_per_frame` | The frame is partitioned into **masses**. Each mass pairs two registry colors; named colors get the largest / central masses. Time changes those pairings. `motion_sync` blends **shared** (mass) drift vs **independent** (per-pixel) drift. No camera catalog motion on this path. |
 | Emerge | `src/knowledge/pixel_emergence.py` | After render, masses of pairings (and their change over a window) are matched to registered settings/entities or newly named. |
 | Extract | `extractor_per_instance.py` | Measured motion is still frame-to-frame color difference — the same primitive, observed rather than authored. |

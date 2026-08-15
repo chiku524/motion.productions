@@ -388,27 +388,7 @@ class TestMiniSceneFidelity(unittest.TestCase):
         self.assertGreater(_patch_coherence(changed_sync), _patch_coherence(changed_indep))
         self.assertGreater(float(np.mean(np.abs(r1 - r0))), 0.5)
 
-    def test_cartoon_prompt_is_named_subject_not_pairing(self):
-        from src.automation.prompt_gen import generate_cartoon_prompt
-
-        knowledge = {
-            "color_by_name": {
-                "amber veil": {"key": "a", "r": 200, "g": 140, "b": 40},
-                "teal mist": {"key": "b", "r": 20, "g": 160, "b": 170},
-            }
-        }
-        prompt = generate_cartoon_prompt(knowledge=knowledge, avoid=set())
-        self.assertIsNotNone(prompt)
-        low = prompt.lower()
-        self.assertTrue("cel cartoon" in low or "modern cartoon" in low, prompt)
-        self.assertTrue(any(s in low for s in ("person", "kid", "teen", "character")), prompt)
-        self.assertTrue(any(s in low for s in ("kitchen", "apartment", "cafe", "bedroom", "office", "street", "park", "subway")), prompt)
-        self.assertTrue("hold" in low or "snap" in low, prompt)
-        self.assertNotIn("pixel pairing", low)
-        self.assertNotIn("static frame", low)
-        self.assertNotIn("motion window", low)
-
-    def test_cartoon_spec_cel_hold_snap_identity(self):
+    def test_cartoon_word_stays_registry_field(self):
         prompt = (
             "cel cartoon: a teal person holds still then turns in a kitchen, "
             "amber walls, cartoon hold then snap, anime look"
@@ -416,46 +396,65 @@ class TestMiniSceneFidelity(unittest.TestCase):
         instruction = interpret_user_prompt(prompt)
         instruction.duration_seconds = 2.5
         spec = build_spec_from_instruction(instruction, knowledge={})
-        self.assertEqual(spec.creation_mode, "blended")
-        self.assertEqual(spec.render_engine, "cel")
-        self.assertIn(spec.style, ("cartoon", "anime"))
-        self.assertFalse(spec.film_look)
+        self.assertEqual(spec.creation_mode, "pure_per_frame")
+        self.assertEqual(spec.render_engine, "procedural")
+        self.assertFalse(spec.scene_layers)
+        self.assertTrue(spec.pure_colors)
+        self.assertTrue(spec.pure_sounds)
         self.assertEqual(spec.camera_motion, "static")
         self.assertEqual(spec.camera_steadiness, "locked")
         self.assertEqual(spec.audio_genre, "none")
-        self.assertGreaterEqual(float(spec.motion_sync or 0), 0.85)
-        self.assertEqual(getattr(instruction, "setting", None), "kitchen")
-        kinds = {layer.get("kind") for layer in (spec.scene_layers or [])}
-        self.assertIn("character", kinds)
-        char = next(layer for layer in spec.scene_layers if layer.get("kind") == "character")
-        kfs = char.get("keyframes") or []
-        self.assertGreaterEqual(len(kfs), 4)
-        xs = [float(k.get("x")) for k in kfs]
-        self.assertEqual(xs[0], xs[1])
-        self.assertNotEqual(xs[1], xs[2])
 
-    def test_cel_frame_is_inked_modern_interior(self):
+    def test_same_prompt_different_seeds_are_distinct_fields(self):
         import numpy as np
         from src.procedural.renderer import render_frame
 
-        prompt = (
-            "cel cartoon: a teal person holds still then turns in a kitchen, "
-            "amber walls, cartoon hold then snap, anime look"
+        prompt = "static frame: amber paired with teal"
+        knowledge = {
+            "color_by_name": {
+                "amber": {"key": "a", "r": 200, "g": 140, "b": 40},
+                "teal": {"key": "b", "r": 20, "g": 160, "b": 170},
+            },
+            "static_colors": {
+                "c1": {"r": 12, "g": 40, "b": 90, "name": "navy hush", "count": 1},
+                "c2": {"r": 210, "g": 80, "b": 30, "name": "ember wash", "count": 1},
+                "c3": {"r": 90, "g": 20, "b": 140, "name": "violet dusk", "count": 2},
+                "c4": {"r": 30, "g": 180, "b": 110, "name": "mint drift", "count": 3},
+            },
+        }
+        instruction_a = interpret_user_prompt(prompt)
+        instruction_b = interpret_user_prompt(prompt)
+        spec_a = build_spec_from_instruction(instruction_a, knowledge=knowledge, creation_seed=11)
+        spec_b = build_spec_from_instruction(instruction_b, knowledge=knowledge, creation_seed=99)
+        self.assertEqual(spec_a.creation_mode, "pure_per_frame")
+        self.assertEqual(spec_b.creation_mode, "pure_per_frame")
+        frame_a = render_frame(spec_a, 0.2, 96, 96, seed=11)
+        frame_b = render_frame(spec_b, 0.2, 96, 96, seed=99)
+        self.assertGreater(float(np.mean(np.abs(frame_a.astype(np.int16) - frame_b.astype(np.int16)))), 4.0)
+
+    def test_leftover_cel_spec_renders_as_field(self):
+        import numpy as np
+        from src.procedural.parser import SceneSpec
+        from src.procedural.renderer import render_frame
+
+        spec = SceneSpec(
+            palette_name="default",
+            motion_type="slow",
+            intensity=0.6,
+            raw_prompt="leftover cel",
+            palette_colors=[(200, 140, 40), (20, 160, 170), (40, 50, 80)],
+            render_engine="cel",
+            creation_mode="blended",
+            style="cartoon",
+            scene_layers=[{"kind": "character", "keyframes": [{"t": 0, "x": 0.5, "y": 0.5}]}],
         )
-        instruction = interpret_user_prompt(prompt)
-        instruction.duration_seconds = 2.5
-        spec = build_spec_from_instruction(instruction, knowledge={})
-        self.assertEqual(spec.render_engine, "cel")
-        frame = render_frame(spec, 0.2, 256, 256, seed=7)
-        self.assertEqual(frame.shape, (256, 256, 3))
-        luma = frame.astype(np.float32).mean(axis=2)
-        ink = luma < 50
-        self.assertGreater(float(ink.mean()), 0.01, "expected ink outlines")
-        top = frame[:70].astype(np.float32).mean()
-        bottom = frame[190:].astype(np.float32).mean()
-        self.assertGreater(abs(top - bottom), 12.0, "expected a wall/floor split, not a blob wash")
+        frame = render_frame(spec, 0.2, 96, 96, seed=7)
+        self.assertEqual(spec.render_engine, "procedural")
+        self.assertEqual(spec.creation_mode, "pure_per_frame")
+        self.assertFalse(spec.scene_layers)
+        self.assertEqual(frame.shape, (96, 96, 3))
         unique = len(np.unique(frame.reshape(-1, 3), axis=0))
-        self.assertLess(unique, 8000, "cel fills should be flatter than shaded blobs")
+        self.assertGreater(unique, 20)
 
     def test_reference_origin_recipe_from_frames(self):
         import numpy as np

@@ -3,11 +3,10 @@ Build output from extracted knowledge.
 Converts InterpretedInstruction (+ optional knowledge lookup) → SceneSpec for rendering.
 
 Parameterization (data-driven creation): Every decision is driven by registry/API data, not
-hardcoded defaults. Default non-cel path is a registry pixel field (named colors/sounds as
-visible masses). Cartoon/cel is the exception. Palette hints map to origin + named registry
-entries. Motion/gradient/camera: registry-first pools. Audio: named static_sound pairing
-(frame = two instants; window = 3–4 rematching). No single fixed default that ignores the
-registry.
+hardcoded defaults. Every clip is a registry pixel field (named colors/sounds as visible
+masses). Palette hints map to origin + named registry entries. Motion/gradient/camera:
+registry-first pools. Audio: named static_sound pairing (frame = two instants; window = 3–4
+rematching). No stock character kit. No single fixed default that ignores the registry.
 """
 import logging
 from typing import Any
@@ -205,14 +204,6 @@ _STATIC_FRAME_PHRASES = (
     "static sound",
 )
 
-_CARTOON_PHRASES = (
-    "cel cartoon",
-    "modern cartoon",
-    "cartoon hold",
-    "cartoon snap",
-)
-
-
 def _wants_pixel_pairing(prompt: str) -> bool:
     low = (prompt or "").lower()
     return any(p in low for p in _PIXEL_PAIRING_PHRASES)
@@ -226,11 +217,6 @@ def _wants_window_pairing(prompt: str) -> bool:
 def _wants_static_frame_pairing(prompt: str) -> bool:
     low = (prompt or "").lower()
     return any(p in low for p in _STATIC_FRAME_PHRASES)
-
-
-def _wants_cartoon(prompt: str) -> bool:
-    low = (prompt or "").lower()
-    return any(p in low for p in _CARTOON_PHRASES)
 
 
 def build_spec_from_instruction(
@@ -256,12 +242,11 @@ def build_spec_from_instruction(
     palette = instruction.palette_name
     motion = instruction.motion_type
     raw_prompt = getattr(instruction, "raw_prompt", "") or ""
-    wants_cartoon = _wants_cartoon(raw_prompt)
-    # Pairing is the default procedural path. Phrases only pick frame vs window.
-    explicit_pairing = False if wants_cartoon else _wants_pixel_pairing(raw_prompt)
-    window_pairing = False if wants_cartoon else _wants_window_pairing(raw_prompt)
-    static_frame_pairing = False if wants_cartoon else _wants_static_frame_pairing(raw_prompt)
-    wants_pairing = False if wants_cartoon else True
+    # Pairing is the only procedural picture. Phrases only pick frame vs window.
+    explicit_pairing = _wants_pixel_pairing(raw_prompt)
+    window_pairing = _wants_window_pairing(raw_prompt)
+    static_frame_pairing = _wants_static_frame_pairing(raw_prompt)
+    wants_pairing = True
     intensity = instruction.intensity
     if abs(float(intensity) - float(DEFAULT_INTENSITY)) < 1e-9:
         learned_i = _intensity_from_learned_motion(knowledge)
@@ -420,17 +405,7 @@ def build_spec_from_instruction(
                 motion_std = 0.4
         else:
             motion_sync = 0.75
-    if wants_cartoon:
-        camera = "static"
-        motion_sync = 0.92
-        motion_level = min(float(motion_level or 6.0), 7.5)
-        audio_genre = "none"
-        audio_vocals = False
-        if (style_val or "").lower() not in ("cartoon", "anime"):
-            style_val = "cartoon"
-        if (audio_presence or "").lower() in ("music", "full"):
-            audio_presence = "ambient"
-    if camera == DEFAULT_CAMERA and not lock_look and not wants_cartoon:
+    if camera == DEFAULT_CAMERA and not lock_look:
         pool = _pool_from_knowledge(knowledge, "learned_camera", "origin_camera", _CAMERA_VALID)
         camera = secure_choice(pool) if pool else secure_choice([v for v in CAMERA_ORIGINS["motion_type"] if v in _CAMERA_VALID] or list(_CAMERA_VALID))
 
@@ -456,7 +431,7 @@ def build_spec_from_instruction(
         pair_count=pair_n,
         seed=pair_seed,
     )
-    creation_mode = "blended" if wants_cartoon or not pure_colors else "pure_per_frame"
+    creation_mode = "pure_per_frame" if pure_colors else "blended"
 
     # Unique sound pairing from the registry (own spectrum: static instants vs motion windows)
     from ..audio.pairing import sample_sound_pairing
@@ -494,7 +469,6 @@ def build_spec_from_instruction(
     # Scene graph (Phase 2+): entities → keyframed layers + bounce SFX timings
     from .scene_graph import (
         build_scene_graph_from_instruction,
-        cartoon_hold_snap_keyframes,
         sfx_events_from_scene_graph,
         walk_cycle_keyframes,
     )
@@ -508,31 +482,11 @@ def build_spec_from_instruction(
     wants_pure = wants_pairing
     # Keep instruction.entities for growth/emergence. Do not draw them on the field path.
     entities = [] if wants_pure else list(getattr(instruction, "entities", None) or [])
-    if wants_cartoon and not any(isinstance(e, dict) and e.get("kind") == "character" for e in entities):
-        entities = [
-            {
-                "id": "e0",
-                "kind": "character",
-                "label": "person",
-                "color_hint": None,
-                "directionality": "none",
-                "trajectory": "right",
-                "bounce": False,
-                "sfx_on": [],
-                "expression": "neutral",
-                "personality": "neutral",
-                "gag": "none",
-                "is_prop": False,
-                "prop_motion": "none",
-                "z": 2,
-            }
-        ] + [e for e in entities if isinstance(e, dict)]
-        instruction.entities = entities
     script_beats: list[dict] | None = None
     music_sections: list[str] | None = None
 
     # Phase 5 / Roadmap B: educational template → timed text/music beats.
-    # Entities/layers only on the cel path; the default field keeps beats as overlays.
+    # The field keeps beats as overlays; entities are not drawn.
     if getattr(instruction, "educational_template", None):
         topic = (getattr(instruction, "text_overlay", None) or "the topic").strip()
         narr = build_educational_script(
@@ -671,12 +625,7 @@ def build_spec_from_instruction(
         direction = "left"
         if layer.keyframes and layer.keyframes[-1].x > layer.keyframes[0].x:
             direction = "right"
-        if wants_cartoon:
-            layer.keyframes = cartoon_hold_snap_keyframes(
-                duration=duration_hint,
-                direction=direction,
-            )
-        elif len(layer.keyframes) <= 2:
+        if len(layer.keyframes) <= 2:
             layer.keyframes = walk_cycle_keyframes(
                 duration=duration_hint,
                 direction=direction,
@@ -711,13 +660,13 @@ def build_spec_from_instruction(
         except ImportError:
             pass
 
-    # Registry field is the picture. Premade layers stay on the cel path only.
+    # Registry field is the picture. Premade character/room kits are never drawn.
     if wants_pure:
         scene_layers = None
         creation_mode = "pure_per_frame" if pure_colors else "blended"
 
     # Match camera to subject motion when the prompt never named a move
-    if camera == DEFAULT_CAMERA and entities and not wants_cartoon:
+    if camera == DEFAULT_CAMERA and entities:
         from ..procedural.look import camera_for_subject_motion
         camera = camera_for_subject_motion(entities)
 
@@ -787,29 +736,25 @@ def build_spec_from_instruction(
                 and bool(setting)
                 and bool(entities or scene_layers)
             )
-        ) and not wants_cartoon,
+        ),
         render_engine=(
-            "cel"
-            if wants_cartoon
-            else (
-                "photoreal"
-                if (
-                    (style_val or "").lower() in ("realistic", "photoreal")
-                    or (
-                        not wants_pairing
-                        and bool(setting)
-                        and bool(entities or scene_layers)
-                    )
+            "photoreal"
+            if (
+                (style_val or "").lower() in ("realistic", "photoreal")
+                or (
+                    not wants_pairing
+                    and bool(setting)
+                    and bool(entities or scene_layers)
                 )
-                else "procedural"
             )
+            else "procedural"
         ),
         pure_colors=pure_colors,
         creation_mode=creation_mode,
         pure_sounds=pure_sounds,
         sound_pairing=sound_pairing,
         camera_steadiness=(
-            "locked" if (wants_pairing or wants_cartoon) else _resolve_camera_steadiness(instruction, camera, shot)
+            "locked" if wants_pairing else _resolve_camera_steadiness(instruction, camera, shot)
         ),
         color_temperature=_resolve_color_temperature(instruction, lighting),
         instance=instance,
@@ -1029,7 +974,9 @@ def _sample_color_pairing(
     """Unique registry colors for this clip's pixel field (named first, then underused)."""
     n = max(4, min(32, int(pair_count)))
     pair_seed = int(seed) if seed is not None else 1
-    named = _priority_field_rgbs(knowledge, instruction)
+    named = list(_priority_field_rgbs(knowledge, instruction))
+    # Same prompt + different job seed must still yield a new field.
+    named.sort(key=lambda rgb: _stable_pair_key(pair_seed, rgb))
     unique_pool: list[tuple[int, int, int]] = []
     seen: set[tuple[int, int, int]] = set()
     for rgb in named + list(pool):
@@ -1040,10 +987,14 @@ def _sample_color_pairing(
     if not unique_pool:
         return pool[:n] if pool else []
     named_set = set(named)
+    origin_set = set(_origin_rgb_by_name().values())
     rest = [c for c in unique_pool if c not in named_set]
-    rest.sort(key=lambda rgb: _stable_pair_key(pair_seed, rgb))
+    discoveries = [c for c in rest if c not in origin_set]
+    fallback = [c for c in rest if c in origin_set]
+    discoveries.sort(key=lambda rgb: _stable_pair_key(pair_seed, rgb))
+    fallback.sort(key=lambda rgb: _stable_pair_key(pair_seed + 17, rgb))
     out = list(named)
-    for rgb in rest:
+    for rgb in discoveries + fallback:
         if len(out) >= n:
             break
         out.append(rgb)

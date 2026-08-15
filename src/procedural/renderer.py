@@ -965,12 +965,16 @@ def render_frame(
     t_motion = float(t)
     t_abs = float(t if t_content is None else t_content)
     render_engine = (getattr(spec, "render_engine", None) or "procedural").lower()
-    style_name = (getattr(spec, "style", None) or "").lower()
-    if render_engine == "cel" or style_name == "cartoon":
-        from .cel import render_cel_frame
-        return render_cel_frame(
-            spec, t_abs, width, height, seed=seed, duration_seconds=duration_seconds
-        )
+    if render_engine == "cel":
+        # Stock cel kit is retired. Leftover specs become a registry field.
+        spec.render_engine = "procedural"
+        spec.scene_layers = None
+        palette_fallback = getattr(spec, "palette_colors", None) or []
+        if not (getattr(spec, "pure_colors", None) or []) and palette_fallback:
+            spec.pure_colors = [tuple(int(c) for c in rgb[:3]) for rgb in palette_fallback[:8]]
+        if getattr(spec, "pure_colors", None):
+            spec.creation_mode = "pure_per_frame"
+        render_engine = "procedural"
     creation_mode = getattr(spec, "creation_mode", "blended") or "blended"
     pure_colors = getattr(spec, "pure_colors", None) or []
 

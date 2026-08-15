@@ -95,7 +95,7 @@ def bind_spec_to_registries(
     """
     Resort palette (and bind metadata) to named registry colors.
 
-    Mutates spec in place and returns it. Pairing / cel clips should not call this —
+    Mutates spec in place and returns it. Pairing clips should not call this —
     they stay on the pixel-field primitive.
     """
     catalog = catalog_from_knowledge(knowledge)

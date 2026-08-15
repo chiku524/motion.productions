@@ -77,7 +77,7 @@ We do **not** use Runway, Replicate, PyTorch, diffusers, transformers, or any pr
    Keywords and rules map text → palette, motion type, intensity, gradient type, camera motion, shape overlay. No neural network.
 
 2. **Parameters → pixels (our renderer)**  
-   Default path: a registry **pixel field** — named colors as visible spatial masses; motion is those pairings changing. Cartoon/cel is the exception (hold/snap kit). Photoreal later consumes this same field; it is not a reason to import a generative model.
+   Default path: a registry **pixel field** — named colors as visible spatial masses; motion is those pairings changing. Each job is a unique field (seed + underused discoveries). There is no stock character kit. Photoreal later consumes this same field; it is not a reason to import a generative model.
 
 3. **Frames → video file**  
    imageio + FFmpeg to encode. Content is 100% our code and data.
