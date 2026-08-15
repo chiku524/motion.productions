@@ -216,4 +216,5 @@ def spec_from_shot(
         cut_transitions=getattr(base_spec, "cut_transitions", None),
         camera_steadiness=getattr(base_spec, "camera_steadiness", "stable") or "stable",
         color_temperature=getattr(base_spec, "color_temperature", "neutral") or "neutral",
+        instance=getattr(base_spec, "instance", None),
     )

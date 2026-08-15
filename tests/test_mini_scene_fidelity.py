@@ -541,6 +541,35 @@ class TestMiniSceneFidelity(unittest.TestCase):
         self.assertGreater(float(right_mean[2] - right_mean[0]), 20.0)
         self.assertGreater(float(np.abs(hold.astype(np.float32) - snap.astype(np.float32)).mean()), 8.0)
 
+    def test_spec_from_shot_still_renders_origin_field(self):
+        import numpy as np
+        from src.cinematography.schema import ShotSpec
+        from src.creation.scene_script import spec_from_shot
+        from src.knowledge.reference_origin import measure_frames
+        from src.procedural.renderer import render_frame
+
+        left = np.zeros((48, 48, 3), dtype=np.uint8)
+        left[:, :24] = (220, 40, 40)
+        left[:, 24:] = (40, 80, 200)
+        recipe = measure_frames([left] * 6, fps=24.0, loop="cartoon")
+        instruction = interpret_user_prompt(
+            "cel cartoon: origin field masses hold then snap, cartoon hold then snap"
+        )
+        instruction.duration_seconds = 2.5
+        spec = build_spec_from_instruction(instruction, knowledge={"loop_origin": recipe})
+        self.assertTrue((spec.instance or {}).get("loop_origin", {}).get("has_field"))
+        derived = spec_from_shot(
+            spec,
+            ShotSpec(duration_seconds=2.5, shot_type="medium", transition_in="cut", transition_out="cut"),
+        )
+        self.assertEqual((derived.instance or {}).get("loop_origin"), (spec.instance or {}).get("loop_origin"))
+        derived.instance = {**(derived.instance or {}), "loop_origin": recipe}
+        frame = render_frame(derived, 0.1, 96, 96, seed=0, duration_seconds=2.5)
+        left_mean = frame[:, :40].astype(np.float32).mean(axis=(0, 1))
+        right_mean = frame[:, 56:].astype(np.float32).mean(axis=(0, 1))
+        self.assertGreater(float(left_mean[0] - left_mean[2]), 20.0)
+        self.assertGreater(float(right_mean[2] - right_mean[0]), 20.0)
+
 
 if __name__ == "__main__":
     unittest.main()

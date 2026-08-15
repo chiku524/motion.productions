@@ -191,7 +191,7 @@ def get_knowledge_for_creation(
             knowledge["narrative"] = {}
 
     workflow = (os.environ.get("LOOP_WORKFLOW_TYPE") or "").strip().lower()
-    if workflow == "cartoon" and "loop_origin" not in knowledge:
+    if workflow == "cartoon":
         try:
             from .reference_origin import load_loop_origin
             origin = load_loop_origin("cartoon", config=config)

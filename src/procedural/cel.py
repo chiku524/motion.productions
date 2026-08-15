@@ -10,6 +10,7 @@ and a TV-cartoon figure. Unique per clip via registry colors + seed.
 """
 from __future__ import annotations
 
+import os
 import random
 from typing import Any
 
@@ -329,23 +330,31 @@ def _draw_character(
         draw.line((cx - mw // 2, mouth_y, cx + mw // 2, mouth_y), fill=INK, width=max(2, stroke - 1))
 
 
-def _origin_for_field_render(origin: dict[str, Any] | None) -> dict[str, Any] | None:
-    if not isinstance(origin, dict):
-        return None
-    field = origin.get("field")
-    if isinstance(field, dict) and field.get("frames"):
-        return origin
-    if not origin.get("has_field"):
-        return None
+def _load_disk_origin_field() -> dict[str, Any] | None:
     try:
         from ..knowledge.reference_origin import load_loop_origin
         disk = load_loop_origin("cartoon")
     except Exception:
         return None
     if isinstance(disk, dict) and isinstance(disk.get("field"), dict) and disk["field"].get("frames"):
-        merged = dict(origin)
-        merged["field"] = disk["field"]
-        return merged
+        return disk
+    return None
+
+
+def _origin_for_field_render(origin: dict[str, Any] | None) -> dict[str, Any] | None:
+    if isinstance(origin, dict):
+        field = origin.get("field")
+        if isinstance(field, dict) and field.get("frames"):
+            return origin
+        if origin.get("has_field"):
+            disk = _load_disk_origin_field()
+            if disk:
+                merged = dict(origin)
+                merged["field"] = disk["field"]
+                return merged
+    # Cartoon worker: use the origin file even if spec_from_shot dropped instance.
+    if (os.environ.get("LOOP_WORKFLOW_TYPE") or "").strip().lower() == "cartoon":
+        return _load_disk_origin_field()
     return None
 
 

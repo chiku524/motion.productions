@@ -101,6 +101,7 @@ class TestFidelityPass(unittest.TestCase):
         derived = spec_from_shot(base, shot)
         self.assertEqual(derived.setting, "forest")
         self.assertEqual(derived.script_beats, base.script_beats)
+        self.assertEqual(derived.instance, base.instance)
 
     def test_overlay_expression_at_time(self):
         from src.creation.narrative_script import resolve_overlay_at_time
