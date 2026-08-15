@@ -13,6 +13,7 @@ Usage:
   python scripts/ingest_reference.py path/to/clip.mp4 --loop cartoon --api-base https://motion.productions
   python scripts/ingest_reference.py path/to/clip.mp4 --loop cartoon --max-frames 72
   python scripts/ingest_reference.py path/to/clip.mp4 --loop cartoon --recipe-only
+  python scripts/ingest_reference.py --objects-only --loop cartoon
 
 Drop convention: references/cartoon.mp4
 """
@@ -41,7 +42,25 @@ def main() -> int:
         action="store_true",
         help="Re-measure palette/field/timing only; skip registry growth and API",
     )
+    parser.add_argument(
+        "--objects-only",
+        action="store_true",
+        help="Import silhouette meshes from an existing loop origin field (no video re-read)",
+    )
     args = parser.parse_args()
+
+    if args.objects_only:
+        from src.photoreal.origin_objects import extract_and_store_origin_objects
+        objects = extract_and_store_origin_objects(args.loop)
+        print(json.dumps({
+            "loop": args.loop,
+            "object_count": len(objects),
+            "objects": [
+                {k: v for k, v in obj.items() if k != "mesh_obj"}
+                for obj in objects
+            ],
+        }, indent=2))
+        return 0
 
     video = Path(args.video) if args.video else REPO_ROOT / "references" / f"{args.loop}.mp4"
     if not video.is_file():

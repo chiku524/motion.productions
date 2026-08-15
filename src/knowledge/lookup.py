@@ -190,14 +190,15 @@ def get_knowledge_for_creation(
         except Exception:
             knowledge["narrative"] = {}
 
-    workflow = (os.environ.get("LOOP_WORKFLOW_TYPE") or "").strip().lower()
-    if workflow == "cartoon":
-        try:
-            from .reference_origin import load_loop_origin
-            origin = load_loop_origin("cartoon", config=config)
-            if origin:
-                knowledge["loop_origin"] = origin
-        except Exception:
-            pass
+    try:
+        from .reference_origin import load_loop_origin, slim_loop_origin
+        origin = load_loop_origin("cartoon", config=config)
+        if origin:
+            workflow = (os.environ.get("LOOP_WORKFLOW_TYPE") or "").strip().lower()
+            # Cartoon keeps the indexed field (cel start). Photoreal gets
+            # measured object meshes; slim drops the field blobs.
+            knowledge["loop_origin"] = origin if workflow == "cartoon" else slim_loop_origin(origin)
+    except Exception:
+        pass
 
     return knowledge

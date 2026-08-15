@@ -59,10 +59,17 @@ def slim_loop_origin(origin: dict[str, Any] | None) -> dict[str, Any] | None:
     """Job/spec copy: keep recipe, drop indexed field blobs (renderer reloads them)."""
     if not isinstance(origin, dict):
         return None
-    if not origin.get("field"):
-        return origin
     slim = {k: v for k, v in origin.items() if k != "field"}
-    slim["has_field"] = True
+    if origin.get("field"):
+        slim["has_field"] = True
+    objects = slim.get("objects")
+    if isinstance(objects, list):
+        slim["objects"] = [
+            {k: v for k, v in obj.items() if k != "mesh_obj"}
+            if isinstance(obj, dict) else obj
+            for obj in objects
+        ]
+        slim["object_count"] = len(objects)
     return slim
 
 
@@ -386,6 +393,7 @@ def ingest_reference_video(
             _attach_palette_names(recipe, existing.get("palette") or [])
         out = save_loop_origin(recipe, loop=loop, config=config)
         recipe["saved_to"] = str(out)
+        _attach_origin_objects(recipe, loop=loop, config=config)
         return recipe
     from .growth_per_instance import grow_all_from_video
 
@@ -404,6 +412,7 @@ def ingest_reference_video(
     recipe["growth_added"] = {k: v for k, v in added.items() if v}
     out = save_loop_origin(recipe, loop=loop, config=config)
     recipe["saved_to"] = str(out)
+    _attach_origin_objects(recipe, loop=loop, config=config)
     if api_base:
         from .remote_sync import post_all_discoveries
 
@@ -416,3 +425,22 @@ def ingest_reference_video(
         )
         recipe["synced"] = True
     return recipe
+
+
+def _attach_origin_objects(
+    recipe: dict[str, Any],
+    *,
+    loop: str,
+    config: dict[str, Any] | None,
+) -> None:
+    """Measure silhouette meshes from the origin field (no source replay)."""
+    try:
+        from ..photoreal.origin_objects import extract_and_store_origin_objects
+        objects = extract_and_store_origin_objects(loop, config=config)
+        recipe["object_count"] = len(objects)
+        recipe["objects"] = [
+            {k: v for k, v in obj.items() if k != "mesh_obj"}
+            for obj in objects
+        ]
+    except Exception:
+        recipe.setdefault("object_count", 0)

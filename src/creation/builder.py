@@ -684,6 +684,9 @@ def build_spec_from_instruction(
     # composition_balance is applied at render time (see renderer._render_layers_rgba)
     # so keyframe trajectories stay in local space and framing stays consistent.
     scene_layers = graph.to_dict_list() if graph.layers else None
+    if scene_layers and not wants_pure and not wants_cartoon:
+        from ..photoreal.origin_objects import attach_origin_objects
+        scene_layers = attach_origin_objects(scene_layers, _loop_origin(knowledge))
     if scene_layers and shape == "none":
         shape = "circle"  # ensure overlay path exists as fallback
 

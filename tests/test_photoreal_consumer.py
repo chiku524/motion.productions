@@ -327,6 +327,80 @@ class TestPhotorealObjLoader(unittest.TestCase):
         self.assertGreater(float(out.mean()), 2.0)
 
 
+class TestOriginObjectImport(unittest.TestCase):
+    def test_silhouette_and_extract_from_field(self):
+        from src.knowledge.reference_origin import encode_index_map
+        from src.photoreal.origin_objects import extract_objects_from_origin, silhouette_mesh
+
+        mask = np.zeros((32, 32), dtype=bool)
+        mask[8:24, 10:22] = True
+        mesh = silhouette_mesh(mask)
+        self.assertGreater(len(mesh.faces), 4)
+        self.assertGreater(len(mesh.vertices), 4)
+
+        idx = np.zeros((48, 64), dtype=np.uint8)
+        idx[:, :] = 1
+        idx[12:36, 20:40] = 2
+        lut = [
+            {"r": 20, "g": 16, "b": 20},
+            {"r": 16, "g": 48, "b": 80},
+            {"r": 240, "g": 192, "b": 16},
+        ]
+        origin = {
+            "field": {
+                "width": 64,
+                "height": 48,
+                "lut": lut,
+                "frames": [encode_index_map(idx)],
+            }
+        }
+        objects = extract_objects_from_origin(origin, max_objects=4, sample_frames=1)
+        self.assertGreaterEqual(len(objects), 1)
+        self.assertIn("mesh_obj", objects[0])
+        self.assertIn("v ", objects[0]["mesh_obj"])
+
+    def test_attach_origin_objects_adds_props(self):
+        from src.photoreal.origin_objects import attach_origin_objects
+
+        layers = [{
+            "kind": "character",
+            "color": [200, 80, 60],
+            "z": 2,
+            "keyframes": [{"t": 0, "x": 0.5, "y": 0.5, "scale": 1, "rot": 0, "opacity": 1}],
+        }]
+        origin = {"objects": [{
+            "id": "origin_0_tree",
+            "kind": "tree",
+            "cx": 0.22,
+            "cy": 0.58,
+            "scale": 0.9,
+            "color": [40, 120, 50],
+            "mesh_obj": "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n",
+        }]}
+        out = attach_origin_objects(layers, origin)
+        self.assertEqual(len(out), 2)
+        self.assertEqual(out[1]["origin_object_id"], "origin_0_tree")
+        self.assertTrue(out[1]["mesh_obj"])
+
+    def test_builder_attaches_origin_props(self):
+        instruction = interpret_user_prompt("a person walks through a forest")
+        instruction.duration_seconds = 5.0
+        knowledge = {"loop_origin": {"objects": [{
+            "id": "origin_0_tree",
+            "kind": "tree",
+            "cx": 0.2,
+            "cy": 0.55,
+            "scale": 0.8,
+            "color": [40, 120, 50],
+            "mesh_obj": "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n",
+        }]}}
+        spec = build_spec_from_instruction(instruction, knowledge=knowledge)
+        self.assertTrue(any(
+            layer.get("origin_object_id") == "origin_0_tree"
+            for layer in (spec.scene_layers or [])
+        ))
+
+
 class TestLoopAuthenticityWiring(unittest.TestCase):
     def test_resolve_duration_honors_balanced_env(self):
         mod = _load_automate_loop()
