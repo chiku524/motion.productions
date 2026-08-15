@@ -209,6 +209,66 @@ class TestPhotorealEnvironment(unittest.TestCase):
         self.assertGreater(center[0], 80.0)
 
 
+class TestPhotorealMesh(unittest.TestCase):
+    def test_recipe_loader_scales_with_form(self):
+        from src.photoreal.mesh import mesh_recipe_for_kind
+
+        tree = mesh_recipe_for_kind("tree")
+        roles = {p["role"] for p in tree}
+        self.assertIn("trunk", roles)
+        self.assertIn("canopy", roles)
+        big = mesh_recipe_for_kind("character", {"radius_mul": 1.4, "head_scale": 0.55})
+        small = mesh_recipe_for_kind("character", {"radius_mul": 0.8, "head_scale": 0.38})
+        big_head = next(p for p in big if p["role"] == "head")
+        small_head = next(p for p in small if p["role"] == "head")
+        self.assertGreater(big_head["rx"], small_head["rx"])
+
+    def test_sphere_key_side_is_brighter(self):
+        from src.lighting.grading import get_lighting_model
+        from src.photoreal.mesh import mesh_recipe_for_kind, rasterize_parts
+
+        h = w = 48
+        y = np.linspace(0.0, 1.0, h, dtype=np.float32)
+        x = np.linspace(0.0, 1.0, w, dtype=np.float32)
+        yy = np.broadcast_to(y[:, None], (h, w))
+        xx = np.broadcast_to(x[None, :], (h, w))
+        parts = mesh_recipe_for_kind("circle")
+        rgb, a = rasterize_parts(
+            parts, xx, yy, 0.5, 0.5, 0.28, (200, 80, 60), get_lighting_model("neutral"),
+        )
+        self.assertGreater(float(a.mean()), 0.08)
+        # Key is upper-left — that quadrant should be brighter than lower-right
+        ul = rgb[:20, :20][a[:20, :20] > 0.5].mean()
+        lr = rgb[28:, 28:][a[28:, 28:] > 0.5].mean()
+        self.assertGreater(ul, lr)
+
+    def test_overlay_covers_subject(self):
+        from src.photoreal.mesh import overlay_mesh_subjects
+
+        spec = SceneSpec(
+            palette_name="default",
+            motion_type="slow",
+            intensity=0.8,
+            raw_prompt="a person in a forest",
+            setting="forest",
+            lighting_preset="golden_hour",
+            scene_layers=[{
+                "kind": "character",
+                "color": [200, 90, 70],
+                "z": 2,
+                "form": {"kind": "character", "radius_mul": 1.1, "head_scale": 1.0, "body_scale": 1.0},
+                "keyframes": [
+                    {"t": 0, "x": 0.5, "y": 0.55, "scale": 1.5, "rot": 0, "opacity": 1},
+                    {"t": 1, "x": 0.5, "y": 0.55, "scale": 1.5, "rot": 0, "opacity": 1},
+                ],
+            }],
+        )
+        frame = np.zeros((64, 64, 3), dtype=np.uint8)
+        out = overlay_mesh_subjects(frame, spec, t=0.2)
+        self.assertGreater(float(out.mean()), 4.0)
+        self.assertGreater(len(np.unique(out.reshape(-1, 3), axis=0)), 8)
+
+
 class TestLoopAuthenticityWiring(unittest.TestCase):
     def test_resolve_duration_honors_balanced_env(self):
         mod = _load_automate_loop()

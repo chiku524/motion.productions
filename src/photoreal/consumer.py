@@ -221,6 +221,8 @@ def apply_photoreal_grade(
 
     env = render_environment_plate(w, h, spec, seed=int(t * 1000) % 10_000)
     framed = composite_environment(frame, env, spec, t=t)
+    from .mesh import overlay_mesh_subjects
+    framed = overlay_mesh_subjects(framed, spec, t=t)
 
     out = apply_atmospheric_haze(
         framed,
