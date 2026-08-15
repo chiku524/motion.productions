@@ -778,13 +778,25 @@ def build_spec_from_instruction(
         film_look=bool(
             depth_parallax
             or (style_val or "").lower() in ("realistic", "photoreal")
+            or (
+                not wants_pairing
+                and bool(setting)
+                and bool(entities or scene_layers)
+            )
         ) and not wants_cartoon,
         render_engine=(
             "cel"
             if wants_cartoon
             else (
                 "photoreal"
-                if (style_val or "").lower() in ("realistic", "photoreal")
+                if (
+                    (style_val or "").lower() in ("realistic", "photoreal")
+                    or (
+                        not wants_pairing
+                        and bool(setting)
+                        and bool(entities or scene_layers)
+                    )
+                )
                 else "procedural"
             )
         ),

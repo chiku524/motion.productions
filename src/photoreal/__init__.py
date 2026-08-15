@@ -14,6 +14,7 @@ import numpy as np
 
 from ..procedural.parser import SceneSpec
 from .consumer import apply_photoreal_grade, bind_spec_to_registries, catalog_from_knowledge
+from .environment import composite_environment, render_environment_plate
 
 __all__ = [
     "PhotorealBackend",
@@ -23,7 +24,9 @@ __all__ = [
     "apply_photoreal_grade",
     "bind_spec_to_registries",
     "catalog_from_knowledge",
+    "composite_environment",
     "get_render_backend",
+    "render_environment_plate",
 ]
 
 

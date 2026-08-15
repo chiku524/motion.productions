@@ -63,6 +63,27 @@ class TestPhotorealConsumer(unittest.TestCase):
         bind = (spec.instance or {}).get("photoreal_bind") or {}
         self.assertTrue(bind.get("bound"))
         self.assertEqual(bind.get("catalog_size"), 2)
+        self.assertEqual(bind.get("sky"), (200, 180, 40))
+        self.assertEqual(bind.get("ground"), (10, 20, 30))
+
+    def test_bind_resorts_to_learned_lighting(self):
+        spec = SceneSpec(
+            palette_name="default",
+            motion_type="slow",
+            intensity=0.7,
+            raw_prompt="a forest path",
+            lighting_preset="neutral",
+            setting="forest",
+            palette_colors=[(40, 80, 50)],
+        )
+        bind_spec_to_registries(spec, {
+            "static_colors": {"40,80,50": {"r": 40, "g": 80, "b": 50, "name": "color_moss"}},
+            "learned_lighting": [{"preset": "golden_hour"}],
+        })
+        bind = (spec.instance or {}).get("photoreal_bind") or {}
+        self.assertEqual(bind.get("lighting"), "golden_hour")
+        self.assertEqual(spec.lighting_preset, "golden_hour")
+        self.assertEqual(bind.get("texture"), "noise")
 
     def test_photoreal_backend_grades_frame(self):
         backend = get_render_backend("photoreal")
@@ -108,6 +129,84 @@ class TestPhotorealConsumer(unittest.TestCase):
         spec = build_spec_from_instruction(instruction, knowledge={})
         self.assertEqual(spec.render_engine, "photoreal")
         self.assertTrue(spec.film_look)
+
+    def test_entity_setting_scene_selects_photoreal(self):
+        instruction = interpret_user_prompt("a person walks through a forest")
+        instruction.duration_seconds = 5.0
+        spec = build_spec_from_instruction(instruction, knowledge={})
+        self.assertEqual(spec.render_engine, "photoreal")
+        self.assertTrue(spec.film_look)
+        self.assertTrue(spec.scene_layers)
+
+    def test_pixel_pairing_stays_procedural(self):
+        instruction = interpret_user_prompt(
+            "pixel pairing: color_ink paired with color_sun, static frame"
+        )
+        instruction.duration_seconds = 1.0
+        spec = build_spec_from_instruction(instruction, knowledge={})
+        self.assertEqual(spec.render_engine, "procedural")
+        self.assertEqual(spec.creation_mode, "pure_per_frame")
+
+
+class TestPhotorealEnvironment(unittest.TestCase):
+    def test_plate_has_sky_over_ground(self):
+        from src.photoreal.environment import render_environment_plate
+
+        spec = SceneSpec(
+            palette_name="default",
+            motion_type="slow",
+            intensity=0.8,
+            raw_prompt="forest",
+            setting="forest",
+            lighting_preset="golden_hour",
+            palette_colors=[(210, 180, 90), (40, 70, 40)],
+            instance={"horizon": 0.60, "photoreal_bind": {
+                "sky": (210, 180, 90),
+                "ground": (40, 70, 40),
+                "setting": "forest",
+                "texture": "noise",
+                "lighting": "golden_hour",
+                "palette": [(210, 180, 90), (40, 70, 40)],
+            }},
+        )
+        plate = render_environment_plate(64, 64, spec, seed=3)
+        self.assertEqual(plate.shape, (64, 64, 3))
+        top = plate[:16].astype(np.float32).mean()
+        bottom = plate[48:].astype(np.float32).mean()
+        self.assertGreater(top, bottom, "sky should read brighter than ground")
+
+    def test_composite_keeps_subject(self):
+        from src.photoreal.environment import composite_environment, render_environment_plate
+
+        spec = SceneSpec(
+            palette_name="default",
+            motion_type="slow",
+            intensity=0.8,
+            raw_prompt="forest",
+            setting="forest",
+            scene_layers=[{
+                "kind": "circle",
+                "color": [255, 0, 0],
+                "z": 2,
+                "keyframes": [
+                    {"t": 0, "x": 0.5, "y": 0.45, "scale": 1.6, "rot": 0, "opacity": 1},
+                    {"t": 1, "x": 0.5, "y": 0.45, "scale": 1.6, "rot": 0, "opacity": 1},
+                ],
+            }],
+            instance={"photoreal_bind": {
+                "sky": (180, 200, 220),
+                "ground": (50, 60, 40),
+                "setting": "forest",
+                "lighting": "neutral",
+            }},
+        )
+        env = render_environment_plate(48, 48, spec, seed=1)
+        frame = np.zeros((48, 48, 3), dtype=np.uint8)
+        frame[16:32, 16:32] = (255, 0, 0)
+        out = composite_environment(frame, env, spec, t=0.2)
+        # Center of the stamped subject should stay closer to red than to the env plate
+        center = out[24, 24].astype(np.float32)
+        self.assertGreater(center[0], 80.0)
 
 
 class TestLoopAuthenticityWiring(unittest.TestCase):

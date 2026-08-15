@@ -110,11 +110,26 @@ def bind_spec_to_registries(
     if bound:
         spec.palette_colors = bound
 
+    sky = max(bound, key=_luma) if bound else (176, 196, 214)
+    ground = min(bound, key=_luma) if bound else (72, 78, 64)
+    setting = getattr(spec, "setting", None)
+    from ..depth.assets import texture_for_setting
+    from ..lighting.grading import LIGHTING_PRESETS
+
+    lighting = _resolve_bound_lighting(spec, knowledge)
+    if lighting in LIGHTING_PRESETS and (getattr(spec, "lighting_preset", None) or "neutral") == "neutral":
+        spec.lighting_preset = lighting
+    texture = texture_for_setting(setting)
+
     inst = dict(getattr(spec, "instance", None) or {})
     inst["photoreal_bind"] = {
         "palette": bound,
-        "lighting": getattr(spec, "lighting_preset", None),
-        "setting": getattr(spec, "setting", None),
+        "sky": sky,
+        "ground": ground,
+        "lighting": lighting,
+        "setting": setting,
+        "texture": texture,
+        "key_dir": (-0.55, -0.72),
         "bound": bool(catalog),
         "catalog_size": len(catalog),
     }
@@ -124,6 +139,28 @@ def bind_spec_to_registries(
         spec.depth_parallax = True
         spec.render_engine = "photoreal"
     return spec
+
+
+def _resolve_bound_lighting(spec: SceneSpec, knowledge: dict[str, Any] | None) -> str:
+    """Keep an explicit preset; otherwise resort to a named learned lighting value."""
+    from ..lighting.grading import LIGHTING_PRESETS
+
+    current = (getattr(spec, "lighting_preset", None) or "neutral").lower().replace(" ", "_")
+    if current in LIGHTING_PRESETS and current != "neutral":
+        return current
+    learned = (knowledge or {}).get("learned_lighting") or []
+    if isinstance(learned, dict):
+        learned = learned.get("profiles") or []
+    for item in learned:
+        name = ""
+        if isinstance(item, str):
+            name = item
+        elif isinstance(item, dict):
+            name = str(item.get("preset") or item.get("key") or item.get("name") or "")
+        name = name.lower().replace(" ", "_")
+        if name in LIGHTING_PRESETS:
+            return name
+    return current if current in LIGHTING_PRESETS else "neutral"
 
 
 def apply_photoreal_grade(
@@ -151,7 +188,10 @@ def apply_photoreal_grade(
         palette = list(getattr(spec, "palette_colors", None) or [])
     rgbs = [tuple(int(c) for c in rgb[:3]) for rgb in palette if rgb and len(rgb) >= 3]
 
-    if rgbs:
+    if isinstance(bind, dict) and bind.get("sky") and bind.get("ground"):
+        sky = tuple(int(c) for c in bind["sky"][:3])
+        fill = tuple(int(c) for c in (bind.get("ground") or (118, 124, 132))[:3])
+    elif rgbs:
         sky = max(rgbs, key=_luma)
         fill = sorted(rgbs, key=_luma)[len(rgbs) // 2]
     else:
@@ -166,13 +206,24 @@ def apply_photoreal_grade(
         t=t,
         composition_balance=getattr(spec, "composition_balance", "balanced") or "balanced",
     )
-    lighting = (getattr(spec, "lighting_preset", None) or "neutral").lower().replace(" ", "_")
+    lighting = (
+        (bind.get("lighting") if isinstance(bind, dict) else None)
+        or getattr(spec, "lighting_preset", None)
+        or "neutral"
+    )
+    lighting = str(lighting).lower().replace(" ", "_")
     haze_strength = 0.28 if lighting in ("golden_hour", "documentary") else 0.22
     if lighting in ("noir", "moody"):
         haze_strength = 0.14
 
+    from ..lighting.grading import apply_color_temperature, apply_lighting_preset
+    from .environment import composite_environment, render_environment_plate
+
+    env = render_environment_plate(w, h, spec, seed=int(t * 1000) % 10_000)
+    framed = composite_environment(frame, env, spec, t=t)
+
     out = apply_atmospheric_haze(
-        frame,
+        framed,
         depth,
         haze_rgb=(float(sky[0]), float(sky[1]), float(sky[2])),
         strength=haze_strength,
@@ -182,6 +233,10 @@ def apply_photoreal_grade(
     far = np.clip(1.0 - depth, 0.0, 1.0)[..., None]
     out = out.astype(np.float32) * (1.0 - 0.08 * far) + bounce * (0.08 * far)
     out = np.clip(out, 0, 255).astype(np.uint8)
+    out = apply_lighting_preset(out, lighting)
+    temperature = getattr(spec, "color_temperature", None) or "neutral"
+    if temperature and temperature != "neutral":
+        out = apply_color_temperature(out, str(temperature))
     out = apply_tone_curve(out, contrast=1.10, lift=0.025)
     if lighting in ("golden_hour", "neon"):
         out = apply_soft_bloom(out, threshold=190.0, strength=0.22, radius=2)
