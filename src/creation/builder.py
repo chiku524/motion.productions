@@ -783,7 +783,7 @@ def build_spec_from_instruction(
             "cel"
             if wants_cartoon
             else (
-                "enhanced"
+                "photoreal"
                 if (style_val or "").lower() in ("realistic", "photoreal")
                 else "procedural"
             )

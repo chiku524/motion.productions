@@ -255,6 +255,27 @@ def run() -> None:
                         result = post_linguistic_growth(api_base, all_extracted)
                         if result.get("inserted", 0) or result.get("updated", 0):
                             print(f"[{cycle}] linguistic growth: +{result.get('inserted', 0)} new, {result.get('updated', 0)} updated")
+                    from src.knowledge.loop_authenticity import evaluate_iteration
+                    for prompt in generated:
+                        auth = evaluate_iteration(
+                            source="interpretation",
+                            prompt=prompt,
+                            recent=list(avoid),
+                            knowledge=knowledge,
+                            growth_ran=True,
+                            growth_added={"linguistic": 1 if all_extracted else 0},
+                            worker="interpret",
+                        )
+                        if not auth["authentic"]:
+                            logger.warning(
+                                "Inauthentic interpret iteration: novel=%s knowledge=%s",
+                                auth["novel_prompt"],
+                                auth["knowledge_used"],
+                            )
+                            break
+                    else:
+                        if generated:
+                            logger.info("Authentic interpret cycle: %s prompts", len(generated))
                 except APIError as e:
                     logger.warning("Generate/learn phase failed: %s", e)
 

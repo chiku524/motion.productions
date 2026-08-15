@@ -124,6 +124,12 @@ class ProceduralVideoGenerator(VideoGenerator):
                 base_spec.depth_parallax = True
                 if not engine_override and base_spec.render_engine == "procedural":
                     base_spec.render_engine = "enhanced"
+        if (
+            base_spec.render_engine in ("photoreal", "realistic")
+            and base_spec.creation_mode != "pure_per_frame"
+        ):
+            from ..photoreal import bind_spec_to_registries
+            bind_spec_to_registries(base_spec, knowledge)
         # Enhanced path defaults to 720p unless draft quality is forced or size already larger
         out_cfg = (config or {}).get("output") or {}
         if (

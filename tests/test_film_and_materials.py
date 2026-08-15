@@ -101,11 +101,15 @@ class TestFilmAndMaterials(unittest.TestCase):
             }]
         spec = build_spec_from_instruction(instruction, knowledge={})
         self.assertTrue(spec.film_look)
-        self.assertEqual(spec.render_engine, "enhanced")
+        self.assertEqual(spec.render_engine, "photoreal")
 
     def test_enhanced_backend(self):
+        from src.photoreal import PhotorealRegistryBackend
+
         backend = get_render_backend("photoreal")
-        self.assertIsInstance(backend, EnhancedProceduralBackend)
+        self.assertIsInstance(backend, PhotorealRegistryBackend)
+        enhanced = get_render_backend("enhanced")
+        self.assertIsInstance(enhanced, EnhancedProceduralBackend)
         spec = SceneSpec(
             palette_name="default",
             motion_type="slow",

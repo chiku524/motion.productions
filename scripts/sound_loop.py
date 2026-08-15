@@ -242,6 +242,24 @@ def run() -> None:
                 except APIError as e:
                     logger.warning("POST discoveries failed (status=%s): %s", e.status_code, e)
 
+            from src.knowledge.loop_authenticity import evaluate_iteration
+            authenticity = evaluate_iteration(
+                source="sound_pairing",
+                prompt=source_prompt,
+                recent=[],
+                knowledge=knowledge,
+                growth_ran=True,
+                growth_added=added,
+                worker="sound",
+            )
+            if authenticity["authentic"]:
+                logger.info("Authentic sound iteration: novel_rows=%s kind=%s", authenticity["novel_rows"], pairing_kind)
+            else:
+                logger.warning(
+                    "Inauthentic sound iteration: knowledge=%s growth_ran=%s",
+                    authenticity["knowledge_used"],
+                    authenticity["growth_ran"],
+                )
             if count:
                 print(
                     f"[{cycle}] sound discovery: +{count} "

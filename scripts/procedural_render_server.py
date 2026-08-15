@@ -120,22 +120,22 @@ class ProceduralRenderHandler(BaseHTTPRequestHandler):
             or meta.get("engine")
             or "procedural"
         ).strip().lower()
-        if engine in ("photoreal", "realistic"):
-            engine = "enhanced"
-        if engine not in ("procedural", "enhanced"):
+        if engine == "realistic":
+            engine = "photoreal"
+        if engine not in ("procedural", "enhanced", "photoreal"):
             engine = "procedural"
 
         config = load_config(None)
         config.setdefault("output", {})
         config.setdefault("render", {})
         config["render"]["engine"] = engine
-        if body.get("film_look") is True or engine == "enhanced":
+        if body.get("film_look") is True or engine in ("enhanced", "photoreal"):
             config["render"]["film_look"] = True
 
         quality = body.get("quality") or meta.get("quality")
         if quality:
             config["output"]["quality"] = str(quality)
-        elif engine == "enhanced" and not body.get("width") and not meta.get("width"):
+        elif engine in ("enhanced", "photoreal") and not body.get("width") and not meta.get("width"):
             config["output"]["quality"] = "standard"
 
         if body.get("width") or meta.get("width"):

@@ -85,6 +85,7 @@ def pick_prompt(
     from src.automation.prompt_gen import (
         generate_pixel_pairing_prompt,
         generate_cartoon_prompt,
+        generate_mini_scene_prompt,
         generate_targeted_blended_prompt,
         generate_targeted_color_family_prompt,
         generate_targeted_narrative_prompt,
@@ -129,10 +130,10 @@ def pick_prompt(
         cartoon = generate_cartoon_prompt(knowledge=knowledge, avoid=recent)
         if cartoon:
             logger.info("Cartoon prompt: %s", cartoon[:70] + ("..." if len(cartoon) > 70 else ""))
-            return (cartoon, {"source": "cartoon"})
+            return (cartoon, {"source": "cartoon", "authentic": True, "use_photoreal": False})
         return (
             "cel cartoon: a person holds still then turns in a kitchen, cartoon hold then snap, anime look",
-            {"source": "cartoon"},
+            {"source": "cartoon", "authentic": True, "use_photoreal": False},
         )
     prefer_fidelity = (
         extraction_focus == "window"
@@ -161,9 +162,29 @@ def pick_prompt(
         )
         if color_prompt:
             logger.info("Targeted color-family prompt: %s", color_prompt[:60] + ("..." if len(color_prompt) > 60 else ""))
-            return (color_prompt, {"source": "targeted_color_family"})
+            return (color_prompt, {"source": "targeted_color_family", "authentic": True, "use_photoreal": False})
 
-    if secure_random() < 0.82:
+    # Window / balanced: user-like scenes first so the photoreal consumer is exercised.
+    # Pixel pairing remains the explorer (frame) diet and a remainder here.
+    if prefer_fidelity:
+        if secure_random() < 0.62:
+            mini = generate_mini_scene_prompt(fidelity_bias=True, avoid=recent)
+            if mini:
+                logger.info("Mini-scene prompt: %s", mini[:70] + ("..." if len(mini) > 70 else ""))
+                return (mini, {"source": "mini_scene", "authentic": True, "use_photoreal": True})
+        if coverage and thin_narrative and secure_random() < 0.22:
+            targeted = generate_targeted_narrative_prompt(coverage, avoid=recent)
+            if targeted:
+                logger.info("Targeted narrative prompt (fill gaps): %s", targeted[:60] + ("..." if len(targeted) > 60 else ""))
+                return (targeted, {"source": "targeted_narrative", "authentic": True, "use_photoreal": True})
+        if secure_random() < 0.16:
+            blended = generate_targeted_blended_prompt(knowledge, avoid=recent)
+            if blended:
+                logger.info("Targeted blended prompt: %s", blended[:60] + ("..." if len(blended) > 60 else ""))
+                return (blended, {"source": "targeted_blended", "authentic": True, "use_photoreal": True})
+
+    pairing_rate = 0.82 if pairing_kind == "frame" else 1.0
+    if secure_random() < pairing_rate:
         pairing = generate_pixel_pairing_prompt(kind=pairing_kind, knowledge=knowledge, avoid=recent)
         if pairing:
             logger.info(
@@ -171,19 +192,7 @@ def pick_prompt(
                 pairing_kind,
                 pairing[:70] + ("..." if len(pairing) > 70 else ""),
             )
-            return (pairing, {"source": f"pixel_pairing_{pairing_kind}"})
-
-    if coverage and thin_narrative and pairing_kind == "window" and secure_random() < 0.18:
-        targeted = generate_targeted_narrative_prompt(coverage, avoid=recent)
-        if targeted:
-            logger.info("Targeted narrative prompt (fill gaps): %s", targeted[:60] + ("..." if len(targeted) > 60 else ""))
-            return (targeted, {"source": "targeted_narrative"})
-
-    if pairing_kind == "window" and secure_random() < 0.12:
-        blended = generate_targeted_blended_prompt(knowledge, avoid=recent)
-        if blended:
-            logger.info("Targeted blended prompt: %s", blended[:60] + ("..." if len(blended) > 60 else ""))
-            return (blended, {"source": "targeted_blended"})
+            return (pairing, {"source": f"pixel_pairing_{pairing_kind}", "authentic": True, "use_photoreal": False})
 
     pairing = generate_pixel_pairing_prompt(kind=pairing_kind, knowledge=knowledge, avoid=recent)
     if pairing:
@@ -192,11 +201,11 @@ def pick_prompt(
             pairing_kind,
             pairing[:70] + ("..." if len(pairing) > 70 else ""),
         )
-        return (pairing, {"source": f"pixel_pairing_{pairing_kind}"})
+        return (pairing, {"source": f"pixel_pairing_{pairing_kind}", "authentic": True, "use_photoreal": False})
     fallback = generate_procedural_prompt(
         avoid=recent, knowledge=knowledge, coverage=coverage, instructive_ratio=0.2
     )
-    return (fallback or "", {"source": "procedural"})
+    return (fallback or "", {"source": "procedural", "authentic": True, "use_photoreal": False})
 
 
 def _load_coverage(api_base: str) -> dict | None:
@@ -316,6 +325,39 @@ def _load_loop_config(api_base: str) -> dict:
     except APIError as e:
         logger.warning("GET /api/loop/config failed (status=%s, path=%s): %s — using defaults", e.status_code, e.path, e)
         return {"enabled": True, "delay_seconds": DEFAULT_DELAY_SECONDS, "duration_seconds": None}
+
+
+def resolve_loop_duration(
+    *,
+    workflow_type: str,
+    api_duration: float | None,
+    learning_duration: float | None,
+    run_count: int,
+    cli_duration: float,
+    env_duration: str | None = None,
+) -> float:
+    """
+    Clip length for this iteration.
+
+    Precedence: cartoon env clamp → Web UI / API → LOOP_DURATION_SECONDS
+    (so balanced's 5s is honored) → learning.duration_seconds → scaled CLI default.
+    """
+    raw_env = env_duration if env_duration is not None else os.environ.get("LOOP_DURATION_SECONDS")
+    if (workflow_type or "").strip().lower() == "cartoon":
+        try:
+            return max(1.0, min(6.0, float((raw_env or "2.5").strip())))
+        except (ValueError, TypeError):
+            return 2.5
+    if api_duration is not None and float(api_duration) > 0:
+        return float(api_duration)
+    if raw_env:
+        try:
+            return max(1.0, min(30.0, float(str(raw_env).strip())))
+        except (ValueError, TypeError):
+            pass
+    if learning_duration is not None and float(learning_duration) > 0:
+        return float(learning_duration)
+    return duration_for_run(run_count, cli_duration)
 
 
 def duration_for_run(run_count: int, base: float) -> float:
@@ -442,22 +484,13 @@ def run() -> None:
             state["recent_prompts"] = []
             continue
 
-        # Duration: API loop config (from UI) overrides local config and CLI
-        api_duration = loop_config.get("duration_seconds")
-        if api_duration is not None and api_duration > 0:
-            duration = float(api_duration)
-        else:
-            learning_duration = (config.get("learning") or {}).get("duration_seconds")
-            if learning_duration is not None and learning_duration > 0:
-                duration = float(learning_duration)
-            else:
-                duration = duration_for_run(state["run_count"], args.duration)
-        if workflow_type == "cartoon":
-            raw_cd = (os.environ.get("LOOP_DURATION_SECONDS") or "2.5").strip()
-            try:
-                duration = max(1.0, min(6.0, float(raw_cd)))
-            except (ValueError, TypeError):
-                duration = 2.5
+        duration = resolve_loop_duration(
+            workflow_type=workflow_type,
+            api_duration=loop_config.get("duration_seconds"),
+            learning_duration=(config.get("learning") or {}).get("duration_seconds"),
+            run_count=state["run_count"],
+            cli_duration=args.duration,
+        )
 
         try:
             job = api_request_with_retry(
@@ -483,13 +516,19 @@ def run() -> None:
         run_succeeded = False
         try:
             run_seed = (state["run_count"] + 1) * 7919 + (hash(job_id) % 1_000_000)
+            run_config = dict(config)
+            if prompt_meta.get("use_photoreal"):
+                render_cfg = dict(run_config.get("render") or {})
+                render_cfg["engine"] = "photoreal"
+                render_cfg["film_look"] = True
+                run_config["render"] = render_cfg
             path = generate_full_video(
                 prompt,
                 duration,
                 generator=generator,
                 output_path=out_path,
                 seed=run_seed,
-                config=config,
+                config=run_config,
             )
 
             with open(path, "rb") as f:
@@ -564,6 +603,8 @@ def run() -> None:
             # 4. post_discoveries(api_base, {"job_id": job_id}) records the discovery run for diagnostics.
             # Creation uses get_knowledge_for_creation → build_spec with a merged pool (origin + learned) so gradient/camera/motion selection is randomized across primitives and discoveries.
             # Growth + sync: gated by extraction_focus (frame | window | all)
+            added: dict = {}
+            growth_ran = False
             try:
                 from src.knowledge.growth_per_instance import grow_all_from_video
                 from src.knowledge.narrative_registry import grow_narrative_from_spec
@@ -594,6 +635,7 @@ def run() -> None:
                     static_focus=static_focus,
                     knowledge=knowledge,
                 )
+                growth_ran = True
                 if any(added.values()):
                     metrics = growth_metrics(added)
                     logger.info("Growth [%s]: total=%s static=%s dynamic=%s aspects=%s", extraction_focus, metrics["total_added"], metrics["static_added"], metrics["dynamic_added"], metrics["by_aspect"])
@@ -692,6 +734,36 @@ def run() -> None:
                 logger.warning("Missing learning (job_id=%s): %s", job_id, e)
                 print(f"  (learning log: {e})")
 
+            from src.knowledge.loop_authenticity import evaluate_iteration
+            authenticity = evaluate_iteration(
+                source=str(prompt_meta.get("source") or ""),
+                prompt=prompt,
+                recent=state.get("recent_prompts") or [],
+                knowledge=knowledge,
+                growth_ran=growth_ran,
+                growth_added=added,
+                render_engine=getattr(spec, "render_engine", None),
+                worker=workflow_type,
+            )
+            state["last_authenticity"] = authenticity
+            if authenticity["authentic"]:
+                logger.info(
+                    "Authentic iteration [%s]: source=%s novel_rows=%s engine=%s",
+                    workflow_type,
+                    authenticity["source"],
+                    authenticity["novel_rows"],
+                    authenticity.get("render_engine"),
+                )
+            else:
+                logger.warning(
+                    "Inauthentic iteration [%s]: source=%s novel_prompt=%s knowledge=%s growth_ran=%s photoreal_bound=%s",
+                    workflow_type,
+                    authenticity["source"],
+                    authenticity["novel_prompt"],
+                    authenticity["knowledge_used"],
+                    authenticity["growth_ran"],
+                    authenticity["photoreal_bound"],
+                )
             print("✓")
 
             if delay_seconds > 0:
