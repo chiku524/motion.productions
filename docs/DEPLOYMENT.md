@@ -315,7 +315,6 @@ Production setup uses **[Fly Machines](https://fly.io/docs/machines/)** with **o
 | `fly.loop-balanced.toml` | `motion-loop-balanced` | Balanced (window, UI ratio) |
 | `fly.loop-interpret.toml` | `motion-loop-interpret` | Interpretation worker only |
 | `fly.loop-sound.toml` | `motion-loop-sound` | Sound discovery worker only |
-| `fly.loop-cartoon.toml` | `motion-loop-cartoon` | Cartoon (opt-in named-subject cel shots) |
 | `fly.loop-webjobs.toml` | `motion-loop-webjobs` | Pending job bridge (`generate_bridge`) |
 | `fly.procedural-render.toml` | `motion-procedural-render` | HTTP `POST /render` for `engine=procedural` |
 

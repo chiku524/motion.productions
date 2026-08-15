@@ -1,21 +1,13 @@
 #!/usr/bin/env python3
 """
-Seed a specialized loop from a reference video.
+Measure a local clip you have rights to into the registries.
 
-Reads a local clip you have rights to (your own render, CC0, public domain),
-extracts colors / sounds / motion windows into the registries, and writes a
-loop-origin recipe: palette, hold/snap timing, and a palette-indexed pixel
-field from the sampled frames. That field is the cartoon engine's starting
-picture. The source MP4 is not copied into the library and is not replayed.
+Extracts colors / sounds / motion windows. Does not become the loop's
+starting picture and is not replayed as video frames.
 
 Usage:
-  python scripts/ingest_reference.py path/to/clip.mp4 --loop cartoon
-  python scripts/ingest_reference.py path/to/clip.mp4 --loop cartoon --api-base https://motion.productions
-  python scripts/ingest_reference.py path/to/clip.mp4 --loop cartoon --max-frames 72
-  python scripts/ingest_reference.py path/to/clip.mp4 --loop cartoon --recipe-only
-  python scripts/ingest_reference.py --objects-only --loop cartoon
-
-Drop convention: references/cartoon.mp4
+  python scripts/ingest_reference.py path/to/clip.mp4 --api-base https://motion.productions
+  python scripts/ingest_reference.py path/to/clip.mp4 --max-frames 72
 """
 from __future__ import annotations
 
@@ -30,10 +22,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Ingest a reference video as a loop origin (measurements + registry growth)."
+        description="Measure a reference video into the registries (not used as a render start)."
     )
     parser.add_argument("video", nargs="?", default="", help="Path to an MP4 you have rights to")
-    parser.add_argument("--loop", default="cartoon", help="Loop name (default cartoon)")
+    parser.add_argument("--loop", default="main", help="Label for the measurement recipe file")
     parser.add_argument("--api-base", default=None, help="POST discoveries to this API (D1)")
     parser.add_argument("--local-only", action="store_true", help="Grow local registries only; skip API")
     parser.add_argument("--max-frames", type=int, default=72, help="Sample this many frames across the clip")

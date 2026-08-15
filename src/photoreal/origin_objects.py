@@ -1,10 +1,7 @@
 """
-Import measured masses from a loop-origin field (e.g. the Boing promo) as
-photoreal meshes.
+Turn measured palette masses into silhouette meshes.
 
-The source video is not copied or replayed. Indexed field frames already
-store palette masses; this module turns stable masses into silhouette
-meshes the photoreal overlay can draw.
+Not used as a default loop start. Reference clips are not loaded or replayed.
 """
 from __future__ import annotations
 
@@ -137,24 +134,7 @@ def attach_origin_objects(
 
 def _hydrate_object_meshes(objects: list[Any]) -> list[Any]:
     """Restore mesh_obj from the saved origin when the job spec was slimmed."""
-    if all(not isinstance(o, dict) or o.get("mesh_obj") for o in objects):
-        return objects
-    from ..knowledge.reference_origin import load_loop_origin
-
-    stored = load_loop_origin("cartoon") or {}
-    by_id = {
-        str(o.get("id")): o
-        for o in (stored.get("objects") or [])
-        if isinstance(o, dict) and o.get("id") and o.get("mesh_obj")
-    }
-    out: list[Any] = []
-    for obj in objects:
-        if isinstance(obj, dict) and not obj.get("mesh_obj"):
-            full = by_id.get(str(obj.get("id") or ""))
-            if full:
-                obj = {**obj, "mesh_obj": full["mesh_obj"]}
-        out.append(obj)
-    return out
+    return objects
 
 
 def silhouette_mesh(mask: np.ndarray, *, depth: float = 0.10) -> Mesh:

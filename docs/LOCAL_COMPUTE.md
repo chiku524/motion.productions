@@ -31,7 +31,7 @@ printf '%s' 'your-long-secret' | npx wrangler secret put MOTION_API_SECRET
 
 ### Live Python mounts
 
-Compose bind-mounts `./src`, `./scripts`, and `./knowledge` into every Python worker so loop/render code and the cartoon origin (including imported object meshes) pick up host edits without `--build`. Dependency or `Dockerfile` changes still need a rebuild. Long-running workers still need a container recreate to reload already-imported Python. Set `PYTHONDONTWRITEBYTECODE=1` (already in compose) to avoid host/`__pycache__` fights.
+Compose bind-mounts `./src`, `./scripts`, and `./knowledge` into every Python worker so loop/render code picks up host edits without `--build`. Dependency or `Dockerfile` changes still need a rebuild. Long-running workers still need a container recreate to reload already-imported Python. Set `PYTHONDONTWRITEBYTECODE=1` (already in compose) to avoid host/`__pycache__` fights.
 
 Clear accumulated MP4s inside containers periodically (`/app/output`) — they inflate the Docker VHDX even after upload.
 
@@ -75,27 +75,6 @@ docker compose -f docker-compose.local.yml --profile free up -d --build
 docker compose -f docker-compose.local.yml --profile loops-full up -d --build
 # Adds exploiter on 8084 — only when 500/503s stay rare for a stretch
 ```
-
-**Opt-in cartoon loop** (named-subject cel shots; extra D1 writes, not Core 4):
-
-```bash
-docker compose -f docker-compose.local.yml --profile cartoon up -d --build
-# Can combine with Core 4: --profile free --profile cartoon
-```
-
-| Service | Host port | Role | Delay |
-|---------|-----------|------|--------|
-| cartoon | `8088` | Modern-day cartoon discovery + generation (Pillow cel kit: inked rooms + TV-cartoon figure, ~2.5s hold-then-snap) | 120s |
-
-This worker never uses pixel-pairing prompts. Explorer / balanced / sound stay on their own missions. Jobs show a **Cartoon** badge. Requires the Worker to accept `workflow_type=cartoon` (deployed with this change).
-
-**Optional: seed from a real cartoon you have rights to**
-
-```bash
-python scripts/ingest_reference.py references/cartoon.mp4 --loop cartoon --api-base https://motion.productions
-```
-
-That grows registry colors/sounds/motion from the clip and writes `knowledge/loop_origins/cartoon.json` (palette, hold/snap timing, and a palette-indexed pixel field from the sampled frames). Sampling spreads `--max-frames` (default 72) across the whole clip so a long promo is not measured from the opening only. The cartoon renderer starts from that field. Every Python worker mounts `./knowledge`, so photoreal loops can attach those measured object meshes too. It does **not** copy or replay the source video.
 
 **D1 write contract (avoid 7429 / discovery storms):**
 - Shared env: `DISCOVERIES_MAX_ITEMS` (default **8**), `DISCOVERIES_CHUNK_PAUSE_SECONDS` (default **3.5**). Blends count as weight 3 toward the budget so Free D1 stays under ~50 queries/request. Empty `job_id`-only discovery posts skip the write lease.

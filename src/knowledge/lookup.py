@@ -4,7 +4,6 @@ Creation uses this to refine parameters from origins + learned values.
 When api_base is set, fetches from D1 via API to utilize cloud-stored discoveries.
 """
 import logging
-import os
 from typing import Any
 
 from .registry import load_registry
@@ -189,16 +188,5 @@ def get_knowledge_for_creation(
             knowledge["narrative"] = narrative
         except Exception:
             knowledge["narrative"] = {}
-
-    try:
-        from .reference_origin import load_loop_origin, slim_loop_origin
-        origin = load_loop_origin("cartoon", config=config)
-        if origin:
-            workflow = (os.environ.get("LOOP_WORKFLOW_TYPE") or "").strip().lower()
-            # Cartoon keeps the indexed field (cel start). Photoreal gets
-            # measured object meshes; slim drops the field blobs.
-            knowledge["loop_origin"] = origin if workflow == "cartoon" else slim_loop_origin(origin)
-    except Exception:
-        pass
 
     return knowledge

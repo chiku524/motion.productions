@@ -33,7 +33,7 @@ def _loop_extraction_focus() -> str:
 def _loop_state_worker() -> str:
     """Per-worker KV key so explorer/balanced counters are not last-writer-wins on shared loop_state."""
     w = (os.environ.get("LOOP_WORKFLOW_TYPE") or "").strip().lower()
-    return w if w in ("explorer", "exploiter", "main", "balanced", "cartoon") else "main"
+    return w if w in ("explorer", "exploiter", "main", "balanced") else "main"
 
 
 def baseline_state() -> dict:
@@ -84,7 +84,6 @@ def pick_prompt(
     from src.automation import generate_procedural_prompt
     from src.automation.prompt_gen import (
         generate_pixel_pairing_prompt,
-        generate_cartoon_prompt,
         generate_mini_scene_prompt,
         generate_targeted_blended_prompt,
         generate_targeted_color_family_prompt,
@@ -117,24 +116,6 @@ def pick_prompt(
     static_focus = (os.environ.get("LOOP_STATIC_FOCUS") or "both").strip().lower()
     extraction_focus = _loop_extraction_focus()
     workflow_type = (os.environ.get("LOOP_WORKFLOW_TYPE") or "").strip().lower()
-    if workflow_type == "cartoon":
-        from src.knowledge.reference_origin import load_loop_origin
-        origin = None
-        if isinstance(knowledge, dict):
-            origin = knowledge.get("loop_origin")
-        origin = origin or load_loop_origin("cartoon")
-        if origin and isinstance(knowledge, dict):
-            knowledge = {**knowledge, "loop_origin": origin}
-        elif origin:
-            knowledge = {"loop_origin": origin}
-        cartoon = generate_cartoon_prompt(knowledge=knowledge, avoid=recent)
-        if cartoon:
-            logger.info("Cartoon prompt: %s", cartoon[:70] + ("..." if len(cartoon) > 70 else ""))
-            return (cartoon, {"source": "cartoon", "authentic": True, "use_photoreal": False})
-        return (
-            "cel cartoon: a person holds still then turns in a kitchen, cartoon hold then snap, anime look",
-            {"source": "cartoon", "authentic": True, "use_photoreal": False},
-        )
     prefer_fidelity = (
         extraction_focus == "window"
         or workflow_type in ("main", "balanced")
@@ -339,15 +320,10 @@ def resolve_loop_duration(
     """
     Clip length for this iteration.
 
-    Precedence: cartoon env clamp → Web UI / API → LOOP_DURATION_SECONDS
+    Precedence: Web UI / API → LOOP_DURATION_SECONDS
     (so balanced's 5s is honored) → learning.duration_seconds → scaled CLI default.
     """
     raw_env = env_duration if env_duration is not None else os.environ.get("LOOP_DURATION_SECONDS")
-    if (workflow_type or "").strip().lower() == "cartoon":
-        try:
-            return max(1.0, min(6.0, float((raw_env or "2.5").strip())))
-        except (ValueError, TypeError):
-            return 2.5
     if api_duration is not None and float(api_duration) > 0:
         return float(api_duration)
     if raw_env:

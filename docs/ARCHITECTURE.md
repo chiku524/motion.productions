@@ -156,7 +156,7 @@ Clean organization: every file is in its respective directory.
 | Script | Purpose |
 |--------|--------|
 | `worker_start.py` | Fly/Docker dispatcher; `WORKER_START_SCRIPT` selects role. |
-| `automate_loop.py` | Learning loop (explorer / exploiter / balanced / cartoon). |
+| `automate_loop.py` | Learning loop (explorer / exploiter / balanced). |
 | `generate_bridge.py` | Pending jobs → generate → upload. |
 | `interpret_loop.py` | Interpretation / linguistics worker (no render). |
 | `sound_loop.py` | Pure sound discovery worker (no render). |
@@ -164,7 +164,7 @@ Clean organization: every file is in its respective directory.
 | `generate.py` | CLI one-shot generate. |
 | `automate.py` | Interval-based local automation. |
 | `learn_from_api.py`, `learn_report.py` | Learning report / API suggestions. |
-| `ingest_reference.py` | Measure a reference MP4 → registry growth + loop-origin recipe. |
+| `ingest_reference.py` | Optional: measure a reference MP4 into registries (not a render start). |
 | `run_d1_migrations.py` | D1 migrations with 7429 retry. |
 | `color_sweep.py`, `registry_*.py`, `seed_*.py`, `backfill_*.py`, … | Registry ops and seeding. |
 

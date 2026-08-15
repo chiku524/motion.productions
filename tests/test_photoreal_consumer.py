@@ -399,8 +399,11 @@ class TestOriginObjectImport(unittest.TestCase):
         self.assertEqual(spec.creation_mode, "pure_per_frame")
         self.assertFalse(spec.scene_layers)
         self.assertTrue(spec.pure_colors)
-        attached = ((spec.instance or {}).get("loop_origin") or {}).get("objects") or []
-        self.assertTrue(any(isinstance(o, dict) and o.get("id") == "origin_0_tree" for o in attached))
+        self.assertNotIn("loop_origin", spec.instance or {})
+        self.assertFalse(any(
+            layer.get("origin_object_id") == "origin_0_tree"
+            for layer in (spec.scene_layers or [])
+        ))
 
 
 class TestLoopAuthenticityWiring(unittest.TestCase):
@@ -427,18 +430,6 @@ class TestLoopAuthenticityWiring(unittest.TestCase):
             env_duration=None,
         )
         self.assertEqual(dur, 1.0)
-
-    def test_resolve_duration_cartoon_clamped(self):
-        mod = _load_automate_loop()
-        dur = mod.resolve_loop_duration(
-            workflow_type="cartoon",
-            api_duration=None,
-            learning_duration=1.0,
-            run_count=0,
-            cli_duration=5.0,
-            env_duration="2.5",
-        )
-        self.assertEqual(dur, 2.5)
 
     def test_window_pick_prompt_prefers_mini_scene(self):
         mod = _load_automate_loop()

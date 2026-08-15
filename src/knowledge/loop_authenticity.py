@@ -17,7 +17,6 @@ AUTHENTIC_SOURCES = frozenset({
     "targeted_narrative",
     "targeted_blended",
     "mini_scene",
-    "cartoon",
     "procedural",
     "interpretation",
     "sound_pairing",

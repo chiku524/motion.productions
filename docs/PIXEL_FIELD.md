@@ -53,7 +53,7 @@ These can still exist as **named readings** after the field has done the work:
 - Premade object layers (tree, person, car) stamped onto the frame
 - Keyword motion catalogs (`wave`, `pulse`, `fast`) as the generator switch
 
-For **every default procedural clip** (user prompt or loop): the renderer changes pixel colors; it does not pan the field and it does not stamp premade trees or characters. Named-subject prompts (`a person walking in a forest`) stay a registry color/sound field — objects are *recognized* after render (`pixel_emergence`), not drawn as a kit. The **cartoon loop** (`LOOP_WORKFLOW_TYPE=cartoon`, `render_engine=cel`) is the exception: it starts from a **palette-indexed origin field** when a reference clip has been ingested (sampled frames snapped onto registry colors plus ink, stored as compact index maps; hold/snap is those masses staying still and then changing together). The Pillow room-and-figure kit is only the fallback before an origin field exists.
+For **every default procedural clip** (user prompt or loop): the renderer changes pixel colors; it does not pan the field and it does not stamp premade trees or characters. Named-subject prompts (`a person walking in a forest`) stay a registry color/sound field — objects are *recognized* after render (`pixel_emergence`), not drawn as a kit. Loops do not start from a reference MP4 or loop-origin field.
 
 ---
 

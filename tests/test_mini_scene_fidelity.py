@@ -457,29 +457,6 @@ class TestMiniSceneFidelity(unittest.TestCase):
         unique = len(np.unique(frame.reshape(-1, 3), axis=0))
         self.assertLess(unique, 8000, "cel fills should be flatter than shaded blobs")
 
-    def test_cartoon_workflow_pick_prompt_never_pairing(self):
-        import importlib.util
-        import os
-        from pathlib import Path
-
-        path = Path(__file__).resolve().parents[1] / "scripts" / "automate_loop.py"
-        spec = importlib.util.spec_from_file_location("automate_loop_cartoon_test", path)
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        old = os.environ.get("LOOP_WORKFLOW_TYPE")
-        os.environ["LOOP_WORKFLOW_TYPE"] = "cartoon"
-        try:
-            prompt, meta = mod.pick_prompt({"recent_prompts": []}, knowledge={}, coverage={})
-        finally:
-            if old is None:
-                os.environ.pop("LOOP_WORKFLOW_TYPE", None)
-            else:
-                os.environ["LOOP_WORKFLOW_TYPE"] = old
-        self.assertEqual(meta.get("source"), "cartoon")
-        low = (prompt or "").lower()
-        self.assertIn("cartoon", low)
-        self.assertNotIn("pixel pairing", low)
-
     def test_reference_origin_recipe_from_frames(self):
         import numpy as np
         from src.knowledge.reference_origin import measure_frames
@@ -509,97 +486,21 @@ class TestMiniSceneFidelity(unittest.TestCase):
         self.assertEqual(stride_for_clip(30.0, 68.27, 72), 28)
         self.assertEqual(stride_for_clip(24.0, 0.0, 72), 1)
 
-    def test_cartoon_prompt_and_spec_use_loop_origin(self):
-        from src.automation.prompt_gen import generate_cartoon_prompt
-
-        origin = {
-            "palette": [{"r": 210, "g": 90, "b": 40, "name": "origin ochre"}],
-            "hold_frac": 0.7,
-            "snap_frac": 0.08,
-        }
-        knowledge = {"loop_origin": origin, "color_by_name": {"origin ochre": {"r": 210, "g": 90, "b": 40}}}
-        prompt = generate_cartoon_prompt(knowledge=knowledge, avoid=set())
-        self.assertIsNotNone(prompt)
-        self.assertIn("origin ochre", prompt.lower())
-
+    def test_loop_origin_is_not_attached_or_replayed(self):
         instruction = interpret_user_prompt(
             "cel cartoon: a person holds still then turns in a kitchen, cartoon hold then snap"
         )
         instruction.duration_seconds = 2.5
+        knowledge = {
+            "loop_origin": {
+                "palette": [{"r": 210, "g": 90, "b": 40, "name": "origin ochre"}],
+                "has_field": True,
+                "field": {"frames": ["nope"], "width": 8, "height": 8},
+            }
+        }
         spec = build_spec_from_instruction(instruction, knowledge=knowledge)
-        self.assertIn((210, 90, 40), spec.palette_colors[:4])
-        self.assertEqual((spec.instance or {}).get("loop_origin"), origin)
-        char = next(layer for layer in spec.scene_layers if layer.get("kind") == "character")
-        kfs = char.get("keyframes") or []
-        self.assertGreaterEqual(float(kfs[1]["t"]), 1.5)
-
-    def test_cartoon_origin_field_is_the_starting_picture(self):
-        import numpy as np
-        from src.automation.prompt_gen import generate_cartoon_prompt
-        from src.knowledge.reference_origin import measure_frames, slim_loop_origin
-        from src.procedural.cel import render_cel_frame
-
-        left = np.zeros((48, 48, 3), dtype=np.uint8)
-        left[:, :24] = (220, 40, 40)
-        left[:, 24:] = (40, 80, 200)
-        right = left.copy()
-        right[:, :24] = (40, 180, 80)
-        right[:, 24:] = (220, 180, 40)
-        recipe = measure_frames([left] * 4 + [right] * 4, fps=24.0, loop="cartoon")
-        self.assertTrue(recipe.get("has_field"))
-        origin = recipe
-        knowledge = {"loop_origin": origin, "color_by_name": {}}
-        prompt = generate_cartoon_prompt(knowledge=knowledge, avoid=set())
-        self.assertIsNotNone(prompt)
-        self.assertIn("origin field", prompt.lower())
-        self.assertNotIn("kitchen", prompt.lower())
-
-        instruction = interpret_user_prompt(prompt)
-        instruction.duration_seconds = 2.5
-        spec = build_spec_from_instruction(instruction, knowledge=knowledge)
-        attached = (spec.instance or {}).get("loop_origin") or {}
-        self.assertTrue(attached.get("has_field"))
-        self.assertNotIn("field", attached)
-        self.assertEqual(slim_loop_origin(origin).get("has_field"), True)
-
-        spec.instance = {**(spec.instance or {}), "loop_origin": origin}
-        hold = render_cel_frame(spec, 0.1, 96, 96, seed=3, duration_seconds=2.5)
-        snap = render_cel_frame(spec, 2.4, 96, 96, seed=3, duration_seconds=2.5)
-        self.assertEqual(hold.shape, (96, 96, 3))
-        left_mean = hold[:, :40].astype(np.float32).mean(axis=(0, 1))
-        right_mean = hold[:, 56:].astype(np.float32).mean(axis=(0, 1))
-        self.assertGreater(float(left_mean[0] - left_mean[2]), 20.0)
-        self.assertGreater(float(right_mean[2] - right_mean[0]), 20.0)
-        self.assertGreater(float(np.abs(hold.astype(np.float32) - snap.astype(np.float32)).mean()), 8.0)
-
-    def test_spec_from_shot_still_renders_origin_field(self):
-        import numpy as np
-        from src.cinematography.schema import ShotSpec
-        from src.creation.scene_script import spec_from_shot
-        from src.knowledge.reference_origin import measure_frames
-        from src.procedural.renderer import render_frame
-
-        left = np.zeros((48, 48, 3), dtype=np.uint8)
-        left[:, :24] = (220, 40, 40)
-        left[:, 24:] = (40, 80, 200)
-        recipe = measure_frames([left] * 6, fps=24.0, loop="cartoon")
-        instruction = interpret_user_prompt(
-            "cel cartoon: origin field masses hold then snap, cartoon hold then snap"
-        )
-        instruction.duration_seconds = 2.5
-        spec = build_spec_from_instruction(instruction, knowledge={"loop_origin": recipe})
-        self.assertTrue((spec.instance or {}).get("loop_origin", {}).get("has_field"))
-        derived = spec_from_shot(
-            spec,
-            ShotSpec(duration_seconds=2.5, shot_type="medium", transition_in="cut", transition_out="cut"),
-        )
-        self.assertEqual((derived.instance or {}).get("loop_origin"), (spec.instance or {}).get("loop_origin"))
-        derived.instance = {**(derived.instance or {}), "loop_origin": recipe}
-        frame = render_frame(derived, 0.1, 96, 96, seed=0, duration_seconds=2.5)
-        left_mean = frame[:, :40].astype(np.float32).mean(axis=(0, 1))
-        right_mean = frame[:, 56:].astype(np.float32).mean(axis=(0, 1))
-        self.assertGreater(float(left_mean[0] - left_mean[2]), 20.0)
-        self.assertGreater(float(right_mean[2] - right_mean[0]), 20.0)
+        self.assertNotIn("loop_origin", spec.instance or {})
+        self.assertNotIn((210, 90, 40), spec.palette_colors[:4])
 
 
 if __name__ == "__main__":

@@ -73,7 +73,7 @@ python scripts/automate.py --duration 5 --interval 120
 
 ### Fly.io
 
-The repo ships **`fly.loop-explorer.toml`**, **`fly.loop-exploiter.toml`**, **`fly.loop-balanced.toml`**, **`fly.loop-interpret.toml`**, **`fly.loop-sound.toml`**, **`fly.loop-cartoon.toml`**, **`fly.loop-webjobs.toml`**, and **`fly.procedural-render.toml`** at the **repository root**. Each file defines one Fly app, the same **`Dockerfile`**, and the env vars for that role.
+The repo ships **`fly.loop-explorer.toml`**, **`fly.loop-exploiter.toml`**, **`fly.loop-balanced.toml`**, **`fly.loop-interpret.toml`**, **`fly.loop-sound.toml`**, **`fly.loop-webjobs.toml`**, and **`fly.procedural-render.toml`** at the **repository root**. Each file defines one Fly app, the same **`Dockerfile`**, and the env vars for that role.
 
 ```bash
 cd motion.productions   # repo root
