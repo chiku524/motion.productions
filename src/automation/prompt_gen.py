@@ -491,6 +491,66 @@ def generate_targeted_blended_prompt(
     return prompt
 
 
+def generate_mission_prompt(
+    *,
+    kind: str = "frame",
+    focus: str = "color",
+    api_base: str = "",
+    mission: dict[str, Any] | None = None,
+    avoid: set[str] | None = None,
+) -> str | None:
+    """
+    Short internal instruction for the autonomous loop.
+
+    Names one underfilled color family or sound origin, and declares either a
+    still pixel field or a one-second motion window. The creation seed supplies
+    uniqueness; this text only points the clip at a registry gap.
+    """
+    from ..knowledge.blend_depth import SOUND_ORIGIN_PRIMITIVES
+    from ..knowledge.mission_targets import (
+        FAMILY_SUBJECTS,
+        SHADE_CUES,
+        pick_target_color_family,
+        pick_target_sound_origin,
+    )
+
+    avoid = avoid or set()
+    window = (kind or "frame").strip().lower() == "window"
+    axis = "sound" if (focus or "").strip().lower() == "sound" else "color"
+    family = pick_target_color_family(api_base, mission) or "blue"
+    lead_sound = pick_target_sound_origin(api_base, mission) or "hum"
+    families = [name for name in FAMILY_SUBJECTS if name != family] or ["teal"]
+    sounds = [name for name in SOUND_ORIGIN_PRIMITIVES if name not in ("silence", lead_sound)] or ["tone"]
+    for _ in range(24):
+        shade = secure_choice(list(SHADE_CUES.keys()) or ["mid"])
+        cue = secure_choice(SHADE_CUES.get(shade) or ["clear"])
+        other = secure_choice(families)
+        other_sound = secure_choice(sounds)
+        if window and axis == "sound":
+            prompt = (
+                f"motion window: dynamic sound pairing of {lead_sound} with {other_sound}, "
+                f"pixel field of {cue} {family} with {other}"
+            )
+        elif window:
+            prompt = (
+                f"motion window pairing of {cue} {family} with {other}, "
+                f"dynamic sound pairing of {lead_sound} with {other_sound}"
+            )
+        elif axis == "sound":
+            prompt = (
+                f"static frame: static sound pairing of {lead_sound} with {other_sound}, "
+                f"pixel field of {cue} {family} with {other}"
+            )
+        else:
+            prompt = (
+                f"static frame pairing of {cue} {family} with {other}, "
+                f"static sound pairing of {lead_sound} with {other_sound}"
+            )
+        if prompt not in avoid and not _is_near_duplicate(prompt, avoid):
+            return prompt
+    return None
+
+
 def generate_targeted_color_family_prompt(
     *,
     family: str | None = None,

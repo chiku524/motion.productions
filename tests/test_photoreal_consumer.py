@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -431,32 +432,58 @@ class TestLoopAuthenticityWiring(unittest.TestCase):
         )
         self.assertEqual(dur, 1.0)
 
-    def test_window_pick_prompt_prefers_mini_scene(self):
+    def test_window_pick_prompt_is_mission_field(self):
         mod = _load_automate_loop()
         old_focus = os.environ.get("LOOP_EXTRACTION_FOCUS")
-        old_wf = os.environ.get("LOOP_WORKFLOW_TYPE")
+        old_static = os.environ.get("LOOP_STATIC_FOCUS")
         os.environ["LOOP_EXTRACTION_FOCUS"] = "window"
-        os.environ["LOOP_WORKFLOW_TYPE"] = "main"
+        os.environ["LOOP_STATIC_FOCUS"] = "color"
         try:
-            with patch.object(mod, "secure_random", return_value=0.1):
-                with patch(
-                    "src.automation.prompt_gen.generate_mini_scene_prompt",
-                    return_value="a person walks through a kitchen then opens a window",
-                ):
-                    prompt, meta = mod.pick_prompt({"recent_prompts": []}, knowledge={}, coverage={})
+            prompt, meta = mod.pick_prompt(
+                {"recent_prompts": [], "_mission_cache": None, "_mission_cache_at": time.time()},
+                knowledge={},
+                coverage={},
+            )
         finally:
             if old_focus is None:
                 os.environ.pop("LOOP_EXTRACTION_FOCUS", None)
             else:
                 os.environ["LOOP_EXTRACTION_FOCUS"] = old_focus
-            if old_wf is None:
-                os.environ.pop("LOOP_WORKFLOW_TYPE", None)
+            if old_static is None:
+                os.environ.pop("LOOP_STATIC_FOCUS", None)
             else:
-                os.environ["LOOP_WORKFLOW_TYPE"] = old_wf
-        self.assertEqual(meta.get("source"), "mini_scene")
-        self.assertTrue(meta.get("use_photoreal"))
+                os.environ["LOOP_STATIC_FOCUS"] = old_static
+        self.assertEqual(meta.get("source"), "mission_window_color")
+        self.assertFalse(meta.get("use_photoreal"))
         self.assertTrue(meta.get("authentic"))
-        self.assertIn("kitchen", prompt)
+        self.assertIn("motion window", prompt)
+        self.assertNotIn("walking", prompt.lower())
+
+    def test_frame_pick_prompt_names_underfilled_sound(self):
+        mod = _load_automate_loop()
+        old_focus = os.environ.get("LOOP_EXTRACTION_FOCUS")
+        old_static = os.environ.get("LOOP_STATIC_FOCUS")
+        os.environ["LOOP_EXTRACTION_FOCUS"] = "frame"
+        os.environ["LOOP_STATIC_FOCUS"] = "sound"
+        try:
+            prompt, meta = mod.pick_prompt(
+                {"recent_prompts": [], "_mission_cache": None, "_mission_cache_at": time.time()},
+                knowledge={},
+                coverage={},
+            )
+        finally:
+            if old_focus is None:
+                os.environ.pop("LOOP_EXTRACTION_FOCUS", None)
+            else:
+                os.environ["LOOP_EXTRACTION_FOCUS"] = old_focus
+            if old_static is None:
+                os.environ.pop("LOOP_STATIC_FOCUS", None)
+            else:
+                os.environ["LOOP_STATIC_FOCUS"] = old_static
+        self.assertEqual(meta.get("source"), "mission_frame_sound")
+        self.assertFalse(meta.get("use_photoreal"))
+        self.assertIn("static frame", prompt)
+        self.assertIn("sound pairing", prompt)
 
     def test_evaluate_iteration_requires_novel_and_growth(self):
         from src.knowledge.loop_authenticity import evaluate_iteration

@@ -13,6 +13,10 @@ from ..automation.prompt_gen import _is_near_duplicate
 AUTHENTIC_SOURCES = frozenset({
     "pixel_pairing_frame",
     "pixel_pairing_window",
+    "mission_frame_color",
+    "mission_frame_sound",
+    "mission_window_color",
+    "mission_window_sound",
     "targeted_color_family",
     "targeted_narrative",
     "targeted_blended",

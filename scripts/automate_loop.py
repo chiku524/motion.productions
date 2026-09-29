@@ -77,18 +77,13 @@ def pick_prompt(
     coverage: dict | None = None,
 ) -> tuple[str, dict]:
     """
-    Always compose a new prompt. Default is a unique pixel pairing from named
-    registry colors: static frames or motion windows — no object catalog, no replay.
-    Returns (prompt, meta) where meta includes source.
+    Short internal instruction that is only the mission.
+
+    Each clip names an underfilled color family or sound and chooses a still
+    field or a one-second window. The creation seed makes the values unique.
+    Invented mini-scenes stay out until the registries can resolve a real prompt.
     """
-    from src.automation import generate_procedural_prompt
-    from src.automation.prompt_gen import (
-        generate_pixel_pairing_prompt,
-        generate_mini_scene_prompt,
-        generate_targeted_blended_prompt,
-        generate_targeted_color_family_prompt,
-        generate_targeted_narrative_prompt,
-    )
+    from src.automation.prompt_gen import generate_mission_prompt, generate_pixel_pairing_prompt
 
     recent = set(state.get("recent_prompts", [])[-150:])
     api_base_for_mission = (os.environ.get("API_BASE") or "").rstrip("/")
@@ -103,77 +98,38 @@ def pick_prompt(
         except Exception:
             mission_cache = state.get("_mission_cache")
 
-    narr = (coverage or {}).get("narrative") or {}
-    g_cov = float((narr.get("genre") or {}).get("coverage_pct") or 100)
-    narr_min = float((coverage or {}).get("narrative_min_coverage_pct") or 100)
-    color_pct = float((coverage or {}).get("static_colors_coverage_pct") or 100)
-    thin_narrative = narr_min < 90 or g_cov < 90
-    thin_color = color_pct < 12
-    critical_color = color_pct < 5
-
-    findability = float((mission_cache or {}).get("findability_pct") or 100)
-    thin_families = findability < 85 or thin_color
+    _ = coverage
     static_focus = (os.environ.get("LOOP_STATIC_FOCUS") or "both").strip().lower()
     extraction_focus = _loop_extraction_focus()
-    workflow_type = (os.environ.get("LOOP_WORKFLOW_TYPE") or "").strip().lower()
-    prefer_fidelity = (
-        extraction_focus == "window"
-        or workflow_type in ("main", "balanced")
-        or static_focus in ("none", "off", "narrative")
-    )
-
-    pairing_kind = "window" if (
-        extraction_focus == "window"
-        or prefer_fidelity
-    ) else "frame"
-    if extraction_focus == "all":
+    if extraction_focus == "window":
+        pairing_kind = "window"
+    elif extraction_focus == "frame":
+        pairing_kind = "frame"
+    else:
         pairing_kind = "window" if secure_random() < 0.5 else "frame"
 
-    color_target_rate = 0.72 if critical_color else (0.48 if thin_color else 0.28)
-    if (
-        pairing_kind == "frame"
-        and static_focus in ("color", "both")
-        and thin_families
-        and secure_random() < color_target_rate
-    ):
-        color_prompt = generate_targeted_color_family_prompt(
-            api_base=api_base_for_mission,
-            mission=mission_cache if isinstance(mission_cache, dict) else None,
-            avoid=recent,
-        )
-        if color_prompt:
-            logger.info("Targeted color-family prompt: %s", color_prompt[:60] + ("..." if len(color_prompt) > 60 else ""))
-            return (color_prompt, {"source": "targeted_color_family", "authentic": True, "use_photoreal": False})
+    if static_focus in ("sound",):
+        axis = "sound"
+    elif static_focus in ("color", "both", "all"):
+        axis = "color"
+    else:
+        axis = "sound" if secure_random() < 0.5 else "color"
 
-    # Window / balanced: user-like scenes first so the photoreal consumer is exercised.
-    # Pixel pairing remains the explorer (frame) diet and a remainder here.
-    if prefer_fidelity:
-        if secure_random() < 0.62:
-            mini = generate_mini_scene_prompt(fidelity_bias=True, avoid=recent)
-            if mini:
-                logger.info("Mini-scene prompt: %s", mini[:70] + ("..." if len(mini) > 70 else ""))
-                return (mini, {"source": "mini_scene", "authentic": True, "use_photoreal": True})
-        if coverage and thin_narrative and secure_random() < 0.22:
-            targeted = generate_targeted_narrative_prompt(coverage, avoid=recent)
-            if targeted:
-                logger.info("Targeted narrative prompt (fill gaps): %s", targeted[:60] + ("..." if len(targeted) > 60 else ""))
-                return (targeted, {"source": "targeted_narrative", "authentic": True, "use_photoreal": True})
-        if secure_random() < 0.16:
-            blended = generate_targeted_blended_prompt(knowledge, avoid=recent)
-            if blended:
-                logger.info("Targeted blended prompt: %s", blended[:60] + ("..." if len(blended) > 60 else ""))
-                return (blended, {"source": "targeted_blended", "authentic": True, "use_photoreal": True})
-
-    pairing_rate = 0.82 if pairing_kind == "frame" else 1.0
-    if secure_random() < pairing_rate:
-        pairing = generate_pixel_pairing_prompt(kind=pairing_kind, knowledge=knowledge, avoid=recent)
-        if pairing:
-            logger.info(
-                "%s pairing prompt: %s",
-                pairing_kind,
-                pairing[:70] + ("..." if len(pairing) > 70 else ""),
-            )
-            return (pairing, {"source": f"pixel_pairing_{pairing_kind}", "authentic": True, "use_photoreal": False})
+    mission = mission_cache if isinstance(mission_cache, dict) else None
+    prompt = generate_mission_prompt(
+        kind=pairing_kind,
+        focus=axis,
+        api_base=api_base_for_mission,
+        mission=mission,
+        avoid=recent,
+    )
+    if prompt:
+        logger.info("Mission prompt: %s", prompt[:70] + ("..." if len(prompt) > 70 else ""))
+        return (prompt, {
+            "source": f"mission_{pairing_kind}_{axis}",
+            "authentic": True,
+            "use_photoreal": False,
+        })
 
     pairing = generate_pixel_pairing_prompt(kind=pairing_kind, knowledge=knowledge, avoid=recent)
     if pairing:
@@ -182,11 +138,12 @@ def pick_prompt(
             pairing_kind,
             pairing[:70] + ("..." if len(pairing) > 70 else ""),
         )
-        return (pairing, {"source": f"pixel_pairing_{pairing_kind}", "authentic": True, "use_photoreal": False})
-    fallback = generate_procedural_prompt(
-        avoid=recent, knowledge=knowledge, coverage=coverage, instructive_ratio=0.2
-    )
-    return (fallback or "", {"source": "procedural", "authentic": True, "use_photoreal": False})
+        return (pairing, {
+            "source": f"pixel_pairing_{pairing_kind}",
+            "authentic": True,
+            "use_photoreal": False,
+        })
+    return ("", {"source": "none", "authentic": False})
 
 
 def _load_coverage(api_base: str) -> dict | None:
