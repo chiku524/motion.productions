@@ -2,6 +2,8 @@
  * Video AI side project mounted at /video-ai — shares planner with ../video-ai/src/planner.
  */
 import { planRecipe } from "../../video-ai/src/planner/index";
+import type { Env } from "./env";
+import { recordRecipeColorDiscoveries } from "./videoAiDiscoveries";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -144,6 +146,20 @@ function isProceduralRecipe(recipe: unknown): boolean {
   const meta = (recipe as { meta?: { engine?: string } }).meta;
   const engine = meta?.engine || "recipe";
   return engine === "procedural" || engine === "enhanced" || engine === "photoreal";
+}
+
+function scheduleRecipeDiscoveries(
+  ctx: ExecutionContext,
+  env: VideoAiEnv,
+  recipe: unknown,
+): void {
+  if (isProceduralRecipe(recipe)) return;
+  const prompt = proceduralPromptFromRecipe(recipe);
+  ctx.waitUntil(
+    recordRecipeColorDiscoveries(env as Env, recipe, prompt).catch((e) => {
+      console.error("video-ai recipe discovery failed", e);
+    }),
+  );
 }
 
 function proceduralPromptFromRecipe(recipe: unknown): string {
@@ -305,6 +321,8 @@ export async function handleVideoAiApi(
       );
     }
 
+    scheduleRecipeDiscoveries(ctx, env, recipe);
+
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (env.VIDEO_AI_RENDER_SECRET) {
       headers["X-Video-AI-Key"] = env.VIDEO_AI_RENDER_SECRET;
@@ -366,6 +384,8 @@ export async function handleVideoAiApi(
         501,
       );
     }
+
+    scheduleRecipeDiscoveries(ctx, env, recipe);
 
     const jobId = crypto.randomUUID();
     const { recipeKey, outputKey } = jobKeys(jobId);

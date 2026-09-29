@@ -20,6 +20,11 @@ def secure_random():
     return secrets.SystemRandom().random()
 
 
+def fresh_seed() -> int:
+    """31-bit seed that is unique to this generation."""
+    return secrets.randbits(31)
+
+
 def weighted_choice_favor_underused(
     items: list[T],
     get_count: Callable[[T], int],

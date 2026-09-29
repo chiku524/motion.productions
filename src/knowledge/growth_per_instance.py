@@ -114,6 +114,52 @@ def derive_static_sound_from_spec(
     }
 
 
+def record_spec_discovery_values(
+    spec: Any,
+    *,
+    prompt: str = "",
+    config: dict[str, Any] | None = None,
+    added: dict[str, Any] | None = None,
+    out_colors: list[dict[str, Any]] | None = None,
+    out_sounds: list[dict[str, Any]] | None = None,
+) -> None:
+    """
+    Store the unique color bins and sound this video was stamped with.
+
+    Frame extraction only keeps a dominant color, so the per-video values would
+    otherwise never reach the discovery registries.
+    """
+    if spec is None:
+        return
+    inst = getattr(spec, "instance", None) or {}
+    if not isinstance(inst, dict):
+        return
+    payload = inst.get("discovery_values") or {}
+    if not isinstance(payload, dict):
+        return
+    counts = added if added is not None else {}
+    for color in payload.get("colors") or []:
+        if not isinstance(color, dict):
+            continue
+        if ensure_static_color_in_registry(
+            color,
+            source_prompt=prompt,
+            config=config,
+            out_novel=out_colors,
+        ):
+            counts["static_colors"] = int(counts.get("static_colors") or 0) + 1
+    for sound in payload.get("sounds") or []:
+        if not isinstance(sound, dict):
+            continue
+        if ensure_static_sound_in_registry(
+            sound,
+            source_prompt=prompt,
+            config=config,
+            out_novel=out_sounds,
+        ):
+            counts["static_sound"] = int(counts.get("static_sound") or 0) + 1
+
+
 def _motion_key(motion: dict[str, Any]) -> str:
     level = motion.get("level", 0)
     trend = motion.get("trend", "steady")
@@ -1105,6 +1151,15 @@ def grow_from_video(
         ):
             added["static_sound"] += 1
 
+    record_spec_discovery_values(
+        spec,
+        prompt=prompt,
+        config=config,
+        added=added,
+        out_colors=out_static_colors,
+        out_sounds=out_sound,
+    )
+
     # Spec-derived sound (mood/tempo/presence) is recorded in DYNAMIC, not static.
     # See grow_dynamic_from_video: derive_audio_semantic_from_spec with mood/tempo.
 
@@ -1308,7 +1363,7 @@ def grow_all_from_video(
         return added, novel_for_sync
 
     out_static_colors = novel_for_sync["static_colors"] if (collect_novel_for_sync and (do_frame or do_window)) else None
-    out_sound = novel_for_sync["static_sound"] if (collect_novel_for_sync and do_frame) else None
+    out_sound = novel_for_sync["static_sound"] if collect_novel_for_sync else None
 
     do_static_color = do_frame and (static_focus in ("both", "color"))
     do_static_sound = do_frame and (static_focus in ("both", "sound"))
@@ -1332,6 +1387,15 @@ def grow_all_from_video(
                 spec_sound, source_prompt=prompt, config=config, out_novel=out_sound
             ):
                 added["static_sound"] += 1
+
+    record_spec_discovery_values(
+        spec,
+        prompt=prompt,
+        config=config,
+        added=added,
+        out_colors=out_static_colors,
+        out_sounds=out_sound,
+    )
 
     out_motion = novel_for_sync["motion"] if (collect_novel_for_sync and do_window) else None
     out_time = novel_for_sync["time"] if (collect_novel_for_sync and do_window) else None

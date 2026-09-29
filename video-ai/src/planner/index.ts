@@ -1,4 +1,5 @@
 import { planFallback } from "./fallback";
+import { withUniqueSceneColors } from "./unique";
 import { planWithOpenAI } from "./openai";
 import {
   VideoRecipeSchema,
@@ -27,21 +28,30 @@ export async function planRecipe(opts: PlanOptions): Promise<{
   );
   const maxDur = Math.min(opts.maxDurationSec ?? DEFAULT_MAX, 600);
 
+  const finish = (recipe: VideoRecipe, source: "openai" | "fallback") => {
+    const unique = withUniqueSceneColors(recipe);
+    const prompt = opts.prompt.trim().slice(0, 2000);
+    return {
+      recipe: {
+        ...unique,
+        meta: { ...unique.meta, prompt: unique.meta.prompt || prompt },
+      },
+      source,
+    };
+  };
+
   if (opts.openaiApiKey) {
     const recipe = await planWithOpenAI(opts.openaiApiKey, opts.openaiModel ?? "gpt-4o-mini", {
       prompt: opts.prompt,
       targetDurationSec: target,
       maxDurationSec: maxDur,
     });
-    return { recipe, source: "openai" };
+    return finish(recipe, "openai");
   }
 
   const raw = planFallback(opts.prompt, target);
   const recipe = VideoRecipeSchema.parse(raw);
-  return {
-    recipe: clampRecipeToMaxDuration(recipe, maxDur),
-    source: "fallback",
-  };
+  return finish(clampRecipeToMaxDuration(recipe, maxDur), "fallback");
 }
 
 export { planWithOpenAI } from "./openai";

@@ -157,6 +157,12 @@ class ProceduralRenderHandler(BaseHTTPRequestHandler):
                     config=config,
                     seed=seed_i,
                 )
+                _persist_discoveries(
+                    path_out,
+                    prompt,
+                    getattr(generator, "_last_spec", None),
+                    config,
+                )
                 data = Path(path_out).read_bytes()
         except Exception as e:
             logger.exception("render failed")
@@ -170,6 +176,44 @@ class ProceduralRenderHandler(BaseHTTPRequestHandler):
         self.send_header("X-Motion-Engine", engine)
         self.end_headers()
         self.wfile.write(data)
+
+
+def _persist_discoveries(path: Path, prompt: str, spec: Any, config: dict) -> None:
+    """Write this video's unique color and sound values into discovery registries."""
+    api_base = (os.environ.get("API_BASE") or "").strip().rstrip("/")
+    try:
+        from src.knowledge.growth_per_instance import grow_all_from_video
+        from src.knowledge.narrative_registry import grow_narrative_from_spec
+        from src.knowledge.remote_sync import post_all_discoveries
+
+        _added, novel = grow_all_from_video(
+            path,
+            prompt=prompt,
+            config=config,
+            sample_every=1,
+            window_seconds=1.0,
+            collect_novel_for_sync=bool(api_base),
+            spec=spec,
+            extraction_focus="all",
+        )
+        _narrative_added, narrative_novel = grow_narrative_from_spec(
+            spec,
+            prompt=prompt,
+            config=config,
+            collect_novel_for_sync=bool(api_base),
+        )
+        if not api_base:
+            logger.info("discovery stored locally (API_BASE unset)")
+            return
+        post_all_discoveries(
+            api_base,
+            novel.get("static_colors") or [],
+            novel.get("static_sound") or [],
+            novel,
+            narrative_novel if isinstance(narrative_novel, dict) else None,
+        )
+    except Exception:
+        logger.exception("discovery persist failed")
 
 
 def main() -> None:

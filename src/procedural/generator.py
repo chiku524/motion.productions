@@ -55,9 +55,11 @@ class ProceduralVideoGenerator(VideoGenerator):
         # (we could use it later to match last frame color/mood)
         del conditioning_image_path
 
-        from .forms import form_seed
+        from ..random_utils import fresh_seed
 
-        seed = int(seed) if seed is not None else form_seed(prompt, "clip")
+        # A caller-supplied seed stays reproducible. Otherwise each video draws a new one
+        # so creation stamps values discovery has not stored yet.
+        seed = int(seed) if seed is not None else fresh_seed()
         if config:
             out_cfg = config.get("output", {})
             width = out_cfg.get("width", self.width)

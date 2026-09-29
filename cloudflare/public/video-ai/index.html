@@ -220,6 +220,10 @@
                 ...(lastRecipe.meta || {}),
                 engine,
                 prompt,
+                seed:
+                  lastRecipe.meta && lastRecipe.meta.seed != null
+                    ? lastRecipe.meta.seed
+                    : Math.floor(Math.random() * 0x7fffffff),
                 quality: engine === "enhanced" || engine === "photoreal" ? "standard" : undefined,
                 width: (lastRecipe.meta && lastRecipe.meta.width) || (engine === "enhanced" ? 1280 : 1280),
                 height: (lastRecipe.meta && lastRecipe.meta.height) || (engine === "enhanced" ? 720 : 720),

@@ -466,6 +466,16 @@ def build_spec_from_instruction(
                     sampled.append(dict(s) if isinstance(s, dict) else s)
             pure_sounds = sampled or None
 
+    from .novelty import stamp_unique_discovery_values
+
+    pure_colors, pure_sounds, discovery_values = stamp_unique_discovery_values(
+        pure_colors,
+        pure_sounds,
+        knowledge,
+        creation_seed,
+    )
+    creation_mode = "pure_per_frame" if pure_colors else "blended"
+
     # Scene graph (Phase 2+): entities → keyframed layers + bounce SFX timings
     from .scene_graph import (
         build_scene_graph_from_instruction,
@@ -688,6 +698,10 @@ def build_spec_from_instruction(
             "field_named_count": named_n,
             "field_mass_count": _mass_count_for_pool(len(pure_colors), window=window_pairing),
         }
+    instance = {
+        **(instance or {}),
+        "discovery_values": discovery_values,
+    }
 
     spec = SceneSpec(
         palette_name=palette,

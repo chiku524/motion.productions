@@ -32,7 +32,8 @@ function hueToHex(h: number): string {
 }
 
 /**
- * Deterministic recipe when no LLM key is configured (local demos / tests).
+ * Prompt-shaped recipe when no LLM key is configured.
+ * planRecipe then shifts every scene onto a fresh color bin so repeats stay unique.
  */
 export function planFallback(prompt: string, targetDurationSec: number): VideoRecipe {
   const h = fnv1a32(prompt);
