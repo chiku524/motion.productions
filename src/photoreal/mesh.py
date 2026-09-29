@@ -398,7 +398,7 @@ def _raster_layer_mesh(
     yy: "np.ndarray",  # noqa: F821
 ) -> tuple["np.ndarray", "np.ndarray"]:  # noqa: F821
     """Prefer an OBJ/glTF on the layer; otherwise tessellate the kind recipe."""
-    from .obj import load_mesh, tessellate_parts, translate_mesh
+    from .obj import load_mesh, tessellate_parts
 
     source = layer.get("mesh") or layer.get("mesh_path") or layer.get("mesh_obj")
     mesh = load_mesh(source) if source else None
