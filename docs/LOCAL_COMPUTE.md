@@ -64,8 +64,8 @@ docker compose -f docker-compose.local.yml --profile free up -d --build
 
 | Service | Host port | Role | Free delay |
 |---------|-----------|------|------------|
-| explorer | `8083` | Pure color (frame) | 120s |
-| balanced | `8085` | Window / blended + narrative | 90s |
+| explorer | `8083` | Pure color (frame) | 15s |
+| balanced | `8085` | Window / blended + narrative | 15s |
 | interpret | `8086` | Interpretation + linguistic | 90s |
 | sound | `8087` | Pure sound | 75s |
 
