@@ -222,27 +222,37 @@ def _buffer_bytes(buf: dict[str, Any]) -> bytes:
     return b""
 
 
+def _path_is_file(path: Path) -> bool:
+    try:
+        return path.is_file()
+    except OSError:
+        return False
+
+
 def load_mesh(source: str | Path | dict[str, Any] | Mesh) -> Mesh:
     """Load from Mesh, dict, OBJ/glTF text, or a filesystem path."""
     if isinstance(source, Mesh):
         return source
     if isinstance(source, dict):
         return parse_gltf(source)
-    path = Path(str(source))
-    if path.is_file():
+    if not isinstance(source, Path):
+        text = str(source).strip()
+        if text.startswith("{") or text.startswith("["):
+            return parse_gltf(text)
+        # Inline OBJ must be parsed before Path(): Linux rejects the text as a filename.
+        if "\nv " in f"\n{text}" or text.startswith("v "):
+            return parse_obj(text)
+        source = Path(text)
+    path = source
+    if _path_is_file(path):
         text = path.read_text(encoding="utf-8", errors="replace")
         if path.suffix.lower() in (".gltf", ".json"):
             return parse_gltf(text)
         return parse_obj(text)
-    text = str(source).strip()
-    if text.startswith("{") or text.startswith("["):
-        return parse_gltf(text)
-    if "\nv " in f"\n{text}" or text.startswith("v "):
-        return parse_obj(text)
     # Resolve relative to assets/meshes
     for root in (Path.cwd(), Path(__file__).resolve().parents[2]):
-        cand = root / "assets" / "meshes" / str(source)
-        if cand.is_file():
+        cand = root / "assets" / "meshes" / path
+        if _path_is_file(cand):
             return load_mesh(cand)
     return Mesh(vertices=[], normals=[], faces=[])
 
