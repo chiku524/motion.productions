@@ -106,9 +106,11 @@ def generate_full_video(
         output_path, config, effective_prompt, spec=spec, instruction=instruction, cut_times=cut_times
     )
 
-    # Optional: remove segment files to save space (keep for debugging initially)
-    # for p in segment_paths:
-    #     p.unlink(missing_ok=True)
+    for p in segment_paths:
+        try:
+            p.unlink(missing_ok=True)
+        except OSError:
+            pass
 
     return output_path
 

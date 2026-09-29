@@ -490,6 +490,8 @@ def run() -> None:
         print(f"[{state['run_count'] + 1}] {prompt[:50]}... ({duration}s) ", end="", flush=True)
 
         run_succeeded = False
+        growth_ran = False
+        rendered_path: Path | None = None
         try:
             run_seed = (state["run_count"] + 1) * 7919 + (hash(job_id) % 1_000_000)
             run_config = dict(config)
@@ -506,6 +508,7 @@ def run() -> None:
                 seed=run_seed,
                 config=run_config,
             )
+            rendered_path = Path(path)
 
             with open(path, "rb") as f:
                 body = f.read()
@@ -580,7 +583,6 @@ def run() -> None:
             # Creation uses get_knowledge_for_creation → build_spec with a merged pool (origin + learned) so gradient/camera/motion selection is randomized across primitives and discoveries.
             # Growth + sync: gated by extraction_focus (frame | window | all)
             added: dict = {}
-            growth_ran = False
             try:
                 from src.knowledge.growth_per_instance import grow_all_from_video
                 from src.knowledge.narrative_registry import grow_narrative_from_spec
@@ -754,6 +756,14 @@ def run() -> None:
             if os.environ.get("DEBUG") == "1":
                 import traceback
                 traceback.print_exc()
+
+        if growth_ran:
+            from src.media_cleanup import discard_rendered_media, prune_render_scratch
+            discard_rendered_media(rendered_path)
+            prune_render_scratch(out_dir, keep=0)
+        else:
+            from src.media_cleanup import prune_render_scratch
+            prune_render_scratch(out_dir, keep=1)
 
         if run_succeeded:
             state["run_count"] += 1

@@ -272,13 +272,13 @@ def run() -> None:
                     f"(segments={len(segments)}, kind={pairing_kind}, pair={'+'.join(labels[:4])})"
                 )
 
-            try:
-                wav_path.unlink(missing_ok=True)
-            except OSError:
-                pass
         except Exception as e:
             logger.exception("Sound loop cycle error: %s", e)
             print(f"[{cycle}] error: {e}")
+        finally:
+            from src.media_cleanup import discard_rendered_media, prune_render_scratch
+            discard_rendered_media(wav_path)
+            prune_render_scratch(out_dir, keep=0)
 
         time.sleep(delay)
 

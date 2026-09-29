@@ -262,9 +262,17 @@ def process_job(job: dict, api_base: str, config: dict, learn: bool) -> bool:
                 post_discoveries(api_base, {"job_id": job_id})
             except Exception:
                 pass
+        from src.media_cleanup import discard_rendered_media, prune_render_scratch
+        discard_rendered_media(Path(path))
+        prune_render_scratch(out_dir, keep=0)
         return True
     except Exception as e:
         print(f"  Error: {e}")
+        try:
+            from src.media_cleanup import prune_render_scratch
+            prune_render_scratch(out_dir, keep=1)
+        except Exception:
+            pass
         return False
 
 
