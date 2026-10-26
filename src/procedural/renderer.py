@@ -217,6 +217,105 @@ def _mass_count_from_colors(n_colors: int, named_count: int = 0) -> int:
     return max(12, min(24, n))
 
 
+_FIELD_METRICS = ("euclid", "diamond", "square", "stretch")
+_FIELD_BLENDS = ("wave", "linear", "radial", "stripes", "split")
+
+
+def _bounce_unit(v: "np.ndarray | float") -> "np.ndarray | float":
+    """Reflect a coordinate into [0.05, 0.95] (triangle wave) so drifting sites stay in frame."""
+    u = (np.asarray(v, dtype=np.float32) - 0.05) / 0.9
+    u = np.mod(u, 2.0)
+    u = np.where(u > 1.0, 2.0 - u, u)
+    return 0.05 + 0.9 * u
+
+
+def field_layout(seed: int, n_masses: int, named_masses: int, *, window: bool) -> dict:
+    """
+    Per-seed layout of a pixel field: where the masses sit, how their cells are
+    shaped, how a mass blends its two colors, and how the whole field drifts.
+    Pure function of ``seed`` so a clip stays reproducible while different seeds
+    give genuinely different pictures (not one jittered grid).
+    """
+    rng = np.random.default_rng([abs(int(seed)) % (2**32), 0xF1E1D])
+    n = int(n_masses)
+    pts: list[np.ndarray] = []
+    for _ in range(n):  # best-candidate sampling: spread out, but never a regular grid
+        best, best_d = None, -1.0
+        for _try in range(10):
+            c = rng.uniform(0.06, 0.94, 2)
+            d = min((float(np.hypot(*(c - p))) for p in pts), default=1.0)
+            if d > best_d:
+                best, best_d = c, d
+        pts.append(best)
+    sites = np.array(pts, dtype=np.float32)
+    weights = rng.uniform(0.75, 1.7, n).astype(np.float32)
+    for i in range(min(named_masses, n)):  # named colors stay big and near the center
+        sites[i] = 0.45 * sites[i] + 0.55 * 0.5
+        weights[i] = 1.85 - 0.18 * i
+    metric = str(rng.choice(_FIELD_METRICS))
+    blend = str(rng.choice(_FIELD_BLENDS))
+    drift_angle = float(rng.uniform(0, 2 * np.pi))
+    speed = float(rng.uniform(0.10, 0.32) if window else rng.uniform(0.02, 0.09))
+    return {
+        "sites": sites,
+        "weights": weights,
+        "metric": metric,
+        "angle": float(rng.uniform(0, np.pi)),
+        "stretch": float(rng.uniform(1.3, 2.4)),
+        "blend": blend,
+        "blend_angle": float(rng.uniform(0, 2 * np.pi)),
+        "blend_freq": float(rng.uniform(2.5, 9.0)),
+        "sharp": float(rng.uniform(1.4, 3.2)),
+        "dither": float(rng.uniform(0.004, 0.035)),
+        "wobble": float(rng.uniform(0.0, 0.07)),
+        "wobble_freq": float(rng.uniform(1.5, 4.5)),
+        "wobble_phase": float(rng.uniform(0, 2 * np.pi)),
+        "vel": (speed * float(np.cos(drift_angle)), speed * float(np.sin(drift_angle))),
+        "phase": rng.uniform(0.0, 1.0, n).astype(np.float32),
+        "palette_order": rng.permutation(10_000),
+    }
+
+
+def _far_pick(colors: "np.ndarray", chosen: list[int], candidates: list[int]) -> int:
+    """Candidate whose color is farthest (RGB) from everything already chosen: contrast."""
+    best, best_d = candidates[0], -1.0
+    for c in candidates:
+        d = min(float(np.linalg.norm(colors[c] - colors[k])) for k in chosen)
+        if d > best_d:
+            best, best_d = c, d
+    return best
+
+
+def _mass_palettes(
+    colors: "np.ndarray",
+    n_masses: int,
+    named_n: int,
+    named_masses: int,
+    order: "np.ndarray",
+    per_mass: int,
+) -> "np.ndarray":
+    """(n_masses, per_mass) color indices. Few colors per mass, picked to contrast."""
+    n_colors = len(colors)
+    pool = [int(i) for i in order if i < max(0, n_colors - named_n)]
+    pool = [named_n + i for i in pool] or list(range(n_colors))
+    out = np.zeros((n_masses, per_mass), dtype=np.int64)
+    for m in range(n_masses):
+        if named_n >= 2 and m < named_masses:
+            first = [(2 * m) % named_n, (2 * m + 1) % named_n]
+        else:
+            a = pool[(2 * m) % len(pool)]
+            cands = [pool[(2 * m + 1 + k) % len(pool)] for k in range(min(6, len(pool)))]
+            cands = [c for c in cands if c != a] or [(a + 1) % n_colors]
+            first = [a, _far_pick(colors, [a], cands)]
+        row = list(first)
+        while len(row) < per_mass:
+            cands = [pool[(2 * m + 3 + k * 2) % len(pool)] for k in range(min(8, len(pool)))]
+            cands = [c for c in cands if c not in row] or [(row[-1] + 1) % n_colors]
+            row.append(_far_pick(colors, row, cands))
+        out[m] = row
+    return out
+
+
 def _render_pure_per_frame(
     xx: "np.ndarray",
     yy: "np.ndarray",
@@ -231,103 +330,113 @@ def _render_pure_per_frame(
     mass_count: int | None = None,
 ) -> tuple["np.ndarray", "np.ndarray", "np.ndarray"]:
     """
-    Partition the frame into spatial masses. Each mass pairs two registry colors.
+    Partition the frame into spatial masses. Each mass pairs registry colors.
 
-    Prompt-named colors occupy the largest / most central masses. Motion is those
-    pairings changing over time. motion_sync (0–1): 1 = a mass rematches together,
-    0 = per-pixel flicker inside the mass. See docs/PIXEL_FIELD.md.
+    The layout (site count, positions, cell shape, how a mass blends, drift
+    direction) is drawn from the seed, so no two seeds share a picture. Prompt-named
+    colors occupy the largest / most central masses. Motion is the pairings
+    changing over time plus the field drifting; both are guaranteed to be visible
+    within one second (a floor, not just the registry's motion level). Windows
+    (motion_level >= 8.5) use few contrasting colors per mass and coherent blobs
+    instead of per-pixel hash grain. motion_sync (0-1): 1 = a mass rematches
+    together, 0 = blob-wise flicker inside the mass. See docs/PIXEL_FIELD.md.
     """
     n_colors = len(pure_colors)
     if n_colors == 0:
         raise ValueError("pure_colors must be non-empty for pure_per_frame")
-    R_arr = np.array([c[0] for c in pure_colors], dtype=np.float32)
-    G_arr = np.array([c[1] for c in pure_colors], dtype=np.float32)
-    B_arr = np.array([c[2] for c in pure_colors], dtype=np.float32)
+    colors = np.array(pure_colors, dtype=np.float32)[:, :3]
+    R_arr, G_arr, B_arr = colors[:, 0], colors[:, 1], colors[:, 2]
 
-    n_masses = int(mass_count) if mass_count and mass_count > 0 else _mass_count_from_colors(
+    window = float(motion_level) >= 8.5
+    base_masses = int(mass_count) if mass_count and mass_count > 0 else _mass_count_from_colors(
         n_colors, named_count
     )
-    n_masses = max(2, min(24, n_masses))
+    # Site count varies per seed (+-2), never below 3 or above 24.
+    jit = int(np.random.default_rng([abs(int(seed)) % (2**32), 0x51735]).integers(-2, 3))
+    n_masses = max(3, min(24, base_masses + jit))
     named_n = max(0, min(int(named_count or 0), n_colors))
+    named_masses = max(1, min(n_masses, (named_n + 1) // 2)) if named_n else 1
+    lay = field_layout(seed, n_masses, named_masses, window=window)
 
-    t_amt = (float(np.clip(motion_level, 0.0, 25.0)) / 25.0) ** 2
+    # Motion floor: still fields breathe, windows always rematch several times a second.
+    if window:
+        t_amt = float(np.clip(max(0.30, float(motion_level) / 25.0), 0.0, 1.0))
+    else:
+        t_amt = max(0.05, (float(np.clip(motion_level, 0.0, 25.0)) / 25.0) ** 2)
     mv = 0.0 if motion_val is None else float(motion_val)
     t_shift = t * t_amt * 1.8 + mv * t_amt
     sync = float(np.clip(motion_sync, 0.0, 1.0))
     field = _hash_noise(xx, yy, seed, scale=41.0)
-    amp = 0.06 + 0.04 * float(np.clip(intensity, 0.1, 1.0))
-    jx = xx + (field - 0.5) * amp
-    jy = yy + (_hash_noise(xx, yy, seed + 17, scale=37.0) - 0.5) * amp
+    amp = lay["dither"] + 0.01 * float(np.clip(intensity, 0.1, 1.0))
+    wob = lay["wobble"]
+    wf, wp = lay["wobble_freq"], lay["wobble_phase"]
+    jx = xx + (field - 0.5) * amp + wob * np.sin(2 * np.pi * (wf * yy) + wp)
+    jy = yy + (_hash_noise(xx, yy, seed + 17, scale=37.0) - 0.5) * amp + wob * np.sin(2 * np.pi * (wf * xx) + wp * 1.7)
 
-    cols = int(np.ceil(np.sqrt(n_masses)))
-    rows = int(np.ceil(n_masses / cols))
-    sites_x = np.zeros(n_masses, dtype=np.float32)
-    sites_y = np.zeros(n_masses, dtype=np.float32)
-    weights = np.ones(n_masses, dtype=np.float32)
-    named_masses = max(1, min(n_masses, (named_n + 1) // 2)) if named_n else 1
-    for i in range(n_masses):
-        gx = (i % cols + 0.5) / cols
-        gy = (i // cols + 0.5) / rows
-        jitter = ((abs(seed) * (i + 3) * 17) % 1000) / 1000.0
-        gx = float(np.clip(gx + (jitter - 0.5) * 0.12, 0.06, 0.94))
-        gy = float(np.clip(gy + (((abs(seed) * (i + 5) * 31) % 1000) / 1000.0 - 0.5) * 0.12, 0.06, 0.94))
-        if i < named_masses:
-            gx = 0.45 * gx + 0.55 * 0.5
-            gy = 0.45 * gy + 0.55 * 0.5
-            weights[i] = 1.85 - 0.18 * i
-        sites_x[i] = gx
-        sites_y[i] = gy
+    # The whole field drifts (a pan in field space), faster in windows.
+    sx0, sy0 = lay["sites"][:, 0], lay["sites"][:, 1]
+    sites_x = _bounce_unit(sx0 + lay["vel"][0] * t).astype(np.float32)
+    sites_y = _bounce_unit(sy0 + lay["vel"][1] * t).astype(np.float32)
+    weights = lay["weights"]
 
     dx = jx[None, ...] - sites_x[:, None, None]
     dy = jy[None, ...] - sites_y[:, None, None]
-    dist = (dx * dx + dy * dy) / (weights[:, None, None] ** 2 + 1e-8)
+    ca, sa = float(np.cos(lay["angle"])), float(np.sin(lay["angle"]))
+    u = dx * ca + dy * sa
+    v = -dx * sa + dy * ca
+    metric = lay["metric"]
+    if metric == "diamond":
+        d2 = (np.abs(u) + np.abs(v)) ** 2
+    elif metric == "square":
+        d2 = np.maximum(np.abs(u), np.abs(v)) ** 2
+    elif metric == "stretch":
+        s = lay["stretch"]
+        d2 = (u * s) ** 2 + (v / s) ** 2
+    else:
+        d2 = u * u + v * v
+    dist = d2 / (weights[:, None, None] ** 2 + 1e-8)
     mass_id = np.argmin(dist, axis=0)
 
-    pair_a = np.zeros(n_masses, dtype=np.int64)
-    pair_b = np.zeros(n_masses, dtype=np.int64)
-    for i in range(n_masses):
-        if named_n >= 2 and i < named_masses:
-            pair_a[i] = (2 * i) % named_n
-            pair_b[i] = (pair_a[i] + 1) % named_n
-        else:
-            base = named_n + 2 * max(0, i - named_masses)
-            pair_a[i] = base % n_colors
-            pair_b[i] = (base + 1) % n_colors
-        if pair_a[i] == pair_b[i] and n_colors > 1:
-            pair_b[i] = (pair_a[i] + 1) % n_colors
+    per_mass = 3 if n_colors >= 3 else max(2, n_colors)
+    pal = _mass_palettes(colors, n_masses, named_n, named_masses, lay["palette_order"], per_mass)
 
-    idx_a0 = pair_a[mass_id]
-    idx_b0 = pair_b[mass_id]
-
-    # Within-mass blend so a region is a pairing, not a hard cell.
+    # Within-mass blend: five different spatial recipes, then sharpened for contrast.
     local_x = jx - sites_x[mass_id]
     local_y = jy - sites_y[mass_id]
-    w_space = 0.5 + 0.5 * np.sin((local_x * 5.5 + local_y * 3.2 + field * 0.8) * np.pi)
-
-    h_pix, w_pix = xx.shape
-    px = np.floor(xx * max(w_pix, 2)).astype(np.int64)
-    py = np.floor(yy * max(h_pix, 2)).astype(np.int64)
-    pix = (px * np.int64(73856093)) ^ (py * np.int64(19349663)) ^ (np.int64(seed) * np.int64(83492791))
-
-    change = t_amt > 0.02
-    if change:
-        shared_drift = np.floor(t_shift * 8.0 + mass_id.astype(np.float32) * 2.0).astype(np.int64)
-        pix_drift = np.floor(t_shift * 8.0 + (np.abs(pix) % 997).astype(np.float32) * 0.2).astype(np.int64)
-        drift = np.floor(
-            sync * shared_drift.astype(np.float32) + (1.0 - sync) * pix_drift.astype(np.float32)
-        ).astype(np.int64)
-        shared_w = 0.18 * np.sin(t_shift * np.pi + mass_id.astype(np.float32) * 0.7)
-        pix_w = 0.18 * np.sin(t_shift * np.pi + (np.abs(pix) % 997).astype(np.float32) * 0.05)
-        w = np.clip(w_space + sync * shared_w + (1.0 - sync) * pix_w, 0.0, 1.0)
+    ba = lay["blend_angle"]
+    proj = local_x * float(np.cos(ba)) + local_y * float(np.sin(ba))
+    k = lay["blend_freq"]
+    style = lay["blend"]
+    if style == "linear":
+        w_space = np.clip(0.5 + proj * 2.6, 0.0, 1.0)
+    elif style == "radial":
+        w_space = np.clip(np.sqrt(local_x ** 2 + local_y ** 2) * 3.6, 0.0, 1.0)
+    elif style == "stripes":
+        w_space = 0.5 + 0.5 * np.tanh(4.0 * np.sin((proj * k * 1.3 + field * 0.4) * np.pi))
+    elif style == "split":
+        w_space = np.clip(0.5 + proj * 9.0, 0.0, 1.0)
     else:
-        drift = 0
-        w = w_space
+        w_space = 0.5 + 0.5 * np.sin((proj * k + field * 0.8) * np.pi)
+    w_space = np.clip((w_space - 0.5) * lay["sharp"] + 0.5, 0.0, 1.0)
 
-    idx_a = np.mod(idx_a0 + drift, n_colors)
-    idx_b = np.mod(idx_b0 + drift * 2, n_colors)
+    step_rate = 4.5
+    phase_px = lay["phase"][mass_id]
+    # Coherent blobs (not per-pixel hash grain) carry the unsynchronized part of the motion.
+    blob = _hash_noise(xx, yy, seed + 31, scale=28.0)
+    shared_drift = np.floor(t_shift * step_rate + phase_px).astype(np.int64)
+    blob_drift = np.floor(t_shift * step_rate + blob * 2.0).astype(np.int64)
+    drift = np.floor(sync * shared_drift.astype(np.float32) + (1.0 - sync) * blob_drift.astype(np.float32)).astype(np.int64)
+    breathe = 0.30 if not window else 0.18
+    shared_w = breathe * np.sin(t_shift * np.pi + mass_id.astype(np.float32) * 0.7)
+    blob_w = breathe * np.sin(t_shift * np.pi + blob * 6.0)
+    w = np.clip(w_space + sync * shared_w + (1.0 - sync) * blob_w, 0.0, 1.0)
+
+    slot_a = np.mod(drift, per_mass)
+    slot_b = np.mod(drift + 1, per_mass)
+    idx_a = pal[mass_id, slot_a]
+    idx_b = pal[mass_id, slot_b]
     if n_colors > 1:
-        same = idx_a == idx_b
-        idx_b = np.where(same, np.mod(idx_a + 1, n_colors), idx_b)
+        idx_b = np.where(idx_a == idx_b, np.mod(idx_a + 1, n_colors), idx_b)
     one_minus = 1.0 - w
     r = R_arr[idx_a] * one_minus + R_arr[idx_b] * w
     g = G_arr[idx_a] * one_minus + G_arr[idx_b] * w
@@ -338,7 +447,6 @@ def _render_pure_per_frame(
     g = np.clip(g + (n - 0.5) * amp, 0, 255)
     b = np.clip(b + (n - 0.5) * amp, 0, 255)
     return r, g, b
-
 
 def _sample_texture_mod(
     texture: "np.ndarray | None",
