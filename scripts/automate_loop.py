@@ -302,6 +302,50 @@ def resolve_loop_duration(
     return duration_for_run(run_count, cli_duration)
 
 
+def long_window_duration(
+    prompt: str,
+    duration: float,
+    *,
+    api_duration: float | None = None,
+    share: float | None = None,
+    rng_value: float | None = None,
+    span_value: float | None = None,
+) -> float:
+    """
+    Optionally stretch a window-pairing run to 3-6 s so temporal blends have room to move.
+
+    LOOP_WINDOW_LONG_SHARE (0-1, default 0 = unchanged) is the probability that a window run is
+    stretched; LOOP_WINDOW_LONG_MIN / LOOP_WINDOW_LONG_MAX (defaults 3 / 6) bound the length.
+    A duration set from the Web UI / API always wins, and frame runs are never stretched.
+    """
+    if api_duration is not None and float(api_duration) > 0:
+        return duration
+    if share is None:
+        try:
+            share = float(os.environ.get("LOOP_WINDOW_LONG_SHARE", "0") or 0)
+        except (ValueError, TypeError):
+            share = 0.0
+    share = max(0.0, min(1.0, share))
+    if share <= 0.0:
+        return duration
+    from src.audio.pairing import pairing_kind_from_prompt
+
+    if pairing_kind_from_prompt(prompt or "") != "window":
+        return duration
+    roll = secure_random() if rng_value is None else rng_value
+    if roll >= share:
+        return duration
+    try:
+        lo = float(os.environ.get("LOOP_WINDOW_LONG_MIN", "3") or 3)
+        hi = float(os.environ.get("LOOP_WINDOW_LONG_MAX", "6") or 6)
+    except (ValueError, TypeError):
+        lo, hi = 3.0, 6.0
+    lo = max(1.0, min(lo, 30.0))
+    hi = max(lo, min(hi, 30.0))
+    span = secure_random() if span_value is None else span_value
+    return round(lo + (hi - lo) * max(0.0, min(1.0, span)), 1)
+
+
 def duration_for_run(run_count: int, base: float) -> float:
     """Scale duration as session progresses."""
     if run_count < 20:
@@ -442,6 +486,9 @@ def run() -> None:
             learning_duration=(config.get("learning") or {}).get("duration_seconds"),
             run_count=state["run_count"],
             cli_duration=args.duration,
+        )
+        duration = long_window_duration(
+            prompt, duration, api_duration=loop_config.get("duration_seconds")
         )
 
         try:
