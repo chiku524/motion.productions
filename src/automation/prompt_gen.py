@@ -6,6 +6,7 @@ Coverage-aware: can bias toward missing narrative origins (§2.1, §2.4).
 import random
 from typing import Any, Iterator
 
+from ..grammar import article as _article, articles_fixed, fix_articles
 from ..random_utils import secure_choice, secure_random
 from ..knowledge.completion_targets import NARRATIVE_ASPECT_TO_ORIGIN as _NARRATIVE_ASPECT_TO_ORIGIN
 
@@ -345,6 +346,7 @@ def _is_near_duplicate(prompt: str, avoid: set[str], threshold: float = 0.8) -> 
     return False
 
 
+@articles_fixed
 def generate_targeted_narrative_prompt(
     coverage: dict[str, Any],
     *,
@@ -411,6 +413,7 @@ def generate_targeted_narrative_prompt(
     return prompt
 
 
+@articles_fixed
 def generate_targeted_blended_prompt(
     knowledge: dict[str, Any] | None = None,
     *,
@@ -583,9 +586,10 @@ def _compose_pairing_prompt(
         tmpw=tempo if window else secure_choice(_WINDOW_TEMPO_CUES),
         tmpf=tempo if not window else secure_choice(_FRAME_TEMPO_CUES),
     )
-    return " ".join(text.split())
+    return fix_articles(" ".join(text.split()))
 
 
+@articles_fixed
 def generate_mission_prompt(
     *,
     kind: str = "frame",
@@ -633,6 +637,7 @@ def generate_mission_prompt(
     return None
 
 
+@articles_fixed
 def generate_targeted_color_family_prompt(
     *,
     family: str | None = None,
@@ -672,6 +677,7 @@ def generate_targeted_color_family_prompt(
     return None
 
 
+@articles_fixed
 def generate_targeted_entity_prompt(
     knowledge: dict[str, Any] | None = None,
     *,
@@ -1007,7 +1013,7 @@ def _pick_mini_mode(fidelity_bias: bool) -> str:
 
 
 def _mini_article(noun: str) -> str:
-    return "an" if noun[:1].lower() in "aeiou" else "a"
+    return _article(noun)
 
 
 def _finish_mini(core: str) -> str:
@@ -1017,8 +1023,8 @@ def _finish_mini(core: str) -> str:
     if secure_random() < 0.32:
         vocals = " and soft vocals"
     if " with " in core.lower():
-        return f"{core} and {music}{vocals}"
-    return f"{core} with {music}{vocals}"
+        return fix_articles(f"{core} and {music}{vocals}")
+    return fix_articles(f"{core} with {music}{vocals}")
 
 
 def _compose_mini_scene(mode: str) -> str:
@@ -1034,12 +1040,11 @@ def _compose_mini_scene(mode: str) -> str:
             noun = secure_choice(_MINI_PROP_NOUNS["composed"] + _MINI_PROP_NOUNS["star"])
         else:
             noun = secure_choice(_MINI_BALL_NOUNS)
-        art = _mini_article(noun)
         return secure_choice([
             f"explain {topic} with a bouncing {color} {noun} and soft spoken vocals",
-            f"teach {topic}: {art} {color} {noun} falls then bounces then settles with calm music",
-            f"a tutorial-style scene: {art} {color} {noun} bouncing while explaining {topic}",
-            f"lesson on {topic} with {art} {color} {noun} bouncing left and soft vocals",
+            f"teach {topic}: {_article(color)} {color} {noun} falls then bounces then settles with calm music",
+            f"a tutorial-style scene: {_article(color)} {color} {noun} bouncing while explaining {topic}",
+            f"lesson on {topic} with {_article(color)} {color} {noun} bouncing left and soft vocals",
         ])
     if mode == "weather":
         weather = secure_choice(_MINI_WEATHER)
@@ -1118,7 +1123,7 @@ def _compose_mini_scene(mode: str) -> str:
     art = _mini_article(label)
     if kind == "arrow" and secure_random() < 0.4:
         return _finish_mini(f"{art} {label} {verb} toward the camera{set_bit}")
-    return _finish_mini(f"{art} {color} {label} {verb} {traj}{set_bit}")
+    return _finish_mini(f"{_article(color)} {color} {label} {verb} {traj}{set_bit}")
 
 
 def _named_registry_colors(knowledge: dict[str, Any] | None) -> list[str]:
@@ -1157,6 +1162,7 @@ def _named_registry_motion(knowledge: dict[str, Any] | None) -> list[str]:
     return names or ["slow drift", "pulse", "wave"]
 
 
+@articles_fixed
 def generate_pixel_pairing_prompt(
     *,
     kind: str = "frame",
@@ -1209,6 +1215,7 @@ def generate_abstract_mesh_prompt(
     )
 
 
+@articles_fixed
 def generate_mini_scene_prompt(
     *,
     avoid: set[str] | None = None,
@@ -1240,6 +1247,7 @@ def generate_mini_scene_prompt(
     return None
 
 
+@articles_fixed
 def generate_procedural_prompt(
     *,
     subjects: list[str] | None = None,

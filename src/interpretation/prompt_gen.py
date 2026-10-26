@@ -6,6 +6,7 @@ Uses primitives + learned/extracted values from registries (learned colors, moti
 import random
 from typing import Any
 
+from ..grammar import articles_fixed
 from ..random_utils import secure_choice, secure_random
 from ..procedural.data.keywords import (
     KEYWORD_TO_PALETTE,
@@ -265,6 +266,7 @@ def _apply_variant(word: str, variant_mode: str) -> str:
     return word
 
 
+@articles_fixed
 def generate_interpretation_prompt(
     *,
     avoid: set[str] | None = None,
