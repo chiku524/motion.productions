@@ -193,6 +193,7 @@ def _add_audio(
             music_sections=music_sections,
             script_beats=getattr(spec, "script_beats", None) if spec is not None else None,
             cut_transitions=getattr(spec, "cut_transitions", None) if spec is not None else None,
+            seed=getattr(spec, "creation_seed", None) if spec is not None else None,
         )
         out_path = Path(out)
         _verify_audio_track(out_path)

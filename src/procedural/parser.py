@@ -105,6 +105,7 @@ class SceneSpec:
     # Pure sounds from registry: unique pairing of instants (frame) or rematch over windows
     pure_sounds: list[dict] | None = None  # e.g. [{"key", "tone", "timbre", "amplitude", "name"}, ...]
     sound_pairing: str | None = None  # "frame" | "window" | None
+    creation_seed: int | None = None  # clip seed; drives per-clip audio variation
     # Shot cut times (seconds) for audio sync
     cut_times: list[float] | None = None
     # Transition type at each cut (aligned with cut_times) for SFX variety

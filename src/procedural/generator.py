@@ -159,6 +159,7 @@ class ProceduralVideoGenerator(VideoGenerator):
             for ev in base_spec.sfx_events:
                 if isinstance(ev, dict) and ev.get("t_sec") is None:
                     ev["t_sec"] = 0.5
+        base_spec.creation_seed = seed
         self._last_spec = base_spec  # Pipeline uses this for audio (pure_sounds mixing)
         self._last_instruction = instruction
         self._last_cut_times = base_spec.cut_times

@@ -54,6 +54,13 @@ def _pick_audio_params(knowledge: dict) -> tuple[str, str, str]:
         return (mood, tempo, presence)
 
 
+def _fresh_audio_seed(cycle: int) -> int:
+    """Entropy-backed seed so the same pairing never renders the same waveform twice."""
+    from src.random_utils import fresh_seed
+
+    return fresh_seed("sound_loop", cycle)
+
+
 def _pick_target_primitive(api_base: str) -> str | None:
     """Prefer missing sound origins from mission, then coverage gaps."""
     from src.knowledge.mission_targets import pick_target_sound_origin
@@ -188,6 +195,7 @@ def run() -> None:
                 target_primitive=target_primitive,
                 pure_sounds=pairing or None,
                 pairing_kind=pairing_kind,
+                seed=_fresh_audio_seed(cycle),
             )
             segments = read_audio_segments_only(
                 wav_path,

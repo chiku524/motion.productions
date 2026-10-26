@@ -65,6 +65,7 @@ def mix_audio_to_video(
     music_sections: list[str] | None = None,
     script_beats: list[dict] | None = None,
     cut_transitions: list[str] | None = None,
+    seed: int | None = None,
 ) -> Path:
     """
     Add audio to a video. Phase 6+.
@@ -129,6 +130,7 @@ def mix_audio_to_video(
             audio_genre=audio_genre,
             music_sections=music_sections,
             script_beats=script_beats,
+            seed=seed,
         )
 
     # Cut accents + event SFX
@@ -185,6 +187,7 @@ def _build_audio_bed(
     audio_genre: str,
     music_sections: list[str] | None = None,
     script_beats: list[dict] | None = None,
+    seed: int | None = None,
 ):
     """Select music arrangement vs ambient vs sfx-only bed."""
     from pydub import AudioSegment
@@ -200,6 +203,7 @@ def _build_audio_bed(
             pure_sounds,
             duration_ms=duration_ms,
             pairing_kind=sound_pairing,
+            seed=seed,
         )
 
     use_music = presence in ("music", "full") or genre not in ("none", "", "ambient")
@@ -273,7 +277,7 @@ def _primitive_from_entry(entry: dict) -> str:
     return _TONE_TO_NOISE.get(tone, "tone")
 
 
-def _primitive_texture(
+def _primitive_texture_legacy(
     prim: str,
     duration_ms: int,
     *,
@@ -342,18 +346,216 @@ def _primitive_texture(
     return base.overlay(_repeat_to_duration(mid, duration_ms))
 
 
+def _audio_rng(seed: int, *salt) -> random.Random:
+    """Deterministic RNG for audio parameters, keyed by clip seed + salt."""
+    import hashlib
+
+    key = "|".join(str(x) for x in (int(seed), *salt)).encode()
+    return random.Random(int.from_bytes(hashlib.blake2b(key, digest_size=8).digest(), "big"))
+
+
+def layer_seed(seed: int | None, idx: int) -> int | None:
+    """Per-layer seed derived from the clip seed (None keeps legacy fixed textures)."""
+    if seed is None:
+        return None
+    return (int(seed) * 31 + int(idx) * 7919) & 0x7FFFFFFF
+
+
+def _primitive_texture(
+    prim: str,
+    duration_ms: int,
+    *,
+    db: float = -20.0,
+    tempo_ms: int = 2500,
+    sample_rate: int = 44100,
+    seed: int | None = None,
+):
+    """One SOUND_ORIGIN_PRIMITIVES texture for the full duration.
+
+    seed=None: the legacy fixed texture (same frequency/rhythm/envelope every time).
+    seed set: frequency, partials, rhythm (step + jitter + accents), burst length,
+    filter band and envelope are all drawn per primitive from the seed, so two clips
+    that share a primitive no longer share a spectrum or groove.
+    """
+    if seed is None:
+        return _primitive_texture_legacy(
+            prim, duration_ms, db=db, tempo_ms=tempo_ms, sample_rate=sample_rate
+        )
+
+    import math
+
+    from pydub import AudioSegment
+    from pydub.generators import Sine
+
+    prim = (prim or "tone").strip().lower()
+    base = AudioSegment.silent(duration=duration_ms, frame_rate=sample_rate)
+    if prim in ("silence", "silent") or duration_ms <= 0:
+        return base
+    rng = _audio_rng(seed, prim)
+
+    def sine(freq: float, dur: int, gain: float):
+        return Sine(freq, sample_rate=sample_rate).to_audio_segment(duration=max(2, int(dur))) + gain
+
+    def noise(dur: int, gain: float, lo: float | None = None, hi: float | None = None):
+        import numpy as np
+
+        n = max(2, int(sample_rate * max(2, int(dur)) / 1000))
+        nrng = np.random.default_rng(rng.getrandbits(32))
+        samples = np.clip(nrng.standard_normal(n) * 0.25, -1.0, 1.0)
+        seg = AudioSegment(
+            data=(samples * 32767).astype("<i2").tobytes(),
+            sample_width=2,
+            frame_rate=sample_rate,
+            channels=1,
+        )
+        if hi:
+            seg = seg.low_pass_filter(hi)
+        if lo:
+            seg = seg.high_pass_filter(lo)
+        return seg + gain
+
+    def shaped(seg, attack: int, release: int):
+        n = len(seg)
+        if attack > 0:
+            seg = seg.fade_in(min(attack, max(1, n - 1)))
+        if release > 0:
+            seg = seg.fade_out(min(release, max(1, n - 1)))
+        return seg
+
+    def pulses(make, step: float, jitter: float, first: int = 0, accent_every: int = 0, accent_db: float = 4.0):
+        """Place make() at jittered intervals (the per-primitive rhythm)."""
+        out = base
+        t = float(first)
+        k = 0
+        while t < duration_ms:
+            ev = make(k)
+            if accent_every and k % accent_every == 0:
+                ev = ev + accent_db
+            out = out.overlay(ev, position=int(t))
+            t += max(60.0, step * (1.0 + rng.uniform(-jitter, jitter)))
+            k += 1
+        return out[:duration_ms]
+
+    def gate(seg, period: int, duty: float):
+        """Chop a continuous texture into pulses (rhythm for drones)."""
+        out = base
+        on = max(20, int(period * duty))
+        for t in range(0, duration_ms, max(40, period)):
+            piece = seg[t : t + on]
+            if len(piece) > 8:
+                out = out.overlay(shaped(piece, 6, min(25, len(piece) // 2)), position=t)
+        return out[:duration_ms]
+
+    jitter = rng.uniform(0.0, 0.35)
+    first = rng.randint(0, max(1, min(400, duration_ms // 4)))
+    accent_every = rng.choice((0, 0, 2, 3, 4))
+    chop = rng.random() < 0.45
+    period = rng.randint(120, 650)
+    duty = rng.uniform(0.35, 0.9)
+
+    def sustained(seg):
+        loop = _repeat_to_duration(seg, duration_ms)
+        if chop:
+            loop = gate(loop, period, duty)
+        loop = shaped(loop, rng.choice((0, 30, 120, 300)), rng.choice((0, 40, 160)))
+        return base.overlay(loop)
+
+    if prim == "hiss":
+        hi = rng.uniform(3500, 14000)
+        lo = rng.choice((None, rng.uniform(800, 5000)))
+        burst = noise(rng.randint(120, 900), db - 4, lo=lo, hi=hi)
+        return sustained(burst)
+    if prim == "hum":
+        f = math.exp(rng.uniform(math.log(45), math.log(240)))
+        seg = sine(f, rng.randint(300, 1600), db - 2)
+        for mult in rng.sample((2, 3, 4, 5), rng.randint(0, 2)):
+            seg = seg.overlay(sine(f * mult, len(seg), db - 2 - rng.uniform(5, 14)))
+        return sustained(seg)
+    if prim == "rumble":
+        f = rng.uniform(26, 78)
+        seg = sine(f, rng.randint(500, 2500), db)
+        seg = seg.overlay(noise(len(seg), db - rng.uniform(6, 14), hi=rng.uniform(80, 220)))
+        return sustained(seg)
+    if prim == "rustle":
+        lo = rng.uniform(300, 3000)
+        hi = lo + rng.uniform(1500, 7000)
+        blen = rng.randint(25, 110)
+        return pulses(
+            lambda k: shaped(noise(blen, db - 4 + rng.uniform(-3, 2), lo=lo, hi=hi), 4, blen // 2),
+            step=rng.uniform(70, 320), jitter=max(jitter, 0.2), first=first,
+        )
+    if prim == "click":
+        f = rng.uniform(900, 4800)
+        clen = rng.randint(6, 30)
+        with_noise = rng.random() < 0.6
+        def make_click(k):
+            c = shaped(sine(f * rng.uniform(0.97, 1.03), clen, db + 2), 0, clen - 1)
+            if with_noise:
+                c = c.overlay(noise(max(6, clen // 2), db))
+            return c
+        return pulses(make_click, step=rng.uniform(140, 700), jitter=jitter, first=first,
+                      accent_every=accent_every)
+    if prim == "whoosh":
+        lo = rng.choice((None, rng.uniform(200, 1500)))
+        hi = rng.uniform(2500, 9000)
+        n_swells = rng.choice((1, 1, 2))
+        out = base
+        for s in range(n_swells):
+            dur = rng.randint(300, 900)
+            start = rng.randint(0, max(1, duration_ms - 200))
+            swell = shaped(noise(dur, db - 2, lo=lo, hi=hi), dur // 3, dur // 3)
+            out = out.overlay(swell, position=start)
+            f0 = rng.uniform(250, 1600)
+            f1 = f0 * rng.uniform(0.4, 2.6)
+            glide = AudioSegment.empty()
+            steps = 4
+            for i in range(steps):
+                glide += sine(f0 + (f1 - f0) * i / (steps - 1), dur // steps, db - 6)
+            out = out.overlay(shaped(glide, 40, 80), position=start)
+        return out[:duration_ms]
+    if prim == "thump":
+        f = rng.uniform(38, 125)
+        tlen = rng.randint(55, 190)
+        return pulses(
+            lambda k: shaped(sine(f * rng.uniform(0.96, 1.04), tlen, db + 4), 0, tlen - 4),
+            step=rng.uniform(230, 950), jitter=jitter, first=first, accent_every=accent_every, accent_db=3.0,
+        )
+    if prim == "drip":
+        f = rng.uniform(600, 2700)
+        dlen = rng.randint(18, 70)
+        drop = rng.uniform(0.55, 0.95)
+        def make_drip(k):
+            ff = f * rng.uniform(0.9, 1.1)
+            half = max(4, dlen // 2)
+            d = sine(ff, half, db - 2) + sine(ff * drop, half, db - 4)
+            return shaped(d, 2, len(d) // 2)
+        return pulses(make_drip, step=rng.uniform(200, 900), jitter=max(jitter, 0.15), first=first)
+    # tone
+    f = math.exp(rng.uniform(math.log(170), math.log(1500)))
+    seg = sine(f, rng.randint(400, 1500), db - 4)
+    seg = seg.overlay(sine(f * rng.uniform(1.004, 1.03), len(seg), db - 7))
+    if rng.random() < 0.5:
+        seg = seg.overlay(sine(f * rng.choice((1.5, 2.0, 2.5)), len(seg), db - rng.uniform(8, 15)))
+    return sustained(seg)
+
+
 def generate_audio_from_pure_sounds(
     pure_sounds: list[dict],
     duration_ms: int,
     *,
     sample_rate: int = 44100,
     pairing_kind: str = "frame",
+    seed: int | None = None,
 ):
     """
     Mix a unique registry pairing into one track.
 
-    frame: two (or more) textures held together for the clip — static instants.
-    window: textures rematch / crossfade every ~1s — dynamic blends.
+    frame: two (or more) textures held together for the clip - static instants.
+    window: every layer plays under the whole clip while the lead rotates through
+    the layers inside each window, so ALL layers are audible even in a 1 s clip.
+
+    seed: when given, per-primitive frequency/rhythm/envelope, layer gain, start
+    offsets, window length and lead order are drawn from it (None = legacy fixed sound).
     """
     try:
         from pydub import AudioSegment
@@ -364,12 +566,19 @@ def generate_audio_from_pure_sounds(
     if not entries:
         return AudioSegment.silent(duration=duration_ms, frame_rate=sample_rate)
 
+    rng = _audio_rng(seed, "mix") if seed is not None else None
     layers = []
-    for entry in entries:
+    for idx, entry in enumerate(entries):
         prim = _primitive_from_entry(entry)
         amp = float(entry.get("amplitude") or entry.get("weight") or 0.5)
         db = -28.0 + max(0.0, min(1.0, amp)) * 10.0
-        layers.append(_primitive_texture(prim, duration_ms, db=db, sample_rate=sample_rate))
+        if rng is not None:
+            db += rng.uniform(-2.5, 2.5)
+        layers.append(
+            _primitive_texture(
+                prim, duration_ms, db=db, sample_rate=sample_rate, seed=layer_seed(seed, idx)
+            )
+        )
 
     n = len(layers)
     layer_db = -8.0 * (1.0 / n) ** 0.5
@@ -378,27 +587,40 @@ def generate_audio_from_pure_sounds(
 
     if kind != "window" or n < 2:
         for i, layer in enumerate(layers):
-            offset_ms = (i * 47) % max(1, duration_ms // 4) if n > 2 else 0
+            if rng is not None:
+                offset_ms = rng.randint(0, max(1, duration_ms // 4)) if i > 0 else 0
+            else:
+                offset_ms = (i * 47) % max(1, duration_ms // 4) if n > 2 else 0
             base = base.overlay(layer + layer_db, position=offset_ms)
         return base
 
-    window_ms = 1000
+    window_ms = rng.choice((500, 700, 1000)) if rng is not None else 1000
     n_win = max(1, (duration_ms + window_ms - 1) // window_ms)
-    fade = max(40, window_ms // 3)
+    fade = max(30, window_ms // 4)
+    order0 = list(range(n))
+    if rng is not None:
+        rng.shuffle(order0)
+    bed_db = layer_db - 7.0
     for wi in range(n_win):
         pos = wi * window_ms
         chunk_ms = min(window_ms, duration_ms - pos)
         if chunk_ms <= 0:
             break
-        i0 = wi % n
-        i1 = (wi + 1) % n
-        a = layers[i0][pos : pos + chunk_ms] + layer_db
-        b = layers[i1][pos : pos + chunk_ms] + (layer_db - 1)
-        if chunk_ms > fade:
-            a = a.fade_out(min(fade, chunk_ms - 1))
-            b = b.fade_in(min(fade, chunk_ms - 1))
-        base = base.overlay(a, position=pos)
-        base = base.overlay(b, position=pos)
+        order = order0[wi % n :] + order0[: wi % n]
+        slot = max(1, chunk_ms // n)
+        for rank, li in enumerate(order):
+            seg = layers[li][pos : pos + chunk_ms]
+            # Every layer sounds for the whole window (quiet bed) ...
+            base = base.overlay(seg + bed_db, position=pos)
+            # ... and takes the lead for its own slot of the window.
+            start = rank * slot
+            lead_len = min(chunk_ms - start, slot + fade)
+            if lead_len <= 2:
+                continue
+            lead = layers[li][pos + start : pos + start + lead_len] + (layer_db + 1.0)
+            f = max(1, min(fade, lead_len // 2 - 1))
+            lead = lead.fade_in(f).fade_out(f)
+            base = base.overlay(lead, position=pos + start)
     return base
 
 
@@ -517,6 +739,7 @@ def generate_audio_only(
     target_primitive: str | None = None,
     pure_sounds: list[dict] | None = None,
     pairing_kind: str = "frame",
+    seed: int | None = None,
 ) -> Path:
     """
     Generate procedural audio to a WAV file (no video). Used by the sound-only
@@ -531,6 +754,7 @@ def generate_audio_only(
             pure_sounds,
             duration_ms=duration_ms,
             pairing_kind=pairing_kind,
+            seed=seed,
         )
     else:
         audio = _generate_procedural_audio(
