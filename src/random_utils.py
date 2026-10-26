@@ -2,6 +2,7 @@
 Crypto-quality random for growth and creation (BACKLOG_AND_ENHANCEMENTS).
 Uses secrets module to avoid bias in domain value selection.
 """
+import hashlib
 import secrets
 from typing import Callable, TypeVar
 
@@ -20,9 +21,20 @@ def secure_random():
     return secrets.SystemRandom().random()
 
 
-def fresh_seed() -> int:
-    """31-bit seed that is unique to this generation."""
-    return secrets.randbits(31)
+def fresh_seed(*salt) -> int:
+    """31-bit seed that is unique to this generation.
+
+    ``salt`` (job id, run count, ...) is mixed in with OS entropy through BLAKE2b, so two
+    workers with the same job id or counter still diverge. Never uses Python's salted
+    ``hash()`` or an arithmetic function of a counter.
+    """
+    if not salt:
+        return secrets.randbits(31)
+    h = hashlib.blake2b(digest_size=8)
+    h.update(secrets.token_bytes(16))
+    for s in salt:
+        h.update(b"\x1f" + str(s).encode("utf-8", "replace"))
+    return int.from_bytes(h.digest(), "big") & 0x7FFFFFFF
 
 
 def weighted_choice(items, weights, rng=None):

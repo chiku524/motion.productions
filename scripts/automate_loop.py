@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 
 from src.api_client import APIError, api_request, api_request_with_retry
-from src.random_utils import secure_choice, secure_random
+from src.random_utils import fresh_seed, secure_choice, secure_random
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +144,15 @@ def pick_prompt(
             "use_photoreal": False,
         })
     return ("", {"source": "none", "authentic": False})
+
+
+def relax_recent_prompts(state: dict) -> None:
+    """No fresh prompt could be built: forget only the oldest half of ``recent_prompts``.
+
+    A full reset restarted the whole avoid-cycle and let the loop repeat what it had just made.
+    """
+    recent_all = list(state.get("recent_prompts") or [])
+    state["recent_prompts"] = recent_all[(len(recent_all) + 1) // 2:]
 
 
 def _load_coverage(api_base: str) -> dict | None:
@@ -422,7 +431,9 @@ def run() -> None:
         else:
             state["interpretation_streak"] = 0
         if not prompt:
-            state["recent_prompts"] = []
+            # Every candidate was a near-duplicate of a recent prompt: forget only the oldest half,
+            # so the loop keeps avoiding what it just made instead of restarting the whole cycle.
+            relax_recent_prompts(state)
             continue
 
         duration = resolve_loop_duration(
@@ -459,7 +470,7 @@ def run() -> None:
         rendered_path: Path | None = None
         gate = None
         try:
-            run_seed = (state["run_count"] + 1) * 7919 + (hash(job_id) % 1_000_000)
+            run_seed = fresh_seed(job_id, state["run_count"] + 1)
             run_config = dict(config)
             if prompt_meta.get("use_photoreal"):
                 render_cfg = dict(run_config.get("render") or {})

@@ -491,6 +491,101 @@ def generate_targeted_blended_prompt(
     return prompt
 
 
+_LAYOUT_CUES = [
+    "in tight clusters", "in wide bands", "as scattered islands", "with sharp edges",
+    "with soft edges", "in diagonal sweeps", "in nested rings", "as a patchwork",
+    "in loose veins", "around a bright core", "across a busy field", "in a quiet field",
+    "in long stripes", "as small flecks", "in broad slabs", "in lopsided blocks",
+    "as drifting blobs", "in a wide spread", "in thin ribbons", "as a crowded mosaic",
+]
+_WINDOW_TEMPO_CUES = [
+    "rematching quickly", "swapping partners", "rippling across the field",
+    "trading places", "cycling through pairings", "flickering between partners",
+    "sweeping side to side", "breathing in and out", "sliding through each other",
+    "slowly dissolving", "snapping between partners", "rolling over one another",
+]
+_FRAME_TEMPO_CUES = [
+    "held still", "caught mid-pairing", "at rest", "in one instant", "settled in place",
+    "paused between partners", "caught in a single beat", "quietly held",
+]
+_WINDOW_TEMPLATES = [
+    "motion window: independent pixel pairings of {lst}{lay}{tmp}, {snd}",
+    "dynamic pairing of {pair} over a motion window{lay}, {snd}",
+    "motion window blend: pixel field of {lst} rematching{lay}, {snd}",
+    "pixel pairing of {pair} drifting across a motion window{lay}, {snd}",
+    "motion window pairing of {lst}{lay}, {snd}",
+    "{snd}, over a motion window of {lst}{lay}",
+    "motion window: {pair} {tmpw}{lay}, {snd}",
+    "motion window, dynamic pairing: {lst} {tmpw} as a pixel field{lay}, {snd}",
+    "across a motion window, {pair} {tmpw}{lay}, {snd}",
+    "motion window blend of {pair} {tmpw}{lay}; {snd}",
+    "{snd}; motion window of {lst} {tmpw}{lay}",
+    "pixel field of {pair} in a motion window{lay}{tmp}, {snd}",
+]
+_FRAME_TEMPLATES = [
+    "static frame: independent pixel pairings of {lst}{lay}{tmp}, {snd}",
+    "static frame, per-frame pairing of {pair}{lay}, {snd}",
+    "static frame, still pixel pairing: pixel field of {lst}{lay}, {snd}",
+    "static frame pairing of {lst}{lay}, {snd}",
+    "static frame: pixel pairing of {pair}{lay}, {snd}",
+    "{snd}; static frame of {lst}{lay}",
+    "static frame: {pair} {tmpf}{lay}, {snd}",
+    "static frame, still pixel field: {lst} paired{lay}, {snd}",
+    "static frame, color pairing of {pair}{lay}, {snd}",
+    "static frame, per-frame pairing: {lst} {tmpf}{lay}, {snd}",
+    "{snd}, static frame of {pair}{lay}{tmp}",
+    "static frame, still pixel pairing of {lst} {tmpf}{lay}, {snd}",
+]
+
+
+def _join_phrases(parts: list[str]) -> str:
+    parts = [p for p in parts if p]
+    if len(parts) <= 1:
+        return parts[0] if parts else ""
+    if len(parts) == 2:
+        return f"{parts[0]} and {parts[1]}"
+    return ", ".join(parts[:-1]) + f", and {parts[-1]}"
+
+
+def _compose_pairing_prompt(
+    window: bool,
+    phrases: list[str],
+    sound_a: str,
+    sound_b: str,
+    *,
+    motion: str | None = None,
+    sound_first: bool = False,
+) -> str:
+    """
+    One registry-pairing prompt from many templates and optional layout / tempo
+    cues. Every template keeps the phrases the parser uses to tell a still frame
+    from a motion window and to read the sound pairing; the cues vary the rest.
+    """
+    phrases = [p for p in phrases if p] or ["blue", "amber"]
+    pair = " with ".join(phrases[:2]) if len(phrases) >= 2 else phrases[0]
+    lst = _join_phrases(phrases[:3])
+    kind_word = "dynamic" if window else "static"
+    if secure_random() < 0.5:
+        snd = f"{kind_word} sound pairing of {sound_a} with {sound_b}"
+    else:
+        snd = f"{kind_word} sound pairing of {sound_b} with {sound_a}"
+        if sound_first:
+            snd = f"{kind_word} sound pairing of {sound_a} with {sound_b}"
+    lay = f" {secure_choice(_LAYOUT_CUES)}" if secure_random() < 0.65 else ""
+    tempo_pool = list(_WINDOW_TEMPO_CUES if window else _FRAME_TEMPO_CUES)
+    if window and motion:
+        tempo_pool.append(f"in {motion}")
+    tempo = secure_choice(tempo_pool)
+    tmp = f" {tempo}" if secure_random() < 0.4 else ""
+    template = secure_choice(_WINDOW_TEMPLATES if window else _FRAME_TEMPLATES)
+    text = template.format(
+        lst=lst, pair=pair, snd=snd, lay=lay, tmp=tmp,
+        tmpw=tempo if window else secure_choice(_WINDOW_TEMPO_CUES),
+        tmpf=tempo if not window else secure_choice(_FRAME_TEMPO_CUES),
+    )
+    return " ".join(text.split())
+
+
 def generate_mission_prompt(
     *,
     kind: str = "frame",
@@ -526,26 +621,13 @@ def generate_mission_prompt(
         cue = secure_choice(SHADE_CUES.get(shade) or ["clear"])
         other = secure_choice(families)
         other_sound = secure_choice(sounds)
-        if window and axis == "sound":
-            prompt = (
-                f"motion window: dynamic sound pairing of {lead_sound} with {other_sound}, "
-                f"pixel field of {cue} {family} with {other}"
-            )
-        elif window:
-            prompt = (
-                f"motion window pairing of {cue} {family} with {other}, "
-                f"dynamic sound pairing of {lead_sound} with {other_sound}"
-            )
-        elif axis == "sound":
-            prompt = (
-                f"static frame: static sound pairing of {lead_sound} with {other_sound}, "
-                f"pixel field of {cue} {family} with {other}"
-            )
-        else:
-            prompt = (
-                f"static frame pairing of {cue} {family} with {other}, "
-                f"static sound pairing of {lead_sound} with {other_sound}"
-            )
+        phrases = [f"{cue} {family}", other]
+        if secure_random() < 0.4:
+            phrases.append(secure_choice(families))
+        prompt = _compose_pairing_prompt(
+            window, phrases, lead_sound, other_sound,
+            sound_first=(axis == "sound"),
+        )
         if prompt not in avoid and not _is_near_duplicate(prompt, avoid):
             return prompt
     return None
@@ -583,15 +665,8 @@ def generate_targeted_color_family_prompt(
     sounds = named_registry_sounds(None)
     sa = secure_choice(sounds)
     sb = secure_choice([s for s in sounds if s != sa] or sounds)
-    templates = [
-        f"static frame: independent pixel pairings of {cue} {hue} with {other}, static sound pairing of {sa} with {sb}",
-        f"per-frame pairing of {cue} {hue} with {other}, static sound pairing of {sa} with {sb}",
-        f"still pixel pairing: pixel field of {cue} {hue} with {other}, static sound pairing of {sa} with {sb}",
-        f"static frame pairing of {cue} {hue} with {other}, static sound pairing of {sa} with {sb}",
-        f"pixel pairing of {cue} {hue} with {other}, static sound pairing of {sa} with {sb}",
-    ]
     for _ in range(24):
-        prompt = secure_choice(templates)
+        prompt = _compose_pairing_prompt(False, [f"{cue} {hue}", other], sa, sb)
         if prompt and prompt not in avoid and not _is_near_duplicate(prompt, avoid):
             return prompt
     return None
@@ -880,6 +955,31 @@ _MINI_EDU_TOPICS = [
 ]
 _MINI_WEATHER = [
     "in the rain", "in the snow", "in soft drizzle", "in a storm", "under gray sky",
+    "in thick fog", "in a light breeze", "under heavy clouds", "in morning mist",
+    "in blowing snow", "after the rain",
+]
+# Wider pools: more of the registry's color / sound / setting space per clip.
+_MINI_COLORS += [
+    "indigo", "olive", "coral", "turquoise", "scarlet", "lilac", "bronze", "silver",
+    "mint", "peach", "navy", "maroon", "lime", "cyan", "ivory", "rust",
+]
+_MINI_MUSIC += [
+    "a slow piano line", "bright synth arpeggios", "a heavy bass pulse", "soft strings",
+    "a glitchy electronic groove", "warm pad chords", "a sparse drum pattern",
+    "airy flute music", "a driving breakbeat", "low drone music", "a bouncy marimba tune",
+]
+_MINI_EXPR += ["curious", "tired", "proud", "nervous", "surprised", "bored"]
+_MINI_EDU_TOPICS += [
+    "magnetism", "erosion", "pendulums", "sound waves", "shadows", "heat", "pressure",
+    "rainbows", "volcanoes", "currents", "eclipses", "springs",
+]
+_MINI_TRAJ += ["diagonally up", "diagonally down", "in a loop"]
+_MINI_BALL_NOUNS += ["marble", "bubble", "pebble"]
+_MINI_CHAR_NOUNS += ["dancer", "runner", "traveler", "child"]
+_SETTING_PHRASES += [
+    "on a mountain ridge", "in a quiet park", "on an empty street", "in a canyon",
+    "by a frozen lake", "in a greenhouse", "on a rooftop", "in a misty valley",
+    "at dawn", "under the stars", "in a subway tunnel", "on a salt flat",
 ]
 
 
@@ -1090,23 +1190,8 @@ def generate_pixel_pairing_prompt(
         srest = [s for s in sounds if s != sa] or sounds
         sb = secure_choice(srest)
         motion = secure_choice(motions)
-        if window:
-            templates = [
-                f"motion window: independent pixel pairings of {a}, {b}, and {c} in {motion}, dynamic sound pairing of {sa} with {sb}",
-                f"dynamic pairing of {a} and {b} over a moving window, dynamic sound pairing of {sa} with {sb}",
-                f"window blend: pixel field of {a}, {b}, and {c} rematching, dynamic sound pairing of {sa} with {sb}",
-                f"pixel pairing of {a} with {b} drifting across a motion window, dynamic sound pairing of {sa} with {sb}",
-                f"motion window pairing of {a}, {c}, and {d}, dynamic sound pairing of {sa} with {sb}",
-            ]
-        else:
-            templates = [
-                f"static frame: independent pixel pairings of {a}, {b}, and {c}, static sound pairing of {sa} with {sb}",
-                f"per-frame pairing of {a} and {b}, static sound pairing of {sa} with {sb}",
-                f"still pixel pairing: pixel field of {a}, {b}, and {c}, static sound pairing of {sa} with {sb}",
-                f"static frame pairing of {a} with {b} and {c}, static sound pairing of {sa} with {sb}",
-                f"pixel pairing of {a} with {b}, static sound pairing of {sa} with {sb}",
-            ]
-        prompt = secure_choice(templates)
+        phrases = [a, b, c, d][: secure_choice([2, 3, 3, 4])]
+        prompt = _compose_pairing_prompt(window, phrases, sa, sb, motion=motion)
         if prompt not in avoid and not _is_near_duplicate(prompt, avoid):
             return prompt
     return None
