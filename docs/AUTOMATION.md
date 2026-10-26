@@ -8,10 +8,10 @@ Run automation to continuously generate prompts, create videos, and grow registr
 
 | Script                    | Purpose                                                                 |
 |---------------------------|-------------------------------------------------------------------------|
-| `scripts/worker_start.py` | Fly/Docker dispatcher (`WORKER_START_SCRIPT`). |
-| `scripts/automate_loop.py`| Self-feeding loop: exploit/explore, `grow_all_from_video`. Runs on **Fly.io** via `fly.loop-*.toml`. |
+| `scripts/worker_start.py` | Docker dispatcher (`WORKER_START_SCRIPT`). |
+| `scripts/automate_loop.py`| Self-feeding loop: exploit/explore, `grow_all_from_video`. Runs in Docker via `docker-compose.local.yml`. |
 | `scripts/automate.py`     | Interval-based automation: runs with sleep between jobs. For local/scheduled runs. |
-| `scripts/generate_bridge.py` | Process pending API jobs: generate → upload → learn. Also Fly `motion-loop-webjobs`. |
+| `scripts/generate_bridge.py` | Process pending API jobs: generate → upload → learn. Also the `webjobs` Compose service. |
 | `scripts/interpret_loop.py` | Interpretation / linguistics worker (no render). |
 | `scripts/sound_loop.py`   | Pure sound discovery worker (no render). |
 | `scripts/procedural_render_server.py` | HTTP `POST /render` for `engine=procedural`. |
@@ -62,32 +62,29 @@ python scripts/automate.py --duration 5 --interval 120
 
 ---
 
-## Deploy loop workers (Fly.io)
+## Deploy loop workers (Docker)
 
-**Apps deleted / starting over?** Use **[LOCAL_COMPUTE.md](LOCAL_COMPUTE.md)** — Docker Compose on your machine first, then `scripts/fly_bootstrap.sh` + deploys to recreate Fly from scratch.
+Workers run as Docker containers via Docker Compose. Setup, profiles, and health checks: **[LOCAL_COMPUTE.md](LOCAL_COMPUTE.md)**.
 
 ### Prerequisites
 
 - API deployed at motion.productions
-- [Fly CLI](https://fly.io/docs/hands-on/install-flyctl/) (`fly auth login`)
+- Docker Desktop (or Docker Engine + Compose v2)
 
-### Fly.io
+### Docker Compose
 
-The repo ships **`fly.loop-explorer.toml`**, **`fly.loop-exploiter.toml`**, **`fly.loop-balanced.toml`**, **`fly.loop-interpret.toml`**, **`fly.loop-sound.toml`**, **`fly.loop-webjobs.toml`**, and **`fly.procedural-render.toml`** at the **repository root**. Each file defines one Fly app, the same **`Dockerfile`**, and the env vars for that role.
+The repo ships **`docker-compose.local.yml`** at the **repository root**. Each service defines one worker role, the same **`Dockerfile`**, and the env vars for that role.
 
 ```bash
 cd motion.productions   # repo root
-fly apps create motion-loop-explorer    # once per app name
-fly deploy --config fly.loop-explorer.toml
+docker compose -f docker-compose.local.yml --profile free up -d --build
 ```
 
-Repeat with the other config files as needed. Full matrix and operational checklist: **[docs/DEPLOYMENT.md](DEPLOYMENT.md)** (Fly.io section).
+Full matrix and operational checklist: **[docs/DEPLOYMENT.md](DEPLOYMENT.md)** (Docker workers section).
 
 Default **`CMD`** is `python scripts/worker_start.py` (**`WORKER_START_SCRIPT`** selects `automate_loop` vs `interpret_loop` vs `sound_loop` vs `generate_bridge` vs `procedural_render`).
 
-**Local Docker (same image):** `docker compose -f docker-compose.local.yml up -d --build` — see [LOCAL_COMPUTE.md](LOCAL_COMPUTE.md).
-
-**Video AI** (FFmpeg render for the Worker): deploy from **`video-ai/`** with **`video-ai/fly.toml`** — see **`video-ai/README.md`**.
+**Video AI** (FFmpeg render for the Worker): the `video-ai-render` Compose service (`--profile video-ai`) - see **`video-ai/README.md`**.
 
 ### Local / Procfile
 
@@ -123,15 +120,17 @@ Use env overrides to run workers with different strategies:
 
 Each worker writes to the same D1; the knowledge base grows from all strategies. Quality is preserved because discoveries and good prompts are shared.
 
-### Setup (multiple workers) on Fly
+### Setup (multiple workers)
 
-1. **Balanced** — `fly apps create motion-loop-balanced` then `fly deploy --config fly.loop-balanced.toml`.
-2. **Explorer** — `fly apps create motion-loop-explorer` then `fly deploy --config fly.loop-explorer.toml`.
-3. **Exploiter** — `fly apps create motion-loop-exploiter` then `fly deploy --config fly.loop-exploiter.toml`.
+Use the Compose services, which already set the per-role env vars:
 
-Optional: interpretation, sound, webjobs, and procedural-render use **`fly.loop-interpret.toml`**, **`fly.loop-sound.toml`**, **`fly.loop-webjobs.toml`**, and **`fly.procedural-render.toml`**. Env vars are already set in each file; change **`primary_region`** if you do not want `iad`.
+1. **Balanced** - `docker compose -f docker-compose.local.yml --profile free up -d --build balanced`.
+2. **Explorer** - `docker compose -f docker-compose.local.yml --profile free up -d --build explorer`.
+3. **Exploiter** - `docker compose -f docker-compose.local.yml --profile loops-full up -d --build exploiter`.
 
-**Verify:** `fly logs -a motion-loop-balanced` (etc.) show `[1]`, `[2]`, …; the motion.productions loop UI reflects combined activity.
+Optional: interpretation, sound, webjobs, and procedural-render are the `interpret`, `sound`, `webjobs`, and `procedural-render` services. Env vars are already set in `docker-compose.local.yml`.
+
+**Verify:** `docker compose -f docker-compose.local.yml logs -f balanced` (etc.) show `[1]`, `[2]`, ...; the motion.productions loop UI reflects combined activity.
 
 ---
 

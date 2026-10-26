@@ -147,15 +147,15 @@ Clean organization: every file is in its respective directory.
 | `output/` | Default video output directory (configurable). |
 | `scripts/` | Entrypoints (see below). |
 | `cloudflare/` | Worker API (D1, R2, KV), migrations, static app. |
-| `video-ai/` | Node FFmpeg recipe render service (`fly.toml`). |
+| `video-ai/` | Node FFmpeg recipe render service. |
 | `docker-compose.local.yml` | Local Docker fleet (webjobs, procedural-render, optional loops). |
-| `Dockerfile`, `Procfile`, `fly.loop-*.toml`, `fly.procedural-render.toml` | Deployment (Fly.io Python workers). |
+| `Dockerfile`, `Dockerfile.video-ai`, `docker-compose.local.yml`, `Procfile` | Deployment (Docker Python workers). |
 
 **`scripts/` — entrypoints**
 
 | Script | Purpose |
 |--------|--------|
-| `worker_start.py` | Fly/Docker dispatcher; `WORKER_START_SCRIPT` selects role. |
+| `worker_start.py` | Docker dispatcher; `WORKER_START_SCRIPT` selects role. |
 | `automate_loop.py` | Learning loop (explorer / exploiter / balanced). |
 | `generate_bridge.py` | Pending jobs → generate → upload. |
 | `interpret_loop.py` | Interpretation / linguistics worker (no render). |
@@ -206,7 +206,7 @@ Clean organization: every file is in its respective directory.
 
 **Data vs code:** Code = `src/`, `cloudflare/src/`, `scripts/`. **Source of truth for registries = D1** (local `knowledge/` JSON is export/cache only). Config = `config/`. Docs = `docs/`.
 
-**Video AI merge path:** Recipe JSON with `meta.engine`: `recipe` (Node FFmpeg) or `procedural` (Python `generate_full_video` via Fly). See `video-ai/README.md`.
+**Video AI merge path:** Recipe JSON with `meta.engine`: `recipe` (Node FFmpeg) or `procedural` (Python `generate_full_video` via the procedural-render service). See `video-ai/README.md`.
 
 ---
 

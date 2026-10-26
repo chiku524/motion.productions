@@ -185,7 +185,7 @@ async function proxyProceduralRender(
     return json(
       {
         error:
-          "PROCEDURAL_RENDER_URL is not configured. Deploy fly.procedural-render.toml and set the Worker secret.",
+          "PROCEDURAL_RENDER_URL is not configured. Run the procedural-render service (docker-compose.local.yml) and set the Worker secret.",
       },
       501,
     );

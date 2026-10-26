@@ -265,7 +265,7 @@ Each workflow is one **continuous loop** that repeats the same steps. Only **pro
 | Fourth workflow (Interpretation)? | Yes. **Interpretation** runs `interpret_loop.py`; no create/render; stores prompt + instruction in D1; main loop uses `interpretation_prompts` from for-creation when picking prompts. |
 | Fifth workflow (Sound-only)? | Yes. **Sound-only** runs `sound_loop.py`; no create/render; grows static_sound only; uses knowledge (learned_audio) for next-cycle discovery. |
 
-For config and env details, see `config/workflows.yaml` and [DEPLOYMENT.md](DEPLOYMENT.md) (Fly.io section).
+For config and env details, see `config/workflows.yaml` and [DEPLOYMENT.md](DEPLOYMENT.md) (Docker workers section).
 
 ---
 
@@ -346,6 +346,6 @@ Exploiter always picks from good_prompts → same motion/sound/color. Balanced w
 - **[LOOP_STANDARDS.md](LOOP_STANDARDS.md)** — Set algorithms and functions for interpretation loop (language standard) and video loop (MP4 aspects); both grow from origin/primitive + extracted values.
 - [NAME_GENERATOR.md](NAME_GENERATOR.md) — Algorithm for sensible, semantic or name-like short names.
 - [MP4_ASPECTS.md](MP4_ASPECTS.md) — Every aspect of a complete MP4; frame/window model.
-- [DEPLOYMENT.md](DEPLOYMENT.md) — Cloudflare Worker + Fly.io workers (config, env, post-deploy checklist).
+- [DEPLOYMENT.md](DEPLOYMENT.md) — Cloudflare Worker + Docker workers (config, env, post-deploy checklist).
 - [REGISTRY_AND_WORKFLOW_IMPROVEMENTS.md](REGISTRY_AND_WORKFLOW_IMPROVEMENTS.md) — Consolidated improvement plans and reports.
 - [ALGORITHMS_AND_FUNCTIONS_AUDIT.md](ALGORITHMS_AND_FUNCTIONS_AUDIT.md) — Audit of extraction, growth, and registry functions.

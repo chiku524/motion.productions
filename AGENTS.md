@@ -5,14 +5,14 @@
 - Wants distinct pure-sound vs pure-color workflows; blended/semantic emphasis on roughly one-second windows; frame-level sound mesh blending primitives with discoveries over loop iterations.
 - Prefers Cloudflare for edge APIs and storage orchestration; AI video should use numeric or recipe-style parameters rather than fixed template catalogs when possible.
 - Will spend on the order of tens of dollars per month when it clearly improves reliability or throughput.
-- Prefers Fly.io over Railway or Render for documented long-running FFmpeg and video-ai hosting; Railway should not be the primary deployment story in docs.
-- Currently runs loop/render workers via **local Docker Compose** (same contracts as Fly) due to funding; Cloudflare Worker + D1 remain the API/storage plane.
+- Runs long-running FFmpeg and video-ai workloads in Docker containers (Docker Compose); hosted PaaS (Railway, Render) should not be the primary deployment story in docs.
+- Currently runs loop/render workers via **local Docker Compose** due to funding; Cloudflare Worker + D1 remain the API/storage plane.
 
 ## Learned Workspace Facts
 
 - `motion.productions` is served by a Cloudflare Worker with D1, R2, and KV; Python loop and automation scripts call the same HTTP API.
 - The `video-ai` render path uses Node and FFmpeg on dedicated compute; the Worker plans and proxies only, so `VIDEO_AI_RENDER_URL` must be a public HTTPS origin, not localhost.
-- Production compute for loops is **Docker Compose** (`docker-compose.local.yml`: webjobs, procedural-render, explorer/exploiter/balanced/interpret/sound); Fly tomls remain the reference contracts but apps may be idle.
+- Production compute for loops is **Docker Compose** (`docker-compose.local.yml`: webjobs, procedural-render, explorer/exploiter/balanced/interpret/sound).
 - Compose profiles are intentional, not accidental: default/documented fleet is `--profile free` (Core 4: explorer, balanced, interpret, sound). `exploiter` only comes up under `--profile loops-full` — it's opt-in because it adds extra D1 write pressure and should only be enabled when 500/503s stay rare (see `docs/LOCAL_COMPUTE.md`). `video-ai-render` only comes up under `--profile video-ai` and needs `OPENAI_API_KEY`/`VIDEO_AI_RENDER_SECRET` set. Seeing them absent from `docker ps` is not a bug.
 - Remote D1 migrations and heavy batches can fail with CPU time exceeded (error `7429`); run during quieter periods and retry.
 - The main site exposes a Video AI lab under `/video-ai/`; planning runs on the Worker while MP4 encoding depends on the external render service.

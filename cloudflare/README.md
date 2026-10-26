@@ -2,7 +2,7 @@
 
 API and storage for **motion.productions**: Worker (API), D1 (registries + jobs), R2 (videos), KV (cache/config).
 
-**Mission context:** Registries hold colors, sounds, narratives, and interpretations (from primitives, then named discoveries). The Worker is the source of truth; Fly workers and the procedural/Video AI render path create videos from user instruction using those values. See [../docs/WORKFLOWS_AND_REGISTRIES.md](../docs/WORKFLOWS_AND_REGISTRIES.md).
+**Mission context:** Registries hold colors, sounds, narratives, and interpretations (from primitives, then named discoveries). The Worker is the source of truth; Docker workers and the procedural/Video AI render path create videos from user instruction using those values. See [../docs/WORKFLOWS_AND_REGISTRIES.md](../docs/WORKFLOWS_AND_REGISTRIES.md).
 
 ## Quick start (terminal)
 
@@ -27,4 +27,4 @@ Full steps and troubleshooting: **[../docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md)
 - `GET /api/knowledge/for-creation` — registry values for creation / loops.
 - `POST /api/knowledge/discoveries` — record novel named discoveries.
 
-Video generation runs on **Fly.io** workers (`generate_bridge`, learning loops, procedural-render) or locally via Python scripts — not inside this Worker. The Worker plans Video AI jobs and stores results. See [../docs/LOCAL_COMPUTE.md](../docs/LOCAL_COMPUTE.md) and [../docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md).
+Video generation runs on **Docker** workers (`generate_bridge`, learning loops, procedural-render) or locally via Python scripts — not inside this Worker. The Worker plans Video AI jobs and stores results. See [../docs/LOCAL_COMPUTE.md](../docs/LOCAL_COMPUTE.md) and [../docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md).

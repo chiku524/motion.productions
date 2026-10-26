@@ -1,4 +1,4 @@
-# Video AI FFmpeg render API — deploy root directory: video-ai/ (Fly.io; see fly.toml).
+# Video AI FFmpeg render API — build context: video-ai/.
 FROM node:22-bookworm-slim
 
 RUN apt-get update \
@@ -14,7 +14,7 @@ COPY tsconfig.json ./
 COPY src ./src
 
 ENV NODE_ENV=production
-# Fly http_service uses 8080; hosts that inject PORT override this at runtime.
+# Default port 8080; hosts that inject PORT override this at runtime.
 ENV PORT=8080
 EXPOSE 8080
 

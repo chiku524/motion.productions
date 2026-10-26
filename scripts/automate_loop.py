@@ -25,7 +25,7 @@ DEFAULT_DELAY_SECONDS = 30
 
 
 def _loop_extraction_focus() -> str:
-    """frame | window | all. Unset means all (local one-process default). Compose/Fly set this per worker."""
+    """frame | window | all. Unset means all (local one-process default). Compose sets this per worker."""
     v = (os.environ.get("LOOP_EXTRACTION_FOCUS") or "").strip().lower()
     return v if v in ("frame", "window", "all") else "all"
 
@@ -443,11 +443,11 @@ def run() -> None:
         coverage = _load_coverage(args.api_base) if args.api_base else None
         workflow_type = (os.environ.get("LOOP_WORKFLOW_TYPE") or "main").strip().lower() or "main"
         # extraction_focus: frame (per-frame / pure static only) | window (per-window blends only) | unset = all
-        # Use LOOP_EXTRACTION_FOCUS (not LCXP_EXTRACTION_FOCUS). See docs/DEPLOYMENT.md (Fly.io §8) and REGISTRY_AND_WORKFLOW_IMPROVEMENTS.md Part 0.
+        # Use LOOP_EXTRACTION_FOCUS (not LCXP_EXTRACTION_FOCUS). See docs/DEPLOYMENT.md (Docker workers section §8) and REGISTRY_AND_WORKFLOW_IMPROVEMENTS.md Part 0.
         extraction_focus = _loop_extraction_focus()
         if extraction_focus == "all" and state.get("run_count", 0) == 0:
             logger.info(
-                "LOOP_EXTRACTION_FOCUS is unset → Growth [all]. For split workers set LOOP_EXTRACTION_FOCUS=frame or =window (see docs/DEPLOYMENT.md Fly.io §8)."
+                "LOOP_EXTRACTION_FOCUS is unset → Growth [all]. For split workers set LOOP_EXTRACTION_FOCUS=frame or =window (see docs/DEPLOYMENT.md Docker workers §8)."
             )
         # static_focus: when frame extraction, grow only color | only sound | both (pure colors vs pure sounds workers)
         static_focus = (os.environ.get("LOOP_STATIC_FOCUS") or "").strip().lower() or "both"

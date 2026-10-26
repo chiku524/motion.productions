@@ -1,5 +1,5 @@
 # Python worker for self-feeding learning loop
-# Fly.io (recommended): use fly.loop-*.toml at repo root — see docs/DEPLOYMENT.md (Fly.io section).
+# Docker Compose: see docker-compose.local.yml and docs/LOCAL_COMPUTE.md.
 # Video loops use automate_loop.py by default; interpretation/sound set WORKER_START_SCRIPT (see docs/DEPLOYMENT.md).
 FROM python:3.11-slim
 

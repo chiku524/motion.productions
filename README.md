@@ -14,9 +14,9 @@ User instruction drives generation; registries supply the named values that prom
 - **Architecture:** [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) — layout, procedural engine, interpreter & learning
 - **Workflows & registries:** [docs/WORKFLOWS_AND_REGISTRIES.md](./docs/WORKFLOWS_AND_REGISTRIES.md) — Pure / Blended / Semantic / Interpretation
 - **Registry reset (primitives → D1):** [docs/REGISTRY_RESET.md](./docs/REGISTRY_RESET.md) — wipe registry tables + `seed_registries_d1.py` (Docker loops paused)
-- **Automation & deployment:** [docs/AUTOMATION.md](./docs/AUTOMATION.md) — automate_loop, **Docker Compose** fleet / Fly contracts (`fly.loop-*.toml`, `video-ai/fly.toml`)
-- **Local compute / Fly from scratch:** [docs/LOCAL_COMPUTE.md](./docs/LOCAL_COMPUTE.md) — Docker Compose on your CPU, tunnel, recreate Fly apps
-- **Deployment:** [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md) — Cloudflare Worker (D1, R2, KV), security, and Fly.io background workers
+- **Automation & deployment:** [docs/AUTOMATION.md](./docs/AUTOMATION.md) — automate_loop, **Docker Compose** fleet fleet
+- **Local compute:** [docs/LOCAL_COMPUTE.md](./docs/LOCAL_COMPUTE.md) — Docker Compose on your CPU, tunnel
+- **Deployment:** [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md) — Cloudflare Worker (D1, R2, KV), security, and Docker background workers
 - **Registry improvements:** [docs/REGISTRY_AND_WORKFLOW_IMPROVEMENTS.md](./docs/REGISTRY_AND_WORKFLOW_IMPROVEMENTS.md)
 - **Brand kit:** [docs/BRAND.md](./docs/BRAND.md)
 
@@ -112,7 +112,7 @@ print(path)  # one output video file
 
 ## Web app
 
-Visit **https://motion.productions** for the library, loop status, and registries browser. Public browser job-create is paused when `MOTION_API_SECRET` is set; authenticated workers create jobs via the API. Pending jobs are fulfilled by `scripts/generate_bridge.py` (local or Fly `motion-loop-webjobs`). See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+Visit **https://motion.productions** for the library, loop status, and registries browser. Public browser job-create is paused when `MOTION_API_SECRET` is set; authenticated workers create jobs via the API. Pending jobs are fulfilled by `scripts/generate_bridge.py` (local or the `webjobs` Compose service). See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ## Project layout
 
@@ -128,7 +128,7 @@ motion.productions/
 │   ├── migrations/              # D1 schema 0000…0021
 │   ├── public/                  # Site, registries UI, /video-ai lab
 │   └── src/                     # index.ts, routes/, videoAiApi.ts
-├── video-ai/                    # Node FFmpeg recipe render (Fly)
+├── video-ai/                    # Node FFmpeg recipe render
 ├── src/                         # Python package (procedural + registries)
 │   ├── pipeline.py              # One prompt → one video
 │   ├── interpretation/          # Prompt → instruction (+ linguistics)
@@ -138,7 +138,7 @@ motion.productions/
 │   ├── audio/, automation/, analysis/, learning/, …
 │   └── cinematography/, depth/, graphics/, lighting/, narrative/
 ├── scripts/                     # Entrypoints (see ARCHITECTURE.md for full list)
-│   ├── worker_start.py          # Fly/Docker dispatcher (WORKER_START_SCRIPT)
+│   ├── worker_start.py          # Docker dispatcher (WORKER_START_SCRIPT)
 │   ├── automate_loop.py         # Learning loops (explorer/exploiter/balanced)
 │   ├── generate_bridge.py       # Pending jobs → generate → upload
 │   ├── interpret_loop.py        # Interpretation registry worker
@@ -146,8 +146,6 @@ motion.productions/
 │   ├── procedural_render_server.py  # HTTP POST /render (engine=procedural)
 │   ├── generate.py              # CLI one-shot generate
 │   └── run_d1_migrations.py, color_sweep.py, registry_*, seed_*, …
-├── fly.loop-*.toml              # Explorer, exploiter, balanced, interpret, sound, webjobs
-├── fly.procedural-render.toml
 ├── docker-compose.local.yml     # Local fleet (see LOCAL_COMPUTE.md)
 ├── Dockerfile                   # Python workers
 └── requirements.txt

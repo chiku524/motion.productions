@@ -1,6 +1,6 @@
 # Deployment
 
-This document covers the **Cloudflare Worker** (API, D1, R2, KV) and **Fly.io** background loop workers (Explorer, Exploiter, Balanced, Interpretation, Sound, **Web jobs**, **Procedural render**).
+This document covers the **Cloudflare Worker** (API, D1, R2, KV) and **Docker** background loop workers (Explorer, Exploiter, Balanced, Interpretation, Sound, **Web jobs**, **Procedural render**).
 
 ## API authentication (MOTION_API_SECRET)
 
@@ -20,24 +20,14 @@ Python workers/scripts read `MOTION_API_SECRET` (or `API_SECRET`) from the envir
 
 When the Worker secret is **unset** (local `wrangler dev`), writes are allowed for DX.
 
-Set the same secret on every Fly app that calls the API:
-
-```bash
-fly secrets set MOTION_API_SECRET=... -a motion-loop-explorer
-fly secrets set MOTION_API_SECRET=... -a motion-loop-exploiter
-fly secrets set MOTION_API_SECRET=... -a motion-loop-balanced
-fly secrets set MOTION_API_SECRET=... -a motion-loop-interpret
-fly secrets set MOTION_API_SECRET=... -a motion-loop-sound
-fly secrets set MOTION_API_SECRET=... -a motion-loop-webjobs
-fly secrets set MOTION_API_SECRET=... -a motion-procedural-render
-```
+Set the same secret for every worker container that calls the API: put `MOTION_API_SECRET` in `.env` (see `.env.example`); `docker-compose.local.yml` passes it to each service.
 
 Also set Worker secrets for Video AI / procedural bridge:
 
 ```bash
 npx wrangler secret put VIDEO_AI_RENDER_URL
 npx wrangler secret put VIDEO_AI_RENDER_SECRET
-npx wrangler secret put PROCEDURAL_RENDER_URL   # e.g. https://motion-procedural-render.fly.dev
+npx wrangler secret put PROCEDURAL_RENDER_URL   # public HTTPS origin (e.g. a tunnel to the procedural-render container)
 ```
 
 ## Ops checklist (free-tier Core 4 + D1)
@@ -296,71 +286,58 @@ The Worker serves `/.well-known/security.txt` and `/security.txt` with `mailto:s
 
 ---
 
-## Fly.io background workers (loop services)
+## Docker background workers (loop services)
 
-**Starting from scratch (apps deleted)?** See **[LOCAL_COMPUTE.md](LOCAL_COMPUTE.md)** — run Docker Compose on your CPU first, then `scripts/fly_bootstrap.sh` and deploys to recreate Fly.
+Run the fleet with Docker Compose — see **[LOCAL_COMPUTE.md](LOCAL_COMPUTE.md)** for setup, profiles, and health checks.
 
 Use this to confirm **Explorer**, **Exploiter**, **Balanced**, **Interpretation**, **Sound**, **Web jobs**, and **Procedural render** are running. The Docker image default CMD is `python scripts/worker_start.py`; which script actually runs is controlled per service by the env var **WORKER_START_SCRIPT** (see below). The three video workflows differ by **prompt choice** (explore / exploit / UI) and **extraction focus** (frame vs window): **2 workers** do per-frame (pure/static) extraction only; **1 worker** does per-window (blended) extraction only. Set **LOOP_EXTRACTION_FOCUS** on each service as below.
 
 ---
 
-## 1. Project layout (Fly.io)
+## 1. Project layout (Docker Compose)
 
-Production setup uses **[Fly Machines](https://fly.io/docs/machines/)** with **one Fly app per worker role** so each machine gets the right **environment** (explore vs exploit vs window, etc.). All apps build the same **`Dockerfile`** at the **repository root** (except Video AI Node render).
+Production setup uses **one Compose service per worker role** (`docker-compose.local.yml`) so each container gets the right **environment** (explore vs exploit vs window, etc.). All Python services build the same **`Dockerfile`** at the **repository root**.
 
-| Fly config (repo root) | Fly `app` name | Role |
-|------------------------|----------------|------|
-| `fly.loop-explorer.toml` | `motion-loop-explorer` | Explorer (frame, 100% explore) |
-| `fly.loop-exploiter.toml` | `motion-loop-exploiter` | Exploiter (frame, 100% exploit) |
-| `fly.loop-balanced.toml` | `motion-loop-balanced` | Balanced (window, UI ratio) |
-| `fly.loop-interpret.toml` | `motion-loop-interpret` | Interpretation worker only |
-| `fly.loop-sound.toml` | `motion-loop-sound` | Sound discovery worker only |
-| `fly.loop-webjobs.toml` | `motion-loop-webjobs` | Pending job bridge (`generate_bridge`) |
-| `fly.procedural-render.toml` | `motion-procedural-render` | HTTP `POST /render` for `engine=procedural` |
-
-**Video AI FFmpeg render** (separate stack) lives under `video-ai/` with **`video-ai/fly.toml`** (e.g. app `motion-productions`) — see `video-ai/README.md`.
-
-**CI:** `.github/workflows/fly-deploy.yml` deploys the matrix (requires `FLY_API_TOKEN`). Manual: **Actions → Deploy Fly apps**.
+| Compose service | Role |
+|-----------------|------|
+| `explorer` | Explorer (frame, 100% explore) |
+| `exploiter` | Exploiter (frame, 100% exploit; `--profile loops-full`) |
+| `balanced` | Balanced (window, UI ratio) |
+| `interpret` | Interpretation worker only |
+| `sound` | Sound discovery worker only |
+| `webjobs` | Pending job bridge (`generate_bridge`) |
+| `procedural-render` | HTTP `POST /render` for `engine=procedural` |
+| `video-ai-render` | Video AI FFmpeg render (Node; `--profile video-ai`, `Dockerfile.video-ai`) — see `video-ai/README.md` |
 
 ### Deploy / update a loop worker
 
-From the **repository root**, with [Fly CLI](https://fly.io/docs/hands-on/install-flyctl/) installed:
+From the **repository root**:
 
 ```bash
-fly auth login
-# First time only (repeat per app name):
-fly apps create motion-loop-explorer
-
-fly deploy --config fly.loop-explorer.toml
-# …repeat for balanced, exploiter, interpret, sound, webjobs, procedural-render as needed
+docker compose -f docker-compose.local.yml --profile free up -d --build
 ```
 
-Each toml sets **`HEALTH_PORT=8080`** so the minimal HTTP health server in the loop process answers Fly **`http_service`** checks on `/` (procedural-render uses `/health`).
+Services expose **`HEALTH_PORT`** so a minimal HTTP health server in the loop process answers on `/` (procedural-render uses `/health`).
 
-**Default container command:** `python scripts/worker_start.py` (from the `Dockerfile`). Video loops leave **`WORKER_START_SCRIPT`** unset so it runs **`automate_loop`**. Interpretation, sound, webjobs, and procedural-render set **`WORKER_START_SCRIPT`** in the toml.
+**Default container command:** `python scripts/worker_start.py` (from the `Dockerfile`). Video loops leave **`WORKER_START_SCRIPT`** unset so it runs **`automate_loop`**. Interpretation, sound, webjobs, and procedural-render set **`WORKER_START_SCRIPT`** in the compose file.
 
 ### Web jobs worker (`generate_bridge`)
 
 Fulfills `GET /api/jobs?status=pending` created by authenticated clients (public browser create is paused).
 
 ```bash
-fly apps create motion-loop-webjobs
-fly secrets set MOTION_API_SECRET=... -a motion-loop-webjobs
-fly deploy --config fly.loop-webjobs.toml
+docker compose -f docker-compose.local.yml up -d --build webjobs
 ```
 
 ### Procedural render (`engine=procedural`)
 
 ```bash
-fly apps create motion-procedural-render
-fly secrets set MOTION_API_SECRET=... -a motion-procedural-render
-fly deploy --config fly.procedural-render.toml
-# Then on Worker:
+docker compose -f docker-compose.local.yml up -d --build procedural-render
+# Then on Worker (public HTTPS origin, e.g. a tunnel):
 npx wrangler secret put PROCEDURAL_RENDER_URL
-# value: https://motion-procedural-render.fly.dev
 ```
 
-**Same repo** for all: root = repo root (not `cloudflare/`). Only **environment variables** (and optional Fly scaling) differ per app.
+**Same repo** for all: root = repo root (not `cloudflare/`). Only **environment variables** differ per service.
 
 **Reconfiguration summary:** Add **LOOP_EXTRACTION_FOCUS** to each of the 3 video services. No new secrets; only env vars below.
 
@@ -573,7 +550,7 @@ HEALTH_PORT=8080
 
 **Prerequisites:** At least one video loop service (Explorer, Exploiter, or Balanced) running; `API_BASE` pointing to your motion.productions instance.
 
-**Fly.io (recommended):** From repo root, `fly apps create motion-loop-interpret` (once), then `fly deploy --config fly.loop-interpret.toml`. Env vars are already in that file.
+**Docker Compose:** `docker compose -f docker-compose.local.yml --profile free up -d --build interpret` (env vars are already set in the compose file).
 
 **Other Docker hosts:**
 
@@ -594,7 +571,7 @@ HEALTH_PORT=8080
 
 **What it does:** Pure (static) sound discovery only — no video. Each cycle: fetch knowledge → generate procedural audio to WAV → extract per-instant sound → grow `static_sound` mesh → POST novel discoveries. Creation workflows then use a wider variety of sounds via for-creation.
 
-**Fly.io (recommended):** `fly apps create motion-loop-sound` (once), then `fly deploy --config fly.loop-sound.toml`.
+**Docker Compose:** `docker compose -f docker-compose.local.yml --profile free up -d --build sound` (env vars are already set in the compose file).
 
 **Other Docker hosts:** **Dockerfile CMD** is `python scripts/worker_start.py`. Set **WORKER_START_SCRIPT=sound_loop** (plus `API_BASE`, optional sound delays, `HEALTH_PORT`).
 
@@ -610,7 +587,7 @@ HEALTH_PORT=8080
 
 ## 8. Verify
 
-1. **Fly / host logs** — `fly logs -a motion-loop-explorer` (etc.); each app should show recent logs (e.g. `[1]`, `[2]`, … for loop; `interpreted:` / `backfill:` for interpretation).
+1. **Container logs** — `docker compose -f docker-compose.local.yml logs -f explorer` (etc.); each service should show recent logs (e.g. `[1]`, `[2]`, … for loop; `interpreted:` / `backfill:` for interpretation).
 2. **motion.productions** — In **Recent videos** and **Recent activity** you should see new runs with **Explore** and **Exploit** badges (for jobs created after the workflow_type deploy).
 3. **API** — `GET https://motion.productions/api/jobs?status=completed&limit=5` — each job should include `workflow_type` when set. `GET /api/knowledge/for-creation` returns `interpretation_prompts` when the interpretation worker has stored results.
 

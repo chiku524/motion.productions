@@ -1,6 +1,6 @@
-# Local compute + Fly bootstrap from scratch
+# Local compute (Docker Compose)
 
-Use this when Fly apps were deleted or you want the same worker contracts on a local CPU. **Current production path (funding):** run the fleet with Docker Compose against `https://motion.productions` (Worker/D1/R2 on Cloudflare). GPU is optional and not required for the procedural/FFmpeg path.
+Run the worker fleet on a local CPU with Docker Compose against `https://motion.productions` (Worker/D1/R2 on Cloudflare). GPU is optional and not required for the procedural/FFmpeg path.
 
 Registry wipe + primitive reseed: **[REGISTRY_RESET.md](REGISTRY_RESET.md)**.
 
@@ -134,88 +134,29 @@ Current engines are **CPU** (procedural numpy/Pillow + FFmpeg). A local GPU does
 
 ---
 
-## 2. Fly.io from scratch (apps were deleted)
+## 2. Wire the Worker to your containers
 
-Recreate apps, set secrets, deploy. Do this from the **repository root** (except Video AI Node, which uses `video-ai/`).
-
-### Prerequisites
-
-- [flyctl](https://fly.io/docs/hands-on/install-flyctl/) installed
-- `fly auth login`
-- Same `MOTION_API_SECRET` as the Worker
-
-### Create apps (once each)
-
-```bash
-fly apps create motion-loop-explorer
-fly apps create motion-loop-exploiter
-fly apps create motion-loop-balanced
-fly apps create motion-loop-interpret
-fly apps create motion-loop-sound
-fly apps create motion-loop-webjobs
-fly apps create motion-procedural-render
-# Video AI Node render (name must match video-ai/fly.toml `app`)
-fly apps create motion-productions
-```
-
-### Set secrets on every Python app
-
-```bash
-SECRET='your-long-secret'   # same as Worker MOTION_API_SECRET
-
-for app in motion-loop-explorer motion-loop-exploiter motion-loop-balanced \
-           motion-loop-interpret motion-loop-sound motion-loop-webjobs \
-           motion-procedural-render; do
-  fly secrets set MOTION_API_SECRET="$SECRET" API_BASE=https://motion.productions -a "$app"
-done
-```
-
-Video AI Node (optional TTS + Worker render key):
-
-```bash
-fly secrets set VIDEO_AI_RENDER_SECRET="$SECRET" -a motion-productions
-# optional: fly secrets set OPENAI_API_KEY=sk-... -a motion-productions
-```
-
-### Deploy
-
-```bash
-fly deploy --config fly.loop-explorer.toml
-fly deploy --config fly.loop-exploiter.toml
-fly deploy --config fly.loop-balanced.toml
-fly deploy --config fly.loop-interpret.toml
-fly deploy --config fly.loop-sound.toml
-fly deploy --config fly.loop-webjobs.toml
-fly deploy --config fly.procedural-render.toml
-
-cd video-ai && fly deploy && cd ..
-```
-
-Or use GitHub Actions **Deploy Fly apps** after adding repo secret `FLY_API_TOKEN`.
-
-### Wire Worker → Fly origins
+Set the Worker secrets so it can reach the local render services (via public HTTPS tunnel origins, see above):
 
 ```bash
 cd cloudflare
-printf '%s' 'https://motion-procedural-render.fly.dev' | npx wrangler secret put PROCEDURAL_RENDER_URL
-printf '%s' 'https://motion-productions.fly.dev' | npx wrangler secret put VIDEO_AI_RENDER_URL
+printf '%s' 'https://YOUR-PROCEDURAL-TUNNEL' | npx wrangler secret put PROCEDURAL_RENDER_URL
+printf '%s' 'https://YOUR-VIDEO-AI-TUNNEL' | npx wrangler secret put VIDEO_AI_RENDER_URL
 printf '%s' 'your-long-secret' | npx wrangler secret put VIDEO_AI_RENDER_SECRET
 printf '%s' 'your-long-secret' | npx wrangler secret put MOTION_API_SECRET
 ```
-
-Confirm hostnames with `fly status -a motion-procedural-render` / `fly apps list` if the default `*.fly.dev` name differs.
 
 ### Verify
 
 ```bash
 curl -s https://motion.productions/api/health
-curl -s https://motion-procedural-render.fly.dev/health
+curl -s http://127.0.0.1:8082/health   # procedural-render
 # Authenticated job create (example):
 curl -s -X POST https://motion.productions/api/jobs \
   -H "Authorization: Bearer $SECRET" \
   -H "Content-Type: application/json" \
   -d '{"prompt":"ocean dusk, calm","duration_seconds":3}'
-# webjobs / Fly webjobs should pick it up; poll GET /api/jobs/:id
+# webjobs should pick it up; poll GET /api/jobs/:id
 ```
 
 ### Ops checklist (free-tier)
@@ -230,10 +171,9 @@ curl -s -X POST https://motion.productions/api/jobs \
 
 ## 3. Recommended path right now
 
-1. **Local Compose** for webjobs + procedural-render (fast iteration, no Fly bill while rebuilding).
+1. **Local Compose** for webjobs + procedural-render (fast iteration).
 2. Deploy **Cloudflare Worker** with `MOTION_API_SECRET` (Free plan is fine for Core 4).
 3. Turn on learning loops: `docker compose -f docker-compose.local.yml --profile free up -d --build`.
 4. Only add `--profile loops-full` (exploiter) when 500/503s stay rare.
-5. Optional later: recreate Fly apps; point `PROCEDURAL_RENDER_URL` / `VIDEO_AI_RENDER_URL` at Fly instead of a tunnel.
 
 See also: [DEPLOYMENT.md](DEPLOYMENT.md), [AUTOMATION.md](AUTOMATION.md), [video-ai/README.md](../video-ai/README.md).

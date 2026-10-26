@@ -2,7 +2,7 @@
 
 Controlled wipe + reseed so every registry starts from **known primitives**, then Docker loops grow named discoveries. Jobs and R2 videos are preserved.
 
-**Compute note:** Loop workers run via **Docker Compose** on your machine (`docker-compose.local.yml`) — same contracts as Fly, not paid Fly machines. Cloudflare still hosts the Worker + D1/R2/KV.
+**Compute note:** Loop workers run via **Docker Compose** on your machine (`docker-compose.local.yml`). Cloudflare still hosts the Worker + D1/R2/KV.
 
 ---
 

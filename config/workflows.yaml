@@ -1,4 +1,4 @@
-# Multi-workflow configurations for Fly.io workers / local Docker
+# Multi-workflow configurations for Docker workers
 # Copy env vars per service when creating multiple workers.
 #
 # §2.6 Parallel workers: Run Explorer and Exploiter together so completion (coverage) and quality

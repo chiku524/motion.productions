@@ -18,9 +18,9 @@ Long-term consolidation: keep one recipe schema; route `engine` to the appropria
 | **Cloudflare Worker** (`src/worker` + main `cloudflare/src/videoAiApi.ts`) | HTTP API: `POST /video-ai/api/plan`, `POST /video-ai/api/render` (recipe or procedural proxy), optional async jobs for recipe engine |
 | **Shared schema + planner** (`src/schema`, `src/planner`) | Zod-validated `VideoRecipe` (`meta.engine`, `meta.prompt`), OpenAI JSON planner, offline fallback |
 | **Node render service** (`src/render`) | FFmpeg: solid-color scenes, optional captions, optional **OpenAI TTS narration** + **HTTPS background music** URL |
-| **Procedural render** (`scripts/procedural_render_server.py`, `fly.procedural-render.toml`) | `POST /render` → MP4 via Python procedural pipeline |
+| **Procedural render** (`scripts/procedural_render_server.py`, `procedural-render` Compose service) | `POST /render` -> MP4 via Python procedural pipeline |
 
-**Why split Worker vs Node/Python?** Workers are the right place for auth, planning, and orchestration. FFmpeg and procedural generation need long CPU-bound processes on Fly.
+**Why split Worker vs Node/Python?** Workers are the right place for auth, planning, and orchestration. FFmpeg and procedural generation need long CPU-bound processes in Docker containers.
 
 ## Prerequisites
 
@@ -76,9 +76,9 @@ Override caption font:
 set VIDEO_AI_FONT=C:\Windows\Fonts\arial.ttf
 ```
 
-## Deploy render service (Fly.io primary)
+## Deploy render service (Docker)
 
-The **render** app is the Docker image in this folder (`Dockerfile`): Node + FFmpeg + `POST /render`. It must be reachable over **HTTPS** so the motion.productions Worker can set `VIDEO_AI_RENDER_URL` to its **origin only** (no path), e.g. `https://motion-productions.fly.dev`.
+The **render** app is the Docker image in this folder (`Dockerfile`): Node + FFmpeg + `POST /render`. It must be reachable over **HTTPS** so the motion.productions Worker can set `VIDEO_AI_RENDER_URL` to its **origin only** (no path), e.g. `https://YOUR-RENDER-HOST`.
 
 **Env vars on the host**
 
@@ -86,7 +86,7 @@ The **render** app is the Docker image in this folder (`Dockerfile`): Node + FFm
 |----------|----------|--------|
 | `VIDEO_AI_RENDER_SECRET` | Recommended | Same value as Worker secret `VIDEO_AI_RENDER_SECRET`; Worker sends it as header `X-Video-AI-Key`. |
 | `OPENAI_API_KEY` | For TTS only | Set on the **render** host if recipes use `meta.audio.narration` (OpenAI `tts-1`). Never commit keys. |
-| `PORT` | Auto | Fly sets this to match `fly.toml` `internal_port`; other hosts may inject `PORT` too. The server reads `PORT` first. |
+| `PORT` | Auto | Defaults to 8080 in the image; hosts may inject `PORT`. The server reads `PORT` first. |
 | `VIDEO_AI_FONT` | Optional | Path to a `.ttf` inside the container if `drawtext` cannot find a font. |
 
 ### Audio in the recipe (`meta.audio`)
@@ -108,35 +108,15 @@ Use **HTTPS** URL with **no trailing slash**.
 
 To build from the repository root (same image as `video-ai/Dockerfile`), use **`Dockerfile.video-ai`** at the repo root as the Dockerfile path and set **`VIDEO_AI_RENDER_SECRET`** (and optional **`OPENAI_API_KEY`**) on the service. Verify: `curl -sS https://YOUR-HOST/health`.
 
-### Fly.io
+### Docker Compose (local)
 
-1. Install the [Fly CLI](https://fly.io/docs/hands-on/install-flyctl/) and run `fly auth login`.
-2. The repo ships **`video-ai/fly.toml`** for app **`motion-productions`** (HTTP service on **8080**, health **`GET /health`**). From the **`video-ai`** directory (Docker build context must be this folder):
+From the repository root, the `video-ai-render` service builds `Dockerfile.video-ai` and listens on **8788** on the host (HTTP service on **8080** in the container, health **`GET /health`**):
 
-   ```bash
-   cd video-ai
-   fly deploy
-   ```
+```bash
+docker compose -f docker-compose.local.yml --profile video-ai up -d --build
+```
 
-   If you created the Fly app in the dashboard with a **different** name, either rename the app in Fly or set `app = "your-name"` in `fly.toml` before deploying.
-
-   New app from CLI (only if you do not already have one):
-
-   ```bash
-   cd video-ai
-   fly launch --no-deploy --copy-config
-   fly deploy
-   ```
-
-3. **Secrets** (match Cloudflare Worker `VIDEO_AI_RENDER_SECRET`):
-
-   ```bash
-   cd video-ai
-   fly secrets set VIDEO_AI_RENDER_SECRET=your-secret-here
-   ```
-
-4. After deploy, the default URL is **`https://motion-productions.fly.dev`** (or `https://<app>.fly.dev` if you changed `app`). Fly sets **`PORT`** to match `internal_port` (8080).
-5. Set Worker `VIDEO_AI_RENDER_URL` to that HTTPS origin (no trailing slash).
+Set `VIDEO_AI_RENDER_SECRET` (and optional `OPENAI_API_KEY`) in `.env` first. The Worker cannot reach `localhost`, so expose the service over a public HTTPS tunnel (see [../docs/LOCAL_COMPUTE.md](../docs/LOCAL_COMPUTE.md)) and set Worker `VIDEO_AI_RENDER_URL` to that HTTPS origin (no trailing slash).
 
 **Health check:** `GET https://YOUR-HOST/health` should return `{ "ok": true, "service": "video-ai-render" }`.
 

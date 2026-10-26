@@ -24,7 +24,7 @@ _API_HEADERS = {
 
 
 def _auth_headers() -> dict[str, str]:
-    """Attach API secret when configured (Fly workers / local scripts)."""
+    """Attach API secret when configured (Docker workers / local scripts)."""
     secret = (os.environ.get("MOTION_API_SECRET") or os.environ.get("API_SECRET") or "").strip()
     if not secret:
         return {}

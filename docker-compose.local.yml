@@ -1,4 +1,4 @@
-# Local compute fleet — same Docker image / contracts as Fly, on your CPU.
+# Local compute fleet — Docker image fleet on your CPU.
 #
 # Quick start (from repo root):
 #   cp .env.example .env          # set MOTION_API_SECRET
@@ -16,7 +16,7 @@
 # Video AI Node FFmpeg (recipe engine):
 #   docker compose -f docker-compose.local.yml --profile video-ai up -d --build
 #
-# See docs/LOCAL_COMPUTE.md for tunnels, Fly bootstrap from scratch, and GPU notes.
+# See docs/LOCAL_COMPUTE.md for tunnels and GPU notes.
 
 name: motion-local
 

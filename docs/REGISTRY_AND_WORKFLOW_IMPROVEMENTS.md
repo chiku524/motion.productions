@@ -28,7 +28,7 @@
 
 | Action | How |
 |--------|-----|
-| **Monitor extraction focus** | Use **`LOOP_EXTRACTION_FOCUS`** (not `LCXP_EXTRACTION_FOCUS`) on each worker. See **[DEPLOYMENT.md](DEPLOYMENT.md)** (Fly.io section) §8 and Part I below. |
+| **Monitor extraction focus** | Use **`LOOP_EXTRACTION_FOCUS`** (not `LCXP_EXTRACTION_FOCUS`) on each worker. See **[DEPLOYMENT.md](DEPLOYMENT.md)** (Docker workers section) §8 and Part I below. |
 | **Verify logs** | Explorer/Exploiter (frame): expect `Growth [frame]`. Balanced (window): expect `Growth [window]`. Wrong or unset env → `Growth [all]`. |
 | **Eliminate missing learning/discovery** | Investigate every `Missing discovery (job_id=...)` and `Missing learning (job_id=...)` in logs; fix POST/sync so successful runs always contribute. |
 | **Backfill propagation** | Backfill scripts replace gibberish names with semantic ones; **cascade** must propagate new names to prompts, **sources_json**, and **blend JSON** so no reference to the old name remains. |
@@ -109,7 +109,7 @@ Interpret worker: queue, backfill, generation, linguistic growth (logs: `[cycle]
 
 **Five key areas:** Registry completeness (LOOP_EXTRACTION_FOCUS, backfill); Creation phase (pure-per-frame, data-driven); Sound discovery (sound_loop); Interpretation & linguistic; Code quality (tests, REGISTRY_FOUNDATION alignment).
 
-**Configuration:** Use **`LOOP_EXTRACTION_FOCUS`** (not `LCXP_EXTRACTION_FOCUS`): `frame` for Explorer/Exploiter, `window` for Balanced. See [DEPLOYMENT.md](DEPLOYMENT.md) (Fly.io section). Logging: `Growth [frame]`, `Growth [window]`, `Missing learning (job_id=...)`, `Missing discovery (job_id=...)`.
+**Configuration:** Use **`LOOP_EXTRACTION_FOCUS`** (not `LCXP_EXTRACTION_FOCUS`): `frame` for Explorer/Exploiter, `window` for Balanced. See [DEPLOYMENT.md](DEPLOYMENT.md) (Docker workers section). Logging: `Growth [frame]`, `Growth [window]`, `Missing learning (job_id=...)`, `Missing discovery (job_id=...)`.
 
 ## Export review: sparse categories
 
@@ -373,7 +373,7 @@ Ensures interpretation registry is filled; main loop uses interpretation_prompts
 - **REGISTRY_FOUNDATION.md** — Authoritative foundation
 - **WORKFLOWS_AND_REGISTRIES.md** — Full picture
 - **Part 0** (above) — Mission & strategic operations
-- **DEPLOYMENT.md** — Cloudflare Worker + Fly.io background workers
+- **DEPLOYMENT.md** — Cloudflare Worker + Docker background workers
 - **PRECISION_VERIFICATION_CHECKLIST.md** — Operator verification
 - **ALGORITHMS_AND_FUNCTIONS_AUDIT.md** — Audit of extraction/growth
 - **scripts/backfill_registry_names.py**, **scripts/color_sweep.py**, **scripts/registry_export_analysis.py**

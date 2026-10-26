@@ -10,7 +10,7 @@ Use this checklist to verify that workflows and registries align with the **refi
 
 | Check | How |
 |-------|-----|
-| **Env set correctly** | On each worker: Explorer and Exploiter have `LOOP_EXTRACTION_FOCUS=frame`; Balanced has `LOOP_EXTRACTION_FOCUS=window`. Exact name is **LOOP_EXTRACTION_FOCUS** (not LCXP). Copy from **[DEPLOYMENT.md](DEPLOYMENT.md)** (Fly.io section). |
+| **Env set correctly** | On each worker: Explorer and Exploiter have `LOOP_EXTRACTION_FOCUS=frame`; Balanced has `LOOP_EXTRACTION_FOCUS=window`. Exact name is **LOOP_EXTRACTION_FOCUS** (not LCXP). Copy from **[DEPLOYMENT.md](DEPLOYMENT.md)** (Docker workers section). |
 | **Logs: frame workers** | In Explorer/Exploiter logs you should see **`Growth [frame]`** (and static counts). You should **not** see `Growth [all]` on those services if the variable is set. |
 | **Logs: window worker** | In Balanced logs you should see **`Growth [window]`** (and dynamic/narrative counts). You should **not** see `Growth [all]` on that service if the variable is set. |
 | **First-run reminder** | If the variable is **unset**, the first run of automate_loop logs: *"LOOP_EXTRACTION_FOCUS is unset → Growth [all]. For split workers set ..."*. Use that to catch misconfiguration. |
