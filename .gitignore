@@ -56,3 +56,6 @@ json registry exports/*.json
 # Ad hoc CLI scratch output at repo root (color sweeps, coverage snapshots, etc.)
 /*.log
 /cov*.json
+
+# Content-novelty fingerprints + tiny thumbnails (bounded rolling store)
+/data/novelty/

@@ -350,6 +350,14 @@ def run() -> None:
 
     state = _load_state(args.api_base)
 
+    novelty_store = None
+    try:
+        from src.knowledge.content_novelty import NoveltyStore, default_store_dir, novelty_enabled
+        if novelty_enabled():
+            novelty_store = NoveltyStore(default_store_dir())
+    except Exception as e:
+        logger.warning("Content novelty gate disabled: %s", e)
+
     # Per-worker offset: stagger startup so multiple workers don't hit D1 simultaneously
     worker_offset = 0
     try:
@@ -449,6 +457,7 @@ def run() -> None:
         run_succeeded = False
         growth_ran = False
         rendered_path: Path | None = None
+        gate = None
         try:
             run_seed = (state["run_count"] + 1) * 7919 + (hash(job_id) % 1_000_000)
             run_config = dict(config)
@@ -457,14 +466,27 @@ def run() -> None:
                 render_cfg["engine"] = "photoreal"
                 render_cfg["film_look"] = True
                 run_config["render"] = render_cfg
-            path = generate_full_video(
-                prompt,
-                duration,
-                generator=generator,
-                output_path=out_path,
-                seed=run_seed,
-                config=run_config,
-            )
+            def _render(seed_value: int, _prompt=prompt, _duration=duration, _cfg=run_config):
+                return generate_full_video(
+                    _prompt,
+                    _duration,
+                    generator=generator,
+                    output_path=out_path,
+                    seed=seed_value,
+                    config=_cfg,
+                )
+
+            gate = None
+            if novelty_store is not None:
+                # Content-level gate: fingerprint the clip (frame hash, palette, audio
+                # spectrum) and re-roll the seed when it is too close to a recent clip.
+                from src.knowledge.content_novelty import render_until_novel
+                gate = render_until_novel(_render, novelty_store, seed=run_seed)
+                path, run_seed = gate.path, gate.seed
+                if gate.attempts > 1:
+                    print(f"[novelty x{gate.attempts}] ", end="", flush=True)
+            else:
+                path = _render(run_seed)
             rendered_path = Path(path)
 
             with open(path, "rb") as f:
@@ -679,7 +701,16 @@ def run() -> None:
                 growth_added=added,
                 render_engine=getattr(spec, "render_engine", None),
                 worker=workflow_type,
+                content_novel=(gate.content_novel if gate is not None else None),
+                require_content_novelty=novelty_store is not None,
+                content_check=(gate.verdict.to_dict() if gate is not None else None),
             )
+            if gate is not None and novelty_store is not None:
+                from src.knowledge.content_novelty import record_result
+                try:
+                    record_result(novelty_store, gate, entry_id=str(job_id), prompt=prompt)
+                except Exception as e:
+                    logger.warning("Novelty store update failed: %s", e)
             state["last_authenticity"] = authenticity
             if authenticity["authentic"]:
                 logger.info(
@@ -691,10 +722,11 @@ def run() -> None:
                 )
             else:
                 logger.warning(
-                    "Inauthentic iteration [%s]: source=%s novel_prompt=%s knowledge=%s growth_ran=%s photoreal_bound=%s",
+                    "Inauthentic iteration [%s]: source=%s novel_prompt=%s content_novel=%s knowledge=%s growth_ran=%s photoreal_bound=%s",
                     workflow_type,
                     authenticity["source"],
                     authenticity["novel_prompt"],
+                    authenticity["content_novel"],
                     authenticity["knowledge_used"],
                     authenticity["growth_ran"],
                     authenticity["photoreal_bound"],

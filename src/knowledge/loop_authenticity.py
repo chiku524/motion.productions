@@ -54,11 +54,18 @@ def evaluate_iteration(
     growth_added: dict[str, Any] | None = None,
     render_engine: str | None = None,
     worker: str = "video",
+    content_novel: bool | None = None,
+    require_content_novelty: bool = False,
+    content_check: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     Return a structured authenticity record.
 
     authentic is True only when the iteration did real work for its slice.
+    When ``require_content_novelty`` is set (rendered-video loops), the clip's
+    content fingerprint (frame hash + palette + audio spectrum) must also have
+    been checked and found far from recent clips: ``content_novel`` must be True.
+    A different prompt string alone no longer counts as authentic.
     novel_rows may be 0 (already-known values) — that is still authentic if
     growth ran; it is not a new registry row.
     """
@@ -77,9 +84,12 @@ def evaluate_iteration(
     needs_photoreal = src in PHOTOREAL_SOURCES
     photoreal_bound = (not needs_photoreal) or engine in ("photoreal", "enhanced", "realistic")
 
+    content_ok = (not require_content_novelty) or (content_novel is True)
+
     authentic = (
         src in AUTHENTIC_SOURCES
         and novel
+        and content_ok
         and knowledge_used
         and growth_ran
         and photoreal_bound
@@ -93,6 +103,9 @@ def evaluate_iteration(
         "growth_ran": growth_ran,
         "novel_rows": novel_rows,
         "photoreal_bound": photoreal_bound,
+        "content_novel": content_novel,
+        "content_checked": content_novel is not None,
+        "content_check": content_check,
         "needs_photoreal": needs_photoreal,
         "render_engine": engine or None,
     }
