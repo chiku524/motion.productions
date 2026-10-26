@@ -265,16 +265,10 @@ def _tone_to_freq_db(tone: str, amplitude: float) -> tuple[float, float]:
 
 
 def _primitive_from_entry(entry: dict) -> str:
-    from ..knowledge.blend_depth import SOUND_ORIGIN_PRIMITIVES, _TONE_TO_NOISE
+    """Resolve a registry sound to an origin primitive (diversity-aware; see pairing.entry_primitive)."""
+    from .pairing import entry_primitive
 
-    name = str(entry.get("name") or "").strip().lower()
-    timbre = str(entry.get("timbre") or "").strip().lower()
-    tone = str(entry.get("tone") or "").strip().lower()
-    blob = f"{name} {timbre}"
-    for prim in SOUND_ORIGIN_PRIMITIVES:
-        if prim != "silence" and prim in blob:
-            return prim
-    return _TONE_TO_NOISE.get(tone, "tone")
+    return entry_primitive(entry)
 
 
 def _primitive_texture_legacy(
