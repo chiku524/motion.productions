@@ -67,3 +67,8 @@ For **every clip** (user prompt or loop): the renderer changes pixel colors; it 
 | Extract | `extractor_per_instance.py` | Measured motion is still frame-to-frame color difference — the same primitive, observed rather than authored. |
 
 `motion_sync`: **0** = each pixel’s color changes on its own (flicker). **1** = pixels in a mass change together (object / motion).
+
+## Camera variation (opt-in)
+
+Set `LOOP_CAMERA_VARIATION=1` (default off) to give each pairing field a seeded camera move (pan, tilt, zoom, zoom_out, rotate, arc, or occasionally static). The builder draws it from `creation_seed` and marks `instance.camera_variation`; the renderer then applies it to the field coordinates (`src/procedural/camera_variation.py`). Amplitudes are visible within a one-second clip. Still-frame clips stay static. With the flag off, fields keep the legacy static camera.
+

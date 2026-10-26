@@ -1167,6 +1167,12 @@ def render_frame(
     # Pairing field: motion is pixel color-change, not camera catalog motion.
     if not (creation_mode == "pure_per_frame" and pure_colors):
         xx, yy = _apply_camera_transform(xx, yy, zoom, pan_x, pan_y, rotate)
+    elif camera_motion != "static" and instance.get("camera_variation"):
+        # Opt-in seeded camera move on the field (LOOP_CAMERA_VARIATION; set by the builder).
+        from .camera_variation import field_camera_params
+
+        f_zoom, f_pan_x, f_pan_y, f_rot = field_camera_params(camera_motion, t_motion, seed)
+        xx, yy = _apply_camera_transform(xx, yy, f_zoom, f_pan_x, f_pan_y, f_rot)
 
     if creation_mode == "pure_per_frame" and pure_colors:
         ml = float(getattr(spec, "motion_level", None) or 1.0)

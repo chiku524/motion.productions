@@ -379,8 +379,15 @@ def build_spec_from_instruction(
         motion_level = _level_from_motion_label(motion)
     # Pairing clips: motion = pixel color-change; sync = how locked neighboring pixels are.
     motion_sync: float | None = None
+    camera_varied = False
     if wants_pairing:
         camera = "static"
+        # Opt-in (LOOP_CAMERA_VARIATION): a seeded camera move on the pixel field.
+        from ..procedural.camera_variation import camera_variation_enabled, pick_field_camera
+
+        if camera_variation_enabled():
+            camera = pick_field_camera(creation_seed)
+            camera_varied = camera != "static"
         if not window_pairing and not static_frame_pairing and not explicit_pairing:
             # No targeting phrase: still field when motion is low, rematch when it is not.
             if float(motion_level or 0) >= 8.0:
@@ -702,6 +709,10 @@ def build_spec_from_instruction(
         **(instance or {}),
         "discovery_values": discovery_values,
     }
+    if camera_varied and static_frame_pairing:
+        camera, camera_varied = "static", False  # a still-frame clip stays framed
+    if camera_varied:
+        instance["camera_variation"] = True
 
     spec = SceneSpec(
         palette_name=palette,
