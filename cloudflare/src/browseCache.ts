@@ -6,12 +6,14 @@ import type { Env } from "./env";
 export const BROWSE_COLORS_CACHE_KEY = "registries:browse:static_colors:v1";
 export const BROWSE_COLOR_FACETS_KEY = "registries:browse:facets:static_colors:v1";
 export const BROWSE_SOUND_CACHE_KEY = "registries:browse:static_sound:v1";
+export const MISSION_STATS_KEY = "registries:mission:stats:v2";
 export const FOR_CREATION_GEN_KEY = "knowledge:for-creation:gen";
 
 const BROWSE_KEYS = [
   BROWSE_COLORS_CACHE_KEY,
   BROWSE_COLOR_FACETS_KEY,
   BROWSE_SOUND_CACHE_KEY,
+  MISSION_STATS_KEY,
 ] as const;
 
 /** Drop browse list/facet caches so the next GET rebuilds from D1. */

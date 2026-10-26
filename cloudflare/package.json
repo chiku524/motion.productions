@@ -8,7 +8,8 @@
     "db:migrate": "wrangler d1 migrations apply motion-productions-db --remote",
     "db:migrate:local": "wrangler d1 migrations apply motion-productions-db --local",
     "gen:color-primaries": "python ../scripts/gen_color_primaries_ts.py",
-    "cf-typegen": "wrangler types"
+    "cf-typegen": "wrangler types",
+    "test": "node --test test/missionAggregate.test.mjs"
   },
   "dependencies": {
     "zod": "^3.24.2"

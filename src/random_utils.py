@@ -25,6 +25,28 @@ def fresh_seed() -> int:
     return secrets.randbits(31)
 
 
+def weighted_choice(items, weights, rng=None):
+    """Pick one item with probability proportional to ``weights`` (non-negative).
+
+    ``rng`` may be any object with ``random()`` (e.g. ``random.Random(1)``) for deterministic
+    tests; by default the OS CSPRNG is used. Falls back to a uniform pick if all weights are 0.
+    """
+    items = list(items)
+    if not items:
+        return None
+    ws = [max(0.0, float(w)) for w in weights]
+    total = sum(ws)
+    r = (rng.random() if rng is not None else secrets.SystemRandom().random())
+    if total <= 0:
+        return items[min(int(r * len(items)), len(items) - 1)]
+    r *= total
+    for item, w in zip(items, ws):
+        r -= w
+        if r < 0:
+            return item
+    return items[-1]
+
+
 def weighted_choice_favor_underused(
     items: list[T],
     get_count: Callable[[T], int],

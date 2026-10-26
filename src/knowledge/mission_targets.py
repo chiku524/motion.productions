@@ -46,20 +46,41 @@ def fetch_mission(api_base: str) -> dict[str, Any] | None:
         return None
 
 
-def underfilled_color_families(mission: dict[str, Any] | None, *, max_n: int = 4) -> list[str]:
-    """Families with lowest counts (including missing)."""
+def color_family_counts(mission: dict[str, Any] | None) -> dict[str, int]:
+    """Count per hue family for EVERY known family.
+
+    Families absent from the mission payload (older Workers dropped zero-count families, which is
+    how white was never targeted) are treated as empty (count 0).
+    """
+    counts = {fid: 0 for fid in FAMILY_SUBJECTS}
     if not mission:
+        return counts
+    for f in (mission.get("colors") or {}).get("families") or []:
+        fid = str(f.get("id") or "")
+        if fid:
+            counts[fid] = int(f.get("count") or 0)
+    return counts
+
+
+def underfilled_color_families(mission: dict[str, Any] | None, *, max_n: int = 4) -> list[str]:
+    """Families ranked emptiest first (missing families count as 0). Deterministic ranking."""
+    if not mission or not ((mission.get("colors") or {}).get("families")):
         return list(FAMILY_SUBJECTS.keys())[:max_n]
-    families = (mission.get("colors") or {}).get("families") or []
-    if not families:
-        return list(FAMILY_SUBJECTS.keys())[:max_n]
-    ranked = sorted(
-        families,
-        key=lambda f: (int(f.get("count") or 0), str(f.get("id") or "")),
-    )
-    ids = [str(f.get("id")) for f in ranked if f.get("id")]
-    # Prefer empty/low first
-    return ids[:max_n] if ids else list(FAMILY_SUBJECTS.keys())[:max_n]
+    counts = color_family_counts(mission)
+    ranked = sorted(counts, key=lambda fid: (counts[fid], fid))
+    return ranked[:max_n]
+
+
+def underfill_weights(counts: dict[str, int], *, floor: float = 0.02) -> dict[str, float]:
+    """Selection weight per key, decreasing smoothly with how filled it already is.
+
+    weight = 1 / (1 + count/scale)^2 with scale = max(1, mean count), so an empty key weighs 1.0,
+    a key at the mean ~0.25 and a key 10x the mean ~0.01 (floored so nothing is ever impossible).
+    """
+    if not counts:
+        return {}
+    scale = max(1.0, sum(counts.values()) / len(counts))
+    return {k: max(floor, 1.0 / (1.0 + max(0, c) / scale) ** 2) for k, c in counts.items()}
 
 
 def missing_sound_origins(mission: dict[str, Any] | None) -> list[str]:
@@ -70,22 +91,40 @@ def missing_sound_origins(mission: dict[str, Any] | None) -> list[str]:
     return missing
 
 
-def pick_target_color_family(api_base: str = "", mission: dict[str, Any] | None = None) -> str | None:
-    from ..random_utils import secure_choice
-
-    m = mission if mission is not None else fetch_mission(api_base)
-    under = underfilled_color_families(m, max_n=5)
-    return secure_choice(under) if under else None
-
-
-def pick_target_sound_origin(api_base: str = "", mission: dict[str, Any] | None = None) -> str | None:
-    from ..random_utils import secure_choice
+def sound_origin_counts(mission: dict[str, Any] | None) -> dict[str, int]:
+    """Rows touching each sound primitive; falls back to present/absent (1/0) on older Workers."""
     from .blend_depth import SOUND_ORIGIN_PRIMITIVES
 
+    sound = (mission or {}).get("sound") or {}
+    raw = sound.get("origin_counts")
+    if isinstance(raw, dict) and raw:
+        return {p: int(raw.get(p) or 0) for p in SOUND_ORIGIN_PRIMITIVES}
+    present = set(sound.get("origins_present") or [])
+    return {p: (1 if p in present else 0) for p in SOUND_ORIGIN_PRIMITIVES}
+
+
+def pick_target_color_family(
+    api_base: str = "", mission: dict[str, Any] | None = None, rng: Any = None
+) -> str | None:
+    """Weighted-random hue family: emptier families are likelier, but all can be drawn."""
+    from ..random_utils import weighted_choice
+
     m = mission if mission is not None else fetch_mission(api_base)
-    missing = missing_sound_origins(m)
-    pool = [p for p in missing if p != "silence"] or [p for p in SOUND_ORIGIN_PRIMITIVES if p != "silence"]
-    return secure_choice(pool) if pool else None
+    weights = underfill_weights(color_family_counts(m))
+    return weighted_choice(list(weights), list(weights.values()), rng)
+
+
+def pick_target_sound_origin(
+    api_base: str = "", mission: dict[str, Any] | None = None, rng: Any = None
+) -> str | None:
+    """Lead sound drawn from ALL primitives, weighted by underfill (silence heavily damped)."""
+    from ..random_utils import weighted_choice
+
+    m = mission if mission is not None else fetch_mission(api_base)
+    weights = underfill_weights(sound_origin_counts(m))
+    if "silence" in weights:
+        weights["silence"] *= 0.15  # a silent lead is rarely a useful sound discovery
+    return weighted_choice(list(weights), list(weights.values()), rng)
 
 
 def color_family_prompt_bits(family: str, shade: str | None = None) -> tuple[str, str]:

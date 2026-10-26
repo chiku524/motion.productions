@@ -20,6 +20,7 @@ import {
   BROWSE_SOUND_CACHE_KEY,
 } from "../browseCache";
 import { SOUND_ORIGIN_PRIMARIES } from "../naming";
+import { loadMissionStats } from "../missionStats";
 
 // Free-tier D1: keep ORDER BY count scans small; serve from KV when warm.
 // Explorer UI shows registry_total (true COUNT/KV) separately from this sample.
@@ -706,17 +707,13 @@ const VALID_KINDS = new Set([
   "dynamic",
 ]);
 
-async function browseMission(env: Env): Promise<Response> {
-  const colors = await loadClassifiedColors(env);
-  const sounds = await loadSoundRows(env);
-  const colorFacets = buildColorFacets(colors, null);
+async function browseMission(env: Env, fresh = false): Promise<Response> {
+  // Whole-table GROUP BY stats (NOT the 800 most-seen rows) so rare families/origins are visible.
+  const stats = await loadMissionStats(env, fresh);
+  const colorFacets = { families: stats.colors.families, shades: stats.colors.shades };
   const familiesFilled = colorFacets.families.filter((f) => f.count > 0).length;
   const familiesTotal = COLOR_FAMILY_META.length;
-  const originSet = new Set<string>([...SOUND_ORIGIN_PRIMARIES]);
-  const soundOriginsPresent = new Set<string>();
-  for (const s of sounds) {
-    if (originSet.has(s.origin)) soundOriginsPresent.add(s.origin);
-  }
+  const soundOriginsPresent = new Set<string>(stats.sound.origins_present);
   const db = getDb(env);
   let narrativeAspects = 0;
   let narrativeTotal = 7;
@@ -742,7 +739,7 @@ async function browseMission(env: Env): Promise<Response> {
   return json({
     findability_pct: findability,
     colors: {
-      total: colors.length,
+      total: stats.colors.total,
       families_filled: familiesFilled,
       families_total: familiesTotal,
       families: colorFacets.families,
@@ -750,7 +747,8 @@ async function browseMission(env: Env): Promise<Response> {
       shades_total: COLOR_SHADE_META.length,
     },
     sound: {
-      total: sounds.length,
+      total: stats.sound.total,
+      origin_counts: stats.sound.origin_counts,
       origins_filled: soundOriginsPresent.size,
       origins_total: SOUND_ORIGIN_PRIMARIES.length,
       origins_present: [...soundOriginsPresent].sort(),
@@ -759,6 +757,8 @@ async function browseMission(env: Env): Promise<Response> {
       aspects_filled: narrativeAspects,
       aspects_total: narrativeTotal,
     },
+    scan: stats.scan,
+    updated_at: stats.updated_at,
     hint:
       findability >= 80
         ? "Explorer findability looks strong — humans can drill most color families and sound origins."
@@ -773,7 +773,7 @@ export async function handleRegistryBrowse(
 ): Promise<Response | null> {
   if (path === "/api/registries/mission" && request.method === "GET") {
     try {
-      return await browseMission(env);
+      return await browseMission(env, new URL(request.url).searchParams.get("fresh") === "1");
     } catch (e) {
       console.error("GET /api/registries/mission failed:", e);
       return json({ error: "Mission metrics failed", details: String(e) }, 500);

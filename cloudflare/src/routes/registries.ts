@@ -38,6 +38,7 @@ import {
 } from "../naming";
 import { handleRegistryBrowse } from "./registryBrowse";
 import { invalidateRegistryReadCaches } from "../browseCache";
+import { loadMissionStats } from "../missionStats";
 
 const SOUND_PRIMARIES_FOR_COVERAGE = [...SOUND_ORIGIN_PRIMARIES] as string[];
 
@@ -511,21 +512,10 @@ if (path === "/api/registries/coverage" && request.method === "GET") {
   }
 
   try {
-    const rows = await db.prepare("SELECT depth_breakdown_json FROM static_sound LIMIT 200")
-      .all<{ depth_breakdown_json: string | null }>();
-    for (const r of rows.results || []) {
-      if (!r.depth_breakdown_json) continue;
-      try {
-        const d = JSON.parse(r.depth_breakdown_json) as Record<string, unknown>;
-        const oc = d.origin_noises as Record<string, unknown> | undefined;
-        if (oc && typeof oc === "object") {
-          for (const k of Object.keys(oc)) soundPrimitives.add(k.toLowerCase());
-        }
-        for (const k of Object.keys(d)) {
-          if (k !== "origin_noises" && typeof d[k] === "number") soundPrimitives.add(k.toLowerCase());
-        }
-      } catch { /* ignore */ }
-    }
+    // Same whole-table aggregate as /api/registries/mission (was: first 200 arbitrary rows), so the
+    // two endpoints can no longer disagree about which sound origins exist.
+    const ms = await loadMissionStats(env, bypassCache);
+    for (const o of ms.sound.origins_present) soundPrimitives.add(o);
   } catch { /* ignore */ }
 
   const staticColorsCoveragePct = STATIC_COLOR_ESTIMATED_CELLS > 0

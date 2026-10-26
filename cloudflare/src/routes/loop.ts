@@ -3,6 +3,7 @@
  */
 import type { Env } from "../env";
 import { getDb, readRegistryCounts } from "../db";
+import { loadMissionStats } from "../missionStats";
 import { json, err, corsHeaders } from "../http";
 import { COLOR_PRIMARIES_FOR_API } from "../colorPrimaries.generated";
 import {
@@ -348,22 +349,8 @@ if (path === "/api/loop/progress" && request.method === "GET") {
     let staticSoundPct: number | undefined;
     try {
       // Match /api/registries/coverage: % of SOUND_ORIGIN_PRIMARIES touched in depth_breakdown.
-      const rows = await db.prepare("SELECT depth_breakdown_json FROM static_sound LIMIT 500")
-        .all<{ depth_breakdown_json: string | null }>();
-      const present = new Set<string>();
-      for (const row of rows.results || []) {
-        if (!row.depth_breakdown_json) continue;
-        try {
-          const d = JSON.parse(row.depth_breakdown_json) as Record<string, unknown>;
-          const oc = d.origin_noises as Record<string, unknown> | undefined;
-          if (oc && typeof oc === "object") {
-            for (const k of Object.keys(oc)) present.add(k.toLowerCase());
-          }
-          for (const k of Object.keys(d)) {
-            if (k !== "origin_noises" && typeof d[k] === "number") present.add(k.toLowerCase());
-          }
-        } catch { /* ignore */ }
-      }
+      const ms = await loadMissionStats(env);
+      const present = new Set<string>(ms.sound.origins_present);
       const hit = SOUND_ORIGIN_PRIMARIES.filter((p) => present.has(p)).length;
       staticSoundPct = SOUND_ORIGIN_PRIMARIES.length
         ? Math.round((100 * hit) / SOUND_ORIGIN_PRIMARIES.length * 100) / 100
