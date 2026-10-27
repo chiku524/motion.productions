@@ -35,11 +35,13 @@ import {
   pureSoundKeyHasLeak,
   computeMotionDepth,
   RGB_COLOR_VOCAB,
+  reservedNames,
 } from "../naming";
 import { handleRegistryBrowse } from "./registryBrowse";
 import { invalidateRegistryReadCaches } from "../browseCache";
 import { loadMissionStats } from "../missionStats";
 import { getSnapshot } from "../snapshotCache";
+import { cachedRows, recentDoneInterpretations } from "../readCache";
 
 /** Thrown by the coverage builder when COUNTs were unreliable: served once, never snapshotted. */
 class UnreliableCoverage extends Error {
@@ -73,14 +75,19 @@ if (path === "/api/registries/backfill-names" && request.method === "POST") {
   let updated = 0;
   const usedNames = new Set<string>();
   const pickUniqueName = async (): Promise<string> => {
-    for (let i = 0; i < 50; i++) {
-      const seed = Math.floor(Math.random() * 1000000) + i * 7919;
-      const word = inventSemanticWord(seed);
-      const name = toTitleCase(word);
-      if (usedNames.has(name)) continue;
-      const inDb = await db.prepare("SELECT 1 FROM learned_blends WHERE name = ?").bind(name).first();
-      if (inDb) continue;
+    // name_reserve (primary key) is the source of truth; learned_blends.name has no index (full scan per probe).
+    for (let round = 0; round < 3; round++) {
+      const cands: string[] = [];
+      for (let i = 0; i < 16; i++) {
+        const w = () => toTitleCase(inventSemanticWord(Math.floor(Math.random() * 0x7fffffff)));
+        const name = Array.from({ length: round + 1 }, w).join(" ");
+        if (!usedNames.has(name)) cands.push(name);
+      }
+      const taken = await reservedNames(db, cands);
+      const name = cands.find((c) => !taken.has(c));
+      if (!name) continue;
       usedNames.add(name);
+      if (!dryRun) await db.prepare("INSERT OR IGNORE INTO name_reserve (name) VALUES (?)").bind(name).run();
       return name;
     }
     return "Novel" + (Math.floor(Math.random() * 100000) + 1).toString().padStart(5, "0");
@@ -784,12 +791,18 @@ if (path === "/api/registries" && request.method === "GET") {
   const trueTotals = await getTrueRegistryTotals(env, getPrimaryDb(env), { fresh: regUrl.searchParams.get("fresh") === "1" });
   // Section-scoped early returns: avoid full multi-table D1 build for tab loads.
   if (section === "static") {
-    const staticColorsOnly = await db.prepare(
-      "SELECT color_key, r, g, b, name, count, depth_breakdown_json FROM static_colors ORDER BY count DESC LIMIT ?"
-    ).bind(regLimit).all<{ color_key: string; r: number; g: number; b: number; name: string; count: number; depth_breakdown_json: string | null }>();
-    const staticSoundOnly = await db.prepare(
-      "SELECT sound_key, name, count, depth_breakdown_json, strength_pct FROM static_sound ORDER BY count DESC LIMIT ?"
-    ).bind(regLimit).all<{ sound_key: string; name: string; count: number; depth_breakdown_json: string | null; strength_pct: number | null }>();
+    const staticColorsOnly = await cachedRows(env, `reg:static_colors:top:v1:${regLimit}`, 300, async () => {
+      const r = await db.prepare(
+        "SELECT color_key, r, g, b, name, count, depth_breakdown_json FROM static_colors ORDER BY count DESC LIMIT ?"
+      ).bind(regLimit).all<{ color_key: string; r: number; g: number; b: number; name: string; count: number; depth_breakdown_json: string | null }>();
+      return { results: r.results || [] };
+    });
+    const staticSoundOnly = await cachedRows(env, `reg:static_sound:top:v1:${regLimit}`, 300, async () => {
+      const r = await db.prepare(
+        "SELECT sound_key, name, count, depth_breakdown_json, strength_pct FROM static_sound ORDER BY count DESC LIMIT ?"
+      ).bind(regLimit).all<{ sound_key: string; name: string; count: number; depth_breakdown_json: string | null; strength_pct: number | null }>();
+      return { results: r.results || [] };
+    });
     const colors = ensureUniqueColorNames((staticColorsOnly.results || []).map((r) => {
       let depth_pct = 0;
       let depth_breakdown: Record<string, number> = {};
@@ -906,9 +919,7 @@ if (path === "/api/registries" && request.method === "GET") {
 
   if (section === "interpretation" || section === "linguistic") {
     const interpretationRowsEarly = section === "interpretation"
-      ? await db.prepare(
-          "SELECT id, prompt, instruction_json, updated_at FROM interpretations WHERE status = 'done' AND instruction_json IS NOT NULL ORDER BY updated_at DESC LIMIT ?"
-        ).bind(Math.min(regLimit, 100)).all<{ id: string; prompt: string; instruction_json: string; updated_at: string }>()
+      ? { results: await recentDoneInterpretations(env, Math.min(regLimit, 100)) }
       : { results: [] as { id: string; prompt: string; instruction_json: string; updated_at: string }[] };
     const interpretationEarly = (interpretationRowsEarly.results || []).map((r) => ({
       id: r.id,
@@ -937,12 +948,14 @@ if (path === "/api/registries" && request.method === "GET") {
     });
   }
 
-  const staticColors = await db.prepare(
-    "SELECT color_key, r, g, b, name, count, depth_breakdown_json FROM static_colors ORDER BY count DESC LIMIT ?"
-  ).bind(regLimit).all<{ color_key: string; r: number; g: number; b: number; name: string; count: number; depth_breakdown_json: string | null }>();
-  const staticSound = await db.prepare(
-    "SELECT sound_key, name, count, depth_breakdown_json, strength_pct FROM static_sound ORDER BY count DESC LIMIT ?"
-  ).bind(regLimit).all<{ sound_key: string; name: string; count: number; depth_breakdown_json: string | null; strength_pct: number | null }>();
+  const staticColors = await cachedRows(env, `reg:static_colors:top:v1:${regLimit}`, 300, async () => {
+    const r = await db.prepare("SELECT color_key, r, g, b, name, count, depth_breakdown_json FROM static_colors ORDER BY count DESC LIMIT ?").bind(regLimit).all<{ color_key: string; r: number; g: number; b: number; name: string; count: number; depth_breakdown_json: string | null }>();
+    return { results: r.results || [] };
+  });
+  const staticSound = await cachedRows(env, `reg:static_sound:top:v1:${regLimit}`, 300, async () => {
+    const r = await db.prepare("SELECT sound_key, name, count, depth_breakdown_json, strength_pct FROM static_sound ORDER BY count DESC LIMIT ?").bind(regLimit).all<{ sound_key: string; name: string; count: number; depth_breakdown_json: string | null; strength_pct: number | null }>();
+    return { results: r.results || [] };
+  });
   const learnedColors = learnedColorsDepthOk
     ? await db
         .prepare(
@@ -1033,9 +1046,7 @@ if (path === "/api/registries" && request.method === "GET") {
       };
     });
   }
-  const interpretationRows = await db.prepare(
-    "SELECT id, prompt, instruction_json, updated_at FROM interpretations WHERE status = 'done' AND instruction_json IS NOT NULL ORDER BY updated_at DESC LIMIT ?"
-  ).bind(Math.min(regLimit, 100)).all<{ id: string; prompt: string; instruction_json: string; updated_at: string }>();
+  const interpretationRows = { results: await recentDoneInterpretations(env, Math.min(regLimit, 100)) };
   const interpretation = (interpretationRows.results || []).map((r) => ({
     id: r.id,
     prompt: r.prompt,
