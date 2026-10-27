@@ -6,6 +6,7 @@ import { getDb } from "../db";
 import { json, err, uuid, corsHeaders } from "../http";
 import { aggregateLearningRuns, logEvent } from "../naming";
 import { getSnapshot } from "../snapshotCache";
+import { hitRateLimit } from "../rateLimit";
 import { slimAnalysis, slimSpec } from "../learningSlim";
 import { maybeRunRetention } from "../retention";
 import { checkDeclaredSize, recordPut, reserveUpload } from "../r2Budget";
@@ -13,6 +14,11 @@ import { checkDeclaredSize, recordPut, reserveUpload } from "../r2Budget";
 /** jobs.r2_key sentinels: no R2 object exists (loops delete renders after discovery; retention may expire others). */
 export const R2_KEY_SKIPPED = "skipped:no-upload";
 export const hasR2Object = (k: string | null | undefined): k is string => !!k && !k.startsWith("skipped:") && !k.startsWith("expired:");
+
+/** GET /api/jobs: per-client cap and snapshot TTLs (free-tier D1 read budget, see docs/D1_FREE_TIER.md). */
+const JOBS_LIST_RATE_PER_MIN = 120;
+const JOBS_PENDING_SOFT_TTL_SEC = 15;
+const JOBS_COMPLETED_SOFT_TTL_SEC = 120;
 
 export async function handleJobsRoutes(
   request: Request,
@@ -26,57 +32,84 @@ if (path === "/api/jobs" && request.method === "GET") {
   const url = new URL(request.url);
   const status = url.searchParams.get("status");
   const limit = Math.min(parseInt(url.searchParams.get("limit") ?? "24", 10) || 24, 100);
-  if (status === "pending") {
-    const rows = await db.prepare(
-      "SELECT id, prompt, duration_seconds, created_at FROM jobs WHERE status = 'pending' AND (workflow_type IS NULL OR workflow_type = 'web') ORDER BY created_at ASC LIMIT ?"
-    )
-      .bind(limit)
-      .all<{ id: string; prompt: string; duration_seconds: number | null; created_at: string }>();
-    return json({ jobs: rows.results || [] });
+  if (status !== "pending" && status !== "completed") return err("status=pending or status=completed required", 400);
+  // Unauthenticated + hit by every gallery page / worker poll: cap per client (Cache API counter, no D1/KV write).
+  const rl = await hitRateLimit(request, "jobs-list", JOBS_LIST_RATE_PER_MIN, 60);
+  if (!rl.allowed) {
+    const r = json({ error: "rate limited" }, 429);
+    r.headers.set("Retry-After", String(rl.retryAfterSec));
+    return r;
   }
-  if (status === "completed") {
-    const maxDur = url.searchParams.get("max_duration");
-    const minDur = url.searchParams.get("min_duration");
-    const ratingFilter = url.searchParams.get("rating"); // "2" = liked only
-    const maxD = maxDur != null ? parseFloat(maxDur) : null;
-    const minD = minDur != null ? parseFloat(minDur) : null;
-    const likedOnly = ratingFilter === "2" || ratingFilter === "up";
-    let sql = likedOnly
-      ? `SELECT j.id, j.prompt, j.duration_seconds, j.created_at, j.updated_at, j.workflow_type
-         FROM jobs j
-         INNER JOIN feedback f ON f.job_id = j.id AND f.rating = 2
-         WHERE j.status = 'completed' AND j.r2_key IS NOT NULL`
-      : "SELECT id, prompt, duration_seconds, created_at, updated_at, workflow_type FROM jobs WHERE status = 'completed' AND r2_key IS NOT NULL";
-    const binds: (string | number)[] = [];
-    const durCol = likedOnly ? "j.duration_seconds" : "duration_seconds";
-    const orderCol = likedOnly ? "j.updated_at" : "updated_at";
-    if (minD != null && !Number.isNaN(minD)) {
-      sql += ` AND ${durCol} IS NOT NULL AND ${durCol} >= ?`;
-      binds.push(minD);
-    }
-    if (maxD != null && !Number.isNaN(maxD)) {
-      sql += ` AND ${durCol} IS NOT NULL AND ${durCol} <= ?`;
-      binds.push(maxD);
-    }
-    sql += ` ORDER BY ${orderCol} DESC LIMIT ?`;
-    binds.push(limit);
-    const stmt = db.prepare(sql);
-    const rows = await stmt
-      .bind(...binds)
-      .all<{ id: string; prompt: string; duration_seconds: number | null; created_at: string; updated_at: string; workflow_type: string | null }>();
-    const jobs = (rows.results || []).map((r) => ({
-      id: r.id,
-      prompt: r.prompt,
-      duration_seconds: r.duration_seconds,
-      created_at: r.created_at,
-      updated_at: r.updated_at,
-      workflow_type: r.workflow_type ?? undefined,
-      download_url: `/api/jobs/${r.id}/download`,
-      liked: likedOnly ? true : undefined,
-    }));
-    return json({ jobs });
-  }
-  return err("status=pending or status=completed required", 400);
+  const maxDur = url.searchParams.get("max_duration");
+  const minDur = url.searchParams.get("min_duration");
+  const ratingFilter = url.searchParams.get("rating"); // "2" = liked only
+  const maxD = maxDur != null ? parseFloat(maxDur) : null;
+  const minD = minDur != null ? parseFloat(minDur) : null;
+  const likedOnly = ratingFilter === "2" || ratingFilter === "up";
+  const okMin = minD != null && !Number.isNaN(minD) ? minD : null;
+  const okMax = maxD != null && !Number.isNaN(maxD) ? maxD : null;
+  // Normalised key: arbitrary query strings (cache-busters like &_=123) must not fan out into distinct D1 reads.
+  const cacheKey =
+    status === "pending"
+      ? `jobs:list:v1:pending:${limit}`
+      : `jobs:list:v1:completed:${limit}:${okMin ?? ""}:${okMax ?? ""}:${likedOnly ? "liked" : "all"}`;
+  const snap = await getSnapshot<{ jobs: unknown[] }>(
+    env,
+    cacheKey,
+    status === "pending"
+      ? { softTtlSec: JOBS_PENDING_SOFT_TTL_SEC, hardTtlSec: 3600 }
+      : { softTtlSec: JOBS_COMPLETED_SOFT_TTL_SEC, hardTtlSec: 86400 },
+    async () => {
+      // ORDER BY rowid walks idx_jobs_status (status, rowid) and stops after LIMIT rows. The previous
+      // ORDER BY updated_at / created_at had no (status, ...) index and sorted every row with that status.
+      if (status === "pending") {
+        const rows = await db.prepare(
+          "SELECT id, prompt, duration_seconds, created_at FROM jobs WHERE status = 'pending' AND (workflow_type IS NULL OR workflow_type = 'web') ORDER BY rowid ASC LIMIT ?"
+        )
+          .bind(limit)
+          .all<{ id: string; prompt: string; duration_seconds: number | null; created_at: string }>();
+        return { jobs: rows.results || [] };
+      }
+      let sql = likedOnly
+        ? `SELECT j.id, j.prompt, j.duration_seconds, j.created_at, j.updated_at, j.workflow_type
+           FROM jobs j
+           INNER JOIN feedback f ON f.job_id = j.id AND f.rating = 2
+           WHERE j.status = 'completed' AND j.r2_key IS NOT NULL`
+        : "SELECT id, prompt, duration_seconds, created_at, updated_at, workflow_type FROM jobs WHERE status = 'completed' AND r2_key IS NOT NULL";
+      const binds: (string | number)[] = [];
+      const durCol = likedOnly ? "j.duration_seconds" : "duration_seconds";
+      const orderCol = likedOnly ? "j.rowid" : "rowid";
+      if (okMin != null) {
+        sql += ` AND ${durCol} IS NOT NULL AND ${durCol} >= ?`;
+        binds.push(okMin);
+      }
+      if (okMax != null) {
+        sql += ` AND ${durCol} IS NOT NULL AND ${durCol} <= ?`;
+        binds.push(okMax);
+      }
+      sql += ` ORDER BY ${orderCol} DESC LIMIT ?`;
+      binds.push(limit);
+      const rows = await db.prepare(sql)
+        .bind(...binds)
+        .all<{ id: string; prompt: string; duration_seconds: number | null; created_at: string; updated_at: string; workflow_type: string | null }>();
+      const jobs = (rows.results || []).map((r) => ({
+        id: r.id,
+        prompt: r.prompt,
+        duration_seconds: r.duration_seconds,
+        created_at: r.created_at,
+        updated_at: r.updated_at,
+        workflow_type: r.workflow_type ?? undefined,
+        download_url: `/api/jobs/${r.id}/download`,
+        liked: likedOnly ? true : undefined,
+      }));
+      return { jobs };
+    },
+  );
+  const resp = json(snap.value);
+  resp.headers.set("X-Cache", snap.source === "built" ? "MISS" : snap.stale ? "STALE" : "HIT");
+  if (snap.degraded) resp.headers.set("X-Degraded", "d1-quota");
+  resp.headers.set("Cache-Control", "public, max-age=15");
+  return resp;
 }
 
 // POST /api/jobs — create job (optional workflow_type: explorer | exploiter | main | web | cartoon)
