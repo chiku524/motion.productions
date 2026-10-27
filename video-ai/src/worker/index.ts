@@ -4,8 +4,6 @@ import { planRecipe } from "../planner";
 
 export interface Env {
   ASSETS: Fetcher;
-  OPENAI_API_KEY?: string;
-  OPENAI_MODEL?: string;
   /** Optional: URL of Node render service (e.g. http://127.0.0.1:8788) for /api/render proxy */
   VIDEO_AI_RENDER_URL?: string;
   VIDEO_AI_RENDER_SECRET?: string;
@@ -43,8 +41,6 @@ app.post("/api/plan", async (c) => {
       prompt,
       targetDurationSec: body.targetDurationSec,
       maxDurationSec: body.maxDurationSec,
-      openaiApiKey: c.env.OPENAI_API_KEY,
-      openaiModel: c.env.OPENAI_MODEL,
     });
     return c.json({ recipe, source });
   } catch (e) {

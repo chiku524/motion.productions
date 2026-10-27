@@ -658,7 +658,7 @@ registry cells (ordinal decode in both languages; names for the hot set only).
   axes are observable only in a degraded form until upgraded; coverage claims stay tiered.
 - **Correlated axes** make some macro tuples unobservable; they are recorded as dependent, not unreachable.
 - **Single compaction writer** is a (small) availability dependency; the ledger keeps claims safe if it stalls.
-- **Scale of names.** Naming millions of cells would blow D1 and OpenAI budgets; names are lazy.
+- **Scale of names.** Naming millions of cells would blow the D1 write budget; names are lazy.
 - **Free-tier headroom** is real but thin: D1 rows written is the binding resource (creative clips ~91-145 rows each; budget in 4.7); see decision 1.
 - **Tile extraction correctness.** Tiles must be flat, large enough to sample a clean centre patch, and extracted on raw frames; published (H.264) clips cannot
   claim exact cells. Verified by the Phase 1 acceptance test before any claim is trusted.

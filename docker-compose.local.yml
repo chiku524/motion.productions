@@ -204,7 +204,6 @@ services:
     environment:
       PORT: "8080"
       VIDEO_AI_RENDER_SECRET: ${VIDEO_AI_RENDER_SECRET:-}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     ports:
       - "8788:8080"
     restart: unless-stopped

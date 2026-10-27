@@ -26,15 +26,6 @@ export const SceneSchema = z.object({
     .optional(),
 });
 
-const narrationVoice = z.enum([
-  "alloy",
-  "echo",
-  "fable",
-  "onyx",
-  "nova",
-  "shimmer",
-]);
-
 export const VideoRecipeSchema = z.object({
   meta: z.object({
     width: z.number().int().min(320).max(3840),
@@ -53,20 +44,13 @@ export const VideoRecipeSchema = z.object({
     /** Optional quality preset for procedural/enhanced (draft|standard|high). */
     quality: z.enum(["draft", "standard", "high"]).optional(),
     seed: z.number().int().optional(),
-    /** Optional audio bed + voiceover (render service needs OPENAI_API_KEY for narration). */
+    /** Optional background audio bed (no cloud TTS: sound comes from the procedural engine). */
     audio: z
       .object({
         /** Public HTTPS URL to an audio file (e.g. mp3/aac/wav) looped under the video. */
         backgroundMusicUrl: z.string().url().optional(),
         /** 0–1, default 0.22 in the renderer. */
         backgroundMusicVolume: z.number().min(0).max(1).optional(),
-        /** OpenAI TTS; spoken over the full video (trimmed to video length). */
-        narration: z
-          .object({
-            text: z.string().min(1).max(4096),
-            voice: narrationVoice.optional(),
-          })
-          .optional(),
       })
       .optional()
       .refine(

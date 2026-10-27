@@ -25,8 +25,6 @@ function d1Err(e: unknown, status = 500) {
 }
 
 export type VideoAiEnv = {
-  OPENAI_API_KEY?: string;
-  OPENAI_MODEL?: string;
   VIDEO_AI_RENDER_URL?: string;
   VIDEO_AI_RENDER_SECRET?: string;
   /** Python procedural render (engine=procedural) */
@@ -284,8 +282,6 @@ export async function handleVideoAiApi(
         prompt,
         targetDurationSec: body.targetDurationSec,
         maxDurationSec: body.maxDurationSec,
-        openaiApiKey: env.OPENAI_API_KEY,
-        openaiModel: env.OPENAI_MODEL,
       });
       return json({ recipe, source });
     } catch (e) {
