@@ -1,0 +1,147 @@
+{
+ "version": 2,
+ "space": "sound.L1",
+ "size": 6144,
+ "vectors": [
+  {
+   "amplitude": 0.0,
+   "peak_hz": 0.0,
+   "flatness": 0.5,
+   "attack": 0.0,
+   "zcr": 0.0,
+   "key": "s2.00-0-3-0-0",
+   "ordinal": 48,
+   "cell_id": "sound.L1#00048"
+  },
+  {
+   "amplitude": 0.0009,
+   "peak_hz": 50,
+   "flatness": 0.1,
+   "attack": 0.2,
+   "zcr": 0.01,
+   "key": "s2.00-0-0-0-0",
+   "ordinal": 0,
+   "cell_id": "sound.L1#00000"
+  },
+  {
+   "amplitude": 0.001,
+   "peak_hz": 100,
+   "flatness": 0.15,
+   "attack": 0.35,
+   "zcr": 0.02,
+   "key": "s2.01-1-1-1-1",
+   "ordinal": 597,
+   "cell_id": "sound.L1#00597"
+  },
+  {
+   "amplitude": 0.01,
+   "peak_hz": 150,
+   "flatness": 0.29,
+   "attack": 0.49,
+   "zcr": 0.059,
+   "key": "s2.04-1-1-1-1",
+   "ordinal": 2133,
+   "cell_id": "sound.L1#02133"
+  },
+  {
+   "amplitude": 0.05,
+   "peak_hz": 300,
+   "flatness": 0.3,
+   "attack": 0.5,
+   "zcr": 0.06,
+   "key": "s2.07-2-2-2-2",
+   "ordinal": 3754,
+   "cell_id": "sound.L1#03754"
+  },
+  {
+   "amplitude": 0.13,
+   "peak_hz": 650,
+   "flatness": 0.49,
+   "attack": 0.64,
+   "zcr": 0.149,
+   "key": "s2.08-3-2-2-2",
+   "ordinal": 4330,
+   "cell_id": "sound.L1#04330"
+  },
+  {
+   "amplitude": 0.2,
+   "peak_hz": 1200,
+   "flatness": 0.5,
+   "attack": 0.65,
+   "zcr": 0.15,
+   "key": "s2.09-4-3-3-3",
+   "ordinal": 4927,
+   "cell_id": "sound.L1#04927"
+  },
+  {
+   "amplitude": 0.35,
+   "peak_hz": 2400,
+   "flatness": 0.9,
+   "attack": 0.9,
+   "zcr": 0.3,
+   "key": "s2.10-5-3-3-3",
+   "ordinal": 5503,
+   "cell_id": "sound.L1#05503"
+  },
+  {
+   "amplitude": 0.5,
+   "peak_hz": 440,
+   "flatness": 0.2,
+   "attack": 0.5,
+   "zcr": 0.03,
+   "key": "s2.10-3-1-2-1",
+   "ordinal": 5337,
+   "cell_id": "sound.L1#05337"
+  },
+  {
+   "amplitude": 0.7,
+   "peak_hz": 5000,
+   "flatness": 0.7,
+   "attack": 0.1,
+   "zcr": 0.4,
+   "key": "s2.11-6-3-0-3",
+   "ordinal": 6067,
+   "cell_id": "sound.L1#06067"
+  },
+  {
+   "amplitude": 0.9,
+   "peak_hz": 6400,
+   "flatness": 0.2,
+   "attack": 0.0,
+   "zcr": 0.0,
+   "key": "s2.11-7-1-0-0",
+   "ordinal": 6096,
+   "cell_id": "sound.L1#06096"
+  },
+  {
+   "amplitude": 1.0,
+   "peak_hz": 12000,
+   "flatness": 1.0,
+   "attack": 1.0,
+   "zcr": 1.0,
+   "key": "s2.11-7-3-3-3",
+   "ordinal": 6143,
+   "cell_id": "sound.L1#06143"
+  },
+  {
+   "amplitude": 0.0305,
+   "peak_hz": 799.9,
+   "flatness": 0.22,
+   "attack": 0.55,
+   "zcr": 0.07,
+   "key": "s2.06-3-1-2-2",
+   "ordinal": 3290,
+   "cell_id": "sound.L1#03290"
+  },
+  {
+   "amplitude": 0.0021,
+   "peak_hz": 3199,
+   "flatness": 0.01,
+   "attack": 0.34,
+   "zcr": 0.019,
+   "key": "s2.02-5-0-0-0",
+   "ordinal": 1344,
+   "cell_id": "sound.L1#01344"
+  }
+ ]
+}
