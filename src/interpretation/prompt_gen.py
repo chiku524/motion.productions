@@ -7,6 +7,11 @@ import random
 from typing import Any
 
 from ..grammar import articles_fixed
+from ..knowledge.blend_names import (
+    clean_name_for_prompt,
+    has_malformed_word,
+    sanitize_prompt_words,
+)
 from ..random_utils import secure_choice, secure_random
 from ..procedural.data.keywords import (
     KEYWORD_TO_PALETTE,
@@ -100,13 +105,14 @@ def _build_slot_pools_interpretation(knowledge: dict[str, Any] | None) -> dict[s
             if isinstance(d, dict) and (d.get("name") or "").strip()
         ]
         for name, _ in sorted(lc_items, key=lambda x: x[1]):  # ascending count
+            name = clean_name_for_prompt(name) or ""
             if len(name) >= 2 and is_semantic_name(name):
                 color.append(name)
         motion_list = knowledge.get("learned_motion") or []
         motion_list = sorted(motion_list, key=lambda m: m.get("count", 0) if isinstance(m, dict) else 0)
         for m in motion_list[:40]:
             if isinstance(m, dict):
-                name = (m.get("name") or "").strip()
+                name = clean_name_for_prompt((m.get("name") or "").strip()) or ""
                 if name and len(name) >= 2 and is_semantic_name(name):
                     motion.append(f"{name} motion")
                 trend = (m.get("motion_trend") or "").strip()
@@ -177,7 +183,7 @@ def _expand_from_knowledge(
     learned_colors = knowledge.get("learned_colors") or {}
     for _color_key, data in learned_colors.items():
         if isinstance(data, dict):
-            name = data.get("name") or ""
+            name = clean_name_for_prompt(data.get("name") or "") or ""
             if name and isinstance(name, str) and len(name) >= 3 and is_semantic_name(name):
                 extra_modifiers.append(f"{name} tones")
                 extra_modifiers.append(f"{name} palette")
@@ -186,7 +192,7 @@ def _expand_from_knowledge(
     learned_motion = knowledge.get("learned_motion") or []
     for m in learned_motion:
         if isinstance(m, dict):
-            name = m.get("name")
+            name = clean_name_for_prompt(m.get("name") or "") or None
             trend = m.get("motion_trend", "")
             level = m.get("motion_level", 0)
             if name and isinstance(name, str) and len(name) >= 3 and is_semantic_name(name):
@@ -200,14 +206,16 @@ def _expand_from_knowledge(
     by_keyword = knowledge.get("by_keyword") or {}
     for kw, stats in list(by_keyword.items())[:50]:
         if isinstance(stats, dict) and stats.get("count", 0) >= 2:
-            if kw and isinstance(kw, str) and kw not in base_subjects and is_semantic_name(kw):
+            kw = clean_name_for_prompt(kw) if isinstance(kw, str) else None
+            if kw and kw not in base_subjects and is_semantic_name(kw):
                 extra_subjects.append(kw)
 
     # Proven palettes
     by_palette = knowledge.get("by_palette") or {}
     for pal, stats in list(by_palette.items())[:30]:
         if isinstance(stats, dict) and stats.get("count", 0) >= 1:
-            if pal and isinstance(pal, str) and is_semantic_name(pal):
+            pal = clean_name_for_prompt(pal) if isinstance(pal, str) else None
+            if pal and is_semantic_name(pal):
                 extra_modifiers.append(f"{pal} style")
 
     # Learned gradient/camera (API returns list of strings or list of dicts)
@@ -226,7 +234,8 @@ def _expand_from_knowledge(
                     or item.get("camera_motion")
                     or item.get("motion_type")
                 )
-            if val and isinstance(val, str) and is_semantic_name(val):
+            val = clean_name_for_prompt(val) if isinstance(val, str) else None
+            if val and is_semantic_name(val):
                 extra_modifiers.append(f"{val} {suffix}")
 
     extra_subjects = list(dict.fromkeys(s for s in extra_subjects if s))
@@ -349,7 +358,9 @@ def generate_interpretation_prompt(
                 prompt = f"Create a {sub} with {mod}" if use_instructive else f"{sub} with {mod}"
 
         if prompt:
-            prompt = prompt.strip()
+            prompt = sanitize_prompt_words(prompt.strip())
+            if has_malformed_word(prompt):
+                continue
             if prompt and prompt not in avoid and not _is_near_duplicate(prompt, avoid):
                 return prompt
     return None

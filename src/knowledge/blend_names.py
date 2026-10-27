@@ -60,6 +60,8 @@ def is_semantic_name(name: str) -> bool:
     n = name.strip().lower()
     if len(n) < 4:
         return True
+    if is_malformed_fusion(n):
+        return False
     if n in {w.lower() for w in _REAL_WORDS}:
         return True
     for s in _START:
@@ -186,34 +188,123 @@ def _words_from_prompt(prompt: str, max_words: int = 3) -> list[str]:
     return words[:max_words]
 
 
+# Words that may be glued to the end of another word to form a compound ("Ivorymist", "Sunstone").
+_COMPOUND_TAILS = [
+    "glow", "light", "fall", "rise", "ford", "dale", "mont", "view", "crest", "haven", "mere",
+    "stone", "vale", "mist", "bloom", "stream", "ridge", "shore", "brook", "field", "wood", "well",
+    "worth", "drift", "wave", "shade", "frost", "leaf", "star", "wind", "cloud", "rain", "fern",
+    "pine", "dusk", "dawn", "flow", "haze", "storm", "sky", "sea", "sun", "dew", "rose", "gold",
+    "pearl", "sage", "mint", "vine", "ember", "glen", "marsh", "cliff", "lark", "jade", "silk",
+]
+
+# Fragments that are NOT words by themselves. Gluing one onto a real word ("wave"+"ow",
+# "ivory"+"um", "gold"+"ow") is what produced "waveow"/"ivoryum"/"Sageum"/"Valeow".
+_JUNK_SUFFIXES = frozenset({
+    "ber", "vet", "al", "ver", "er", "en", "ow", "or", "um", "in", "ar", "ace", "ine", "ure",
+    "ish", "lyn", "tor", "nel", "ton", "ley",
+})
+
+# Genuine English words that happen to be real word + junk suffix.
+_REAL_ENGLISH_FUSIONS = frozenset({
+    "golden", "woolen", "silken", "oaken", "flaxen", "marshal", "waver", "flower", "glower",
+    "mister", "bloomer", "drifter", "winder", "shader", "stormer",
+})
+
+_COLOR_MODIFIERS = ("light", "deep", "pale", "soft", "dark", "warm", "cool")
+
+
+def is_malformed_fusion(name: str) -> bool:
+    """
+    True for a real word with a meaningless fragment glued on ("waveow", "ivoryum", "goldow",
+    "sageum"). Legitimate compounds ("emberglow", "dawnrise") and real words are not flagged.
+    """
+    n = re.sub(r"[^a-z]", "", (name or "").lower())
+    if len(n) < 5 or n in _REAL_WORDS or n in _REAL_ENGLISH_FUSIONS:
+        return False
+    for w in _REAL_WORDS:
+        if len(w) >= 3 and n.startswith(w) and n[len(w):] in _JUNK_SUFFIXES:
+            return True
+    return False
+
+
+def _split_glued(n: str) -> str | None:
+    """'darktangerine' -> 'dark tangerine' when it is a known modifier + known color/word."""
+    low = n.lower()
+    vocab = {w for ws in _RGB_COLOR_VOCAB.values() for w in ws} | set(_RGB_COLOR_VOCAB) | set(_REAL_WORDS)
+    for mod in _COLOR_MODIFIERS:
+        if low.startswith(mod) and low[len(mod):] in vocab and len(low) > len(mod) + 2:
+            return n[: len(mod)] + " " + n[len(mod):]
+    return None
+
+
+def humanize_name(name: str) -> str:
+    """Make a stored registry name read like words in a sentence ('DarkTangerine' -> 'Dark Tangerine')."""
+    n = (name or "").strip()
+    if not n:
+        return n
+    n = re.sub(r"[_\-\s]+", " ", n)
+    n = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", n)
+    if " " not in n:
+        split = _split_glued(n)
+        if split:
+            n = split
+    return n
+
+
+def clean_name_for_prompt(name: str) -> str | None:
+    """Name safe to put into a user-facing prompt: humanized, or None if it is a malformed fusion."""
+    n = (name or "").strip()
+    if not n or is_malformed_fusion(n):
+        return None
+    return humanize_name(n)
+
+
+def has_malformed_word(text: str) -> bool:
+    """True if any word in the text is a malformed fusion (see is_malformed_fusion)."""
+    return any(is_malformed_fusion(w) for w in re.findall(r"[A-Za-z]{5,}", text or ""))
+
+
+def sanitize_prompt_words(text: str) -> str:
+    """Split glued modifier+color tokens ('darktangerine' / 'DarkTangerine') inside a finished prompt."""
+    def _fix(m: re.Match[str]) -> str:
+        return humanize_name(m.group(0))
+    return re.sub(r"[A-Za-z]{8,}", _fix, text or "")
+
+
+def _compound(seed: int, parts: int) -> str:
+    """Deterministic compound of real words ('ivory'+'mist'); adjacent parts never repeat or touch letters."""
+    r = abs(seed) % (2**31)
+    r = (r * 7919 + 1237) % (2**31)
+    word = _REAL_WORDS[r % len(_REAL_WORDS)]
+    for _ in range(parts - 1):
+        for k in range(len(_COMPOUND_TAILS)):
+            r = (r * 7919 + 1237 + k) % (2**31)
+            tail = _COMPOUND_TAILS[(r >> 5) % len(_COMPOUND_TAILS)]
+            if tail == word or word.endswith(tail) or word[-1] == tail[0]:
+                continue
+            word += tail
+            break
+    return word
+
+
 def _invent_word(seed: int) -> str:
     """
-    Invent a short, semantic or name-like word from seed. Precision: prefer known
-    real words from _REAL_WORDS so the generator produces meaningful names for
-    many undiscovered elements. Fallback: start + end parts (no gibberish).
+    Invent a semantic, well-formed word from seed: a real word, or a compound of real words
+    ("Ivorymist", "Sunstonelight"). Never a real word + meaningless fragment ("waveow").
+    Deterministic; the compound space (~85 x 55 x 55 ...) is far larger than any registry.
     """
     r = abs(seed) % (2**31)
-    # Prefer known semantic word when possible (deterministic, large space)
-    word_idx = r % len(_REAL_WORDS)
-    candidate = _REAL_WORDS[word_idx]
-    if 4 <= len(candidate) <= _MAX_WORD_LEN:
-        return candidate
-    # Else build from start + end (semantic parts only)
-    s_idx = (r >> 7) % len(_START)
-    start = _START[s_idx]
-    for k in range(len(_END)):
-        r = (r * 7919 + 1237 + k) % (2**31)
-        e_idx = r % len(_END)
-        end = _END[e_idx]
-        if start and end and start[-1] == end[0]:
-            continue
-        word = start + end
-        if len(word) > _MAX_WORD_LEN:
-            word = word[:_MAX_WORD_LEN]
-        if len(word) < 4:
-            word = word + end[: min(len(end), 4 - len(word))]
-        return word[:_MAX_WORD_LEN]
-    return (start + _END[0])[:_MAX_WORD_LEN]
+    mode = (r >> 3) % 5
+    if mode == 0:
+        candidate = _REAL_WORDS[r % len(_REAL_WORDS)]
+        if 4 <= len(candidate) <= _MAX_WORD_LEN:
+            return candidate
+    parts = 3 if mode == 4 else 2
+    for attempt in range(8):
+        word = _compound(r + attempt * 104729, parts)
+        if 4 <= len(word) <= _MAX_WORD_LEN and not re.search(r"(.)\1\1", word):
+            return word
+    return _compound(r, 2)[:_MAX_WORD_LEN]
 
 
 def generate_sensible_name(
@@ -267,31 +358,21 @@ def generate_sensible_name(
         if candidate not in existing:
             return candidate
 
-    # Exhaustive semantic fallback (no numeric/gibberish suffixes)
+    # Exhaustive fallback: longer real-word compounds (never numeric, never word+fragment).
+    for parts in (3, 4, 5):
+        for i in range(2000):
+            word = _compound(seed + i * 15485863, parts)
+            candidate = word[0].upper() + word[1:].lower()
+            if candidate not in existing and len(candidate) >= 4:
+                return candidate
+    word = _compound(seed, 5)
     domain_token = (domain or "tone").strip().lower().replace("_", "")[:8] or "tone"
-    for i in range(1000):
-        start = _START[(seed + i) % len(_START)]
-        end = _END[(seed + i * 17) % len(_END)]
-        raw = f"{start}{end}{domain_token}"[:_MAX_WORD_LEN]
-        candidate = raw[0].upper() + raw[1:].lower() if len(raw) > 1 else raw.upper()
-        if candidate not in existing and len(candidate) >= 4:
-            return candidate
-    # Last resort: domain + real word indexed by seed (still name-like)
-    word = _REAL_WORDS[(seed + len(existing)) % len(_REAL_WORDS)]
-    base = f"{domain_token}{word}"
+    base = word + domain_token
     candidate = base[0].upper() + base[1:].lower()
     n = 0
     while candidate in existing:
         n += 1
-        word = _REAL_WORDS[(seed + len(existing) + n) % len(_REAL_WORDS)]
-        base = f"{domain_token}{word}"
-        candidate = base[0].upper() + base[1:].lower()
-        if n > len(_REAL_WORDS) * 2:
-            # Prefix with start syllable to guarantee uniqueness without digits
-            start = _START[n % len(_START)]
-            candidate = (start + base)[0].upper() + (start + base)[1:_MAX_WORD_LEN].lower()
-            if candidate not in existing:
-                break
+        candidate = (_compound(seed + n, 5) + domain_token).capitalize()
     return candidate
 
 
