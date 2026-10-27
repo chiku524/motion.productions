@@ -105,6 +105,15 @@ services:
       # Small rotating per-container JSONL metrics log (python scripts/loop_metrics.py)
       LOOP_METRICS_DIR: /app/knowledge/metrics
       LOOP_METRICS_NAME: explorer
+      # Exact 8-bit colour survey (docs/COLOR_SURVEY.md): lossless local clips, never published, disjoint stride per container.
+      # explorer = stride 0, balanced = stride 1 of COLOR_CONTAINER_COUNT (keep it at the number of surveying containers).
+      LOOP_COLOR_SURVEY: ${LOOP_COLOR_SURVEY:-1}
+      LOOP_COLOR_QUEUE: ${LOOP_COLOR_SURVEY:-1}
+      COLOR_CELLS_DIR: /app/knowledge/color_cells
+      CONTAINER_INDEX: "0"
+      CONTAINER_COUNT: ${COLOR_CONTAINER_COUNT:-2}
+      # D1 sync of coverage chunks stays OFF until migrations_pending/0101 is applied (then set COLOR_SYNC=1)
+      COLOR_SYNC: ${COLOR_SYNC:-0}
       LOOP_CAMERA_VARIATION: ${LOOP_CAMERA_VARIATION:-1}
       LOOP_WORKER_OFFSET_SECONDS: "0"
       LOOP_DELAY_SECONDS: "15"
@@ -154,6 +163,15 @@ services:
       NOVELTY_STORE_MAX: ${NOVELTY_STORE_MAX:-5000}
       LOOP_METRICS_DIR: /app/knowledge/metrics
       LOOP_METRICS_NAME: balanced
+      # Exact 8-bit colour survey (docs/COLOR_SURVEY.md): lossless local clips, never published, disjoint stride per container.
+      # explorer = stride 0, balanced = stride 1 of COLOR_CONTAINER_COUNT (keep it at the number of surveying containers).
+      LOOP_COLOR_SURVEY: ${LOOP_COLOR_SURVEY:-1}
+      LOOP_COLOR_QUEUE: ${LOOP_COLOR_SURVEY:-1}
+      COLOR_CELLS_DIR: /app/knowledge/color_cells
+      CONTAINER_INDEX: "1"
+      CONTAINER_COUNT: ${COLOR_CONTAINER_COUNT:-2}
+      # D1 sync of coverage chunks stays OFF until migrations_pending/0101 is applied (then set COLOR_SYNC=1)
+      COLOR_SYNC: ${COLOR_SYNC:-0}
       LOOP_CAMERA_VARIATION: ${LOOP_CAMERA_VARIATION:-1}
       LOOP_STATIC_FOCUS: "none"
       LOOP_WORKER_OFFSET_SECONDS: "30"
