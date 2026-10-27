@@ -17,9 +17,9 @@ import {
 } from "./colorBrowse";
 import { SOUND_ORIGIN_PRIMARIES } from "./naming";
 import { MISSION_STATS_KEY } from "./browseCache";
+import { getSnapshot } from "./snapshotCache";
 import {
   buildSoundOriginCountSql,
-  isSnapshotFresh,
   mergeFamilyCounts,
   parseSoundOriginCounts,
   presentOrigins,
@@ -27,10 +27,10 @@ import {
 } from "./missionAggregate";
 
 export const MISSION_STATS_CACHE_KEY = MISSION_STATS_KEY;
-/** Rebuild at most this often (each rebuild scans ~4-5k D1 rows). */
-const MISSION_STATS_SOFT_TTL_SEC = 900;
+/** Rebuild at most this often (each rebuild scans ~4-5k D1 rows; 12/day = ~60k rows). */
+const MISSION_STATS_SOFT_TTL_SEC = 2 * 3600;
 /** KV hard expiry: keep the last good snapshot to serve if D1 is failing / rate-limited. */
-const MISSION_STATS_HARD_TTL_SEC = 60 * 60 * 24;
+const MISSION_STATS_HARD_TTL_SEC = 60 * 60 * 24 * 7;
 /** Max NULL-family rows classified in JS to attribute never-backfilled rows. */
 const NULL_FAMILY_SAMPLE = 400;
 
@@ -160,36 +160,20 @@ async function loadSoundStats(env: Env): Promise<MissionStats["sound"]> {
  * instead of failing the request.
  */
 export async function loadMissionStats(env: Env, fresh = false): Promise<MissionStats> {
-  const kv = env.MOTION_KV;
-  let cached: MissionStats | null = null;
-  if (kv) {
-    try {
-      const c = await kv.get(MISSION_STATS_CACHE_KEY, "json");
-      if (c && typeof c === "object") cached = c as MissionStats;
-    } catch {
-      /* rebuild */
-    }
-  }
-  if (cached && !fresh && isSnapshotFresh(cached.updated_at, Date.now(), MISSION_STATS_SOFT_TTL_SEC)) {
-    return cached;
-  }
-  let stats: MissionStats;
-  try {
-    const [colors, sound] = await Promise.all([loadColorStats(env), loadSoundStats(env)]);
-    stats = { colors, sound, scan: "full", updated_at: new Date().toISOString() };
-  } catch (e) {
-    if (cached) {
-      console.error("mission stats rebuild failed; serving stale snapshot:", e);
-      return cached;
-    }
-    throw e;
-  }
-  if (kv) {
-    try {
-      await kv.put(MISSION_STATS_CACHE_KEY, JSON.stringify(stats), { expirationTtl: MISSION_STATS_HARD_TTL_SEC });
-    } catch {
-      /* ignore */
-    }
-  }
-  return stats;
+  const snap = await getSnapshot<MissionStats>(
+    env,
+    MISSION_STATS_CACHE_KEY,
+    {
+      softTtlSec: MISSION_STATS_SOFT_TTL_SEC,
+      hardTtlSec: MISSION_STATS_HARD_TTL_SEC,
+      kvPersistSec: 6 * 3600,
+      bypass: fresh,
+      bypassMinIntervalSec: 300,
+    },
+    async () => {
+      const [colors, sound] = await Promise.all([loadColorStats(env), loadSoundStats(env)]);
+      return { colors, sound, scan: "full", updated_at: new Date().toISOString() } as MissionStats;
+    },
+  );
+  return snap.value;
 }
