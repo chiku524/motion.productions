@@ -9,7 +9,7 @@ Everything here must fit the **Free** plan. Daily limits reset at **00:00 UTC** 
 | KV writes | **1,000/day** (1 write/s/key) | durable stale copies, loop state, counts blob | `kvGate`, >= 30 min between persists, ~100-300/day expected |
 | KV reads | 100k/day | cold-isolate snapshot fallback only | memory -> Cache API -> KV |
 | R2 storage | 10 GB-month | `jobs/{id}/video.mp4`, video-ai recipes | upload cap, 8 GB budget, 7-day retention |
-| R2 Class A | 1M/month | video put (+1 usage counter put), sweep list (1 per 1,000 objects) | loop clips not uploaded; list only from cron/admin/emergency |
+| R2 Class A | 1M/month | video put (+1 usage counter put), sweep list (1 per 1,000 objects) | loop clips not uploaded; list only from the daily-on-upload check/admin/emergency |
 | R2 Class B | 10M/month | usage counter get (memoised 60 s), downloads | no `head`/`list` on status paths |
 
 ## Phase 0 read/write reduction (Worker)
@@ -53,8 +53,9 @@ Worker env (all optional, wrangler `vars`):
 | `R2_BUDGET_BYTES` | 8,000,000,000 | uploads that would exceed it -> one emergency sweep, then `507` |
 | `R2_RETENTION_DAYS` | 7 | objects older than this are deleted by the sweep |
 
-Usage is tracked in one object, `_meta/usage.json` (no list on the upload path). A daily cron (`17 9 * * *` UTC) and
-`POST /api/admin/r2/sweep` list the bucket (1 Class A per 1,000 objects, max 60 pages), delete expired objects, then evict
+Usage is tracked in one object, `_meta/usage.json` (no list on the upload path). There is **no cron trigger** (the Free plan allows 5 cron triggers per account and this account is full; a cron deploy failed with Cloudflare error 10072).
+Instead, the first upload more than 24 h after the last sweep runs one sweep inline, and
+`POST /api/admin/r2/sweep` and the emergency path list the bucket (1 Class A per 1,000 objects, max 60 pages), delete expired objects, then evict
 oldest-first to 80% of the budget, and re-measure usage. `GET /api/admin/r2/usage` shows usage, config and headroom.
 Emergency sweeps are limited to one per 10 minutes. Video-ai recipe bodies are capped at 512 KB.
 Deletes are free; the sweep itself costs a handful of Class A ops per day.

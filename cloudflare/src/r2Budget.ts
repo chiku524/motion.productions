@@ -5,7 +5,8 @@
  *   exceed R2_BUDGET_BYTES (default 8 GB, leaving 20% headroom under the 10 GB free tier).
  * - Usage is tracked in ONE small object (`_meta/usage.json`) so hot paths never list(): one Class B get (memoised
  *   60 s per isolate) plus one Class A put per accepted upload.
- * - Retention: a daily cron (and an emergency sweep when an upload would not fit) lists the bucket (1 Class A per
+ * - Retention: no cron trigger (Workers Free allows 5 per ACCOUNT and the account is full, deploy error 10072). Instead the
+ *   first upload more than 24 h after the last sweep (and an emergency sweep when an upload would not fit) lists the bucket (1 Class A per
  *   1,000 objects), deletes objects older than R2_RETENTION_DAYS (default 7), then evicts oldest-first down to 80% of
  *   the budget. The sweep also re-measures true usage, correcting counter drift.
  * - Loop clips are NOT uploaded by default (the loops delete renders after discovery); see jobs.ts `/complete`.
@@ -21,6 +22,7 @@ const EVICT_TARGET_FRACTION = 0.8;
 const MAX_LIST_PAGES = 60; // 60k objects per sweep keeps CPU bounded; the next sweep continues
 const EMERGENCY_SWEEP_MIN_INTERVAL_MS = 10 * 60 * 1000;
 const USAGE_MEMO_MS = 60 * 1000;
+export const DAILY_SWEEP_MS = 24 * 60 * 60 * 1000;
 
 export type R2Usage = { bytes: number; objects: number; updated_at: string; last_sweep_at: string | null };
 export type R2Config = { maxUploadBytes: number; budgetBytes: number; retentionDays: number };
@@ -88,14 +90,31 @@ export function checkDeclaredSize(env: Env, sizeBytes: number): ReserveResult {
   return { ok: true };
 }
 
+/** True when a usage counter exists and the last sweep (or counter update) is older than 24 h. An empty bucket is never "due". */
+export function sweepDue(usage: R2Usage, now: number): boolean {
+  const ref = Date.parse(usage.last_sweep_at ?? usage.updated_at);
+  if (!Number.isFinite(ref) || ref <= 0) return false;
+  return now - ref >= DAILY_SWEEP_MS;
+}
+
 /** Ensure `sizeBytes` fits in the budget; runs a rate-limited emergency sweep if it does not. */
 export async function reserveUpload(env: Env, sizeBytes: number): Promise<ReserveResult> {
   const cfg = r2Config(env);
   const tooBig = checkDeclaredSize(env, sizeBytes);
   if (!tooBig.ok) return tooBig;
   let usage = await readUsage(env);
-  if (usage.bytes + sizeBytes <= cfg.budgetBytes) return { ok: true };
   const now = Date.now();
+  if (sweepDue(usage, now) && now - lastEmergencySweepAt >= EMERGENCY_SWEEP_MIN_INTERVAL_MS) {
+    // Piggy-backed daily retention sweep (replaces the cron trigger): at most one list pass per 24 h, only when uploads happen.
+    lastEmergencySweepAt = now;
+    try {
+      await sweepR2(env, { reason: "daily-on-upload", now });
+    } catch (e) {
+      console.error("r2 daily sweep failed:", e);
+    }
+    usage = await readUsage(env, true);
+  }
+  if (usage.bytes + sizeBytes <= cfg.budgetBytes) return { ok: true };
   if (now - lastEmergencySweepAt >= EMERGENCY_SWEEP_MIN_INTERVAL_MS) {
     lastEmergencySweepAt = now;
     await sweepR2(env, { reason: "emergency" });
@@ -132,7 +151,7 @@ export type SweepResult = {
   truncated: boolean;
 };
 
-/** Delete expired objects, then oldest-first until usage is <= 80% of budget. Runs from cron/admin/emergency only. */
+/** Delete expired objects, then oldest-first until usage is <= 80% of budget. Runs from the daily-on-upload check, admin, emergency (or an optional cron) only. */
 export async function sweepR2(env: Env, opts: { reason?: string; now?: number } = {}): Promise<SweepResult> {
   const cfg = r2Config(env);
   const now = opts.now ?? Date.now();

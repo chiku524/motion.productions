@@ -115,3 +115,30 @@ test("sweepR2 deletes objects older than the retention window (unit, fake bucket
     cleanup();
   }
 });
+test("daily retention sweep piggy-backs on the first upload after 24 h (no cron trigger), at most once", async () => {
+  const { mod, cleanup } = await bundleModule("src/r2Budget.ts");
+  try {
+    mod.__resetR2BudgetMemory();
+    const day = 86_400_000;
+    const now = Date.now();
+    const old = { key: "jobs/old/video.mp4", size: 1000, uploaded: new Date(now - 9 * day) };
+    const objs = new Map([[old.key, old]]);
+    let lists = 0;
+    const store = new Map([["_meta/usage.json", JSON.stringify({ bytes: 1000, objects: 1, updated_at: new Date(now - 2 * day).toISOString(), last_sweep_at: new Date(now - 2 * day).toISOString() })]]);
+    const VIDEOS = {
+      async list() { lists++; return { objects: [...objs.values()], truncated: false }; },
+      async delete(keys) { for (const k of [].concat(keys)) objs.delete(k); },
+      async put(k, v) { store.set(k, String(v)); },
+      async get(k) { return store.has(k) ? { text: async () => store.get(k) } : null; },
+    };
+    const env = { VIDEOS, R2_RETENTION_DAYS: "7" };
+    assert.equal(mod.sweepDue({ bytes: 0, objects: 0, updated_at: new Date(0).toISOString(), last_sweep_at: null }, now), false, "empty bucket is never due");
+    assert.equal((await mod.reserveUpload(env, 100)).ok, true);
+    assert.equal(lists, 1, "one daily sweep");
+    assert.equal(objs.size, 0, "expired object deleted");
+    assert.equal((await mod.reserveUpload(env, 100)).ok, true);
+    assert.equal(lists, 1, "not repeated within 24 h");
+  } finally {
+    cleanup();
+  }
+});

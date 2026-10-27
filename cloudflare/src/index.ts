@@ -75,7 +75,8 @@ export default {
     return env.ASSETS.fetch(request);
   },
 
-  /** Daily cron (wrangler.jsonc triggers.crons): R2 retention + usage re-measure. No D1/KV usage. */
+  /** Optional: only runs if a cron trigger is configured. None is by default (Workers Free cap of 5 cron triggers per account was hit, error 10072);
+   the daily retention sweep piggy-backs on uploads (r2Budget.reserveUpload). No D1/KV usage. */
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     ctx.waitUntil(
       sweepR2(env, { reason: "cron" })
