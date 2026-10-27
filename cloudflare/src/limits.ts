@@ -8,6 +8,15 @@
 
 import { corsHeaders } from "./http";
 
+/** D1 file is full (free cap 500 MB per database). Not a daily quota: it does not reset at 00:00 UTC. */
+const DB_FULL_PATTERNS: RegExp[] = [
+  /exceeded maximum db size/i,
+  /maximum db size/i,
+  /database or disk is full/i,
+  /SQLITE_FULL/i,
+  /D1.*storage limit/i,
+];
+
 const LIMIT_PATTERNS: RegExp[] = [
   /daily .*limit/i,
   /limit exceeded/i,
@@ -21,9 +30,9 @@ const LIMIT_PATTERNS: RegExp[] = [
   /overloaded/i,
 ];
 
-export function isFreeTierLimitError(e: unknown): boolean {
-  if (e == null) return false;
+function errorText(e: unknown): string {
   const parts: string[] = [];
+  if (e == null) return "";
   if (typeof e === "string") parts.push(e);
   if (e instanceof Error) {
     parts.push(e.message);
@@ -34,9 +43,20 @@ export function isFreeTierLimitError(e: unknown): boolean {
     const m = (e as { message?: unknown }).message;
     if (typeof m === "string") parts.push(m);
   }
-  const text = parts.join(" | ");
+  return parts.join(" | ");
+}
+
+/** True when D1 reports the database itself is full ("Exceeded maximum DB size"). */
+export function isDbFullError(e: unknown): boolean {
+  const text = errorText(e);
+  return !!text && DB_FULL_PATTERNS.some((re) => re.test(text));
+}
+
+export function isFreeTierLimitError(e: unknown): boolean {
+  if (e == null) return false;
+  const text = errorText(e);
   if (!text) return false;
-  return LIMIT_PATTERNS.some((re) => re.test(text));
+  return DB_FULL_PATTERNS.some((re) => re.test(text)) || LIMIT_PATTERNS.some((re) => re.test(text));
 }
 
 /** Seconds the client should wait before retrying after a limit error (next reset is <= 24 h away; poll gently). */
@@ -50,6 +70,8 @@ export function degradedBody(extra: Record<string, unknown> = {}): Record<string
  * stale data); writes get 503 + Retry-After so clients back off instead of hammering a blocked binding.
  */
 export function limitResponse(method: string, extra: Record<string, unknown> = {}): Response {
+  // Route-level catch blocks pass String(e) as details: a full DB file must degrade to 200 for every method (dbFullResponse).
+  if (typeof extra.details === "string" && DB_FULL_PATTERNS.some((re) => re.test(extra.details as string))) return dbFullResponse(method, extra);
   const body = JSON.stringify(degradedBody(extra));
   const isRead = method === "GET" || method === "HEAD";
   return new Response(body, {
@@ -60,5 +82,24 @@ export function limitResponse(method: string, extra: Record<string, unknown> = {
       "Retry-After": String(LIMIT_RETRY_AFTER_SEC),
       ...corsHeaders,
     },
+  });
+}
+
+/**
+ * Response when the D1 file is full. EVERY method gets HTTP 200 + a degraded marker (writes carry recorded:false) so the
+ * site never shows an error and loops are not hammered by a 5xx storm; the body tells clients to back off for 15 min.
+ */
+export function dbFullResponse(method: string, extra: Record<string, unknown> = {}): Response {
+  const isRead = method === "GET" || method === "HEAD";
+  const body = JSON.stringify({
+    degraded: true,
+    error: "d1_db_full",
+    retry_after_ms: LIMIT_RETRY_AFTER_SEC * 1000,
+    ...(isRead ? {} : { recorded: false }),
+    ...extra,
+  });
+  return new Response(body, {
+    status: 200,
+    headers: { "Content-Type": "application/json", "X-Degraded": "d1_db_full", "Retry-After": String(LIMIT_RETRY_AFTER_SEC), ...corsHeaders },
   });
 }

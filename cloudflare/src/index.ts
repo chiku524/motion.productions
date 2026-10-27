@@ -13,7 +13,7 @@ import { handleKnowledgeRoutes } from "./routes/knowledge";
 import { handleLoopRoutes } from "./routes/loop";
 import { handleRegistriesRoutes } from "./routes/registries";
 import { handleR2Admin, sweepR2 } from "./r2Budget";
-import { isFreeTierLimitError, limitResponse } from "./limits";
+import { dbFullResponse, isDbFullError, isFreeTierLimitError, limitResponse } from "./limits";
 
 export type { Env };
 
@@ -57,6 +57,8 @@ export default {
       } catch (e) {
         console.error("handleApi threw:", e);
         // D1/KV free-tier daily limit: GET -> 200 degraded, writes -> 503 + Retry-After (15 min), never a bare 5xx storm.
+        // D1 file full ("Exceeded maximum DB size"): always a degraded 200, never a 5xx (checked before the daily-quota branch).
+        if (isDbFullError(e)) return dbFullResponse(request.method, { details: String(e) });
         if (isFreeTierLimitError(e)) return limitResponse(request.method, { details: String(e) });
         return new Response(
           JSON.stringify({ error: "Service temporarily unavailable", details: String(e) }),
