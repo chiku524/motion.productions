@@ -8,7 +8,8 @@ import { createHarness, seedRegistry, clipPayload, chunkDiscoveries } from "./he
 
 let h;
 before(async () => {
-  h = await createHarness({ seed: (ctx) => seedRegistry(ctx) });
+  // Retention has its own budget test (d1Regrowth.test.mjs); the daily prune run is disabled here so these assert steady state.
+  h = await createHarness({ bindings: { RETENTION_DISABLED: "1" }, seed: (ctx) => seedRegistry(ctx) });
 });
 after(async () => { await h?.dispose(); });
 
