@@ -390,6 +390,10 @@ export async function handleVideoAiApi(
     const jobId = crypto.randomUUID();
     const { recipeKey, outputKey } = jobKeys(jobId);
     const recipeText = JSON.stringify(recipe);
+    // R2 free-tier guard: recipes are small JSON; refuse anything pathological (see docs/R2_FREE_TIER.md).
+    if (recipeText.length > 512 * 1024) {
+      return json({ error: "Recipe too large", max_bytes: 512 * 1024 }, 413);
+    }
 
     try {
       await env.VIDEOS.put(recipeKey, recipeText, {
