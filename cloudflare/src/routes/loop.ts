@@ -230,7 +230,7 @@ if (path === "/api/loop/status" && request.method === "GET") {
     let rows: { results?: RunRow[] } = { results: [] };
     try {
     rows = await db.prepare(
-      "SELECT id, prompt, duration_seconds, updated_at, workflow_type, r2_key FROM jobs WHERE status = 'completed' AND r2_key IS NOT NULL ORDER BY updated_at DESC LIMIT 10"
+      "SELECT id, prompt, duration_seconds, updated_at, workflow_type, r2_key FROM jobs WHERE status = 'completed' AND r2_key IS NOT NULL ORDER BY rowid DESC LIMIT 10"
     )
       .all<RunRow>();
     } catch (dbErr) {
@@ -281,7 +281,7 @@ if (path === "/api/loop/progress" && request.method === "GET") {
     { softTtlSec: 900, hardTtlSec: 86400, bypass: false },
     async () => {
   const completed = await db.prepare(
-    "SELECT id FROM jobs WHERE status = 'completed' AND r2_key IS NOT NULL ORDER BY updated_at DESC LIMIT ?"
+    "SELECT id FROM jobs WHERE status = 'completed' AND r2_key IS NOT NULL ORDER BY rowid DESC LIMIT ?"
   ).bind(last).all<{ id: string }>();
   const ids = (completed.results || []).map((r) => r.id);
   let withLearning = 0;
@@ -444,7 +444,7 @@ if (path === "/api/metrics" && request.method === "GET") {
   try {
     const last = 20;
     const completed = await db.prepare(
-      "SELECT id FROM jobs WHERE status = 'completed' AND r2_key IS NOT NULL ORDER BY updated_at DESC LIMIT ?"
+      "SELECT id FROM jobs WHERE status = 'completed' AND r2_key IS NOT NULL ORDER BY rowid DESC LIMIT ?"
     ).bind(last).all<{ id: string }>();
     const ids = (completed.results || []).map((r) => r.id);
     let withLearning = 0;
@@ -488,7 +488,7 @@ if (path === "/api/metrics" && request.method === "GET") {
 if (path === "/api/loop/diagnostics" && request.method === "GET") {
   const last = Math.min(parseInt(new URL(request.url).searchParams.get("last") || "20", 10), 50);
   const completed = await db.prepare(
-    "SELECT id, prompt, created_at FROM jobs WHERE status = 'completed' AND r2_key IS NOT NULL ORDER BY updated_at DESC LIMIT ?"
+    "SELECT id, prompt, created_at FROM jobs WHERE status = 'completed' AND r2_key IS NOT NULL ORDER BY rowid DESC LIMIT ?"
   ).bind(last).all<{ id: string; prompt: string; created_at: string }>();
   const rows = completed.results || [];
   const ids = rows.map((r) => r.id);

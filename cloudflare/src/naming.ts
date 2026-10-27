@@ -8,16 +8,42 @@ import { SOUND_ORIGIN_PRIMARIES as GENERATED_SOUND_ORIGIN_PRIMARIES } from "./re
 /** Everyday pure-sound origin primitives (sync with src/knowledge/blend_depth.py via gen_registry_constants_ts.py). */
 export const SOUND_ORIGIN_PRIMARIES = [...GENERATED_SOUND_ORIGIN_PRIMARIES] as readonly string[];
 
+/**
+ * Names already taken, via ONE primary-key lookup on name_reserve (<= 60 names per statement).
+ *
+ * name_reserve is the source of truth for generated names: the discovery writer inserts every generated blend / color /
+ * sound name there (discoveryWriter.ts). We deliberately do NOT also probe learned_blends / static_colors / learned_colors
+ * by name: none of those columns is indexed, so each probe was a full table scan (~281k rows for learned_blends; ~39k
+ * probes/day = ~11B rows read against a 5M/day free quota). Legacy names that never reached name_reserve may therefore
+ * repeat; names are display labels (ids/keys are the identity), and the fallbacks below widen the name space instead.
+ */
+export async function reservedNames(db: D1Database, names: string[]): Promise<Set<string>> {
+  const out = new Set<string>();
+  const uniq = [...new Set(names)];
+  for (let i = 0; i < uniq.length; i += 60) {
+    const part = uniq.slice(i, i + 60);
+    const res = await db
+      .prepare(`SELECT name FROM name_reserve WHERE name IN (${part.map(() => "?").join(",")})`)
+      .bind(...part)
+      .all<{ name: string }>();
+    for (const r of res.results || []) out.add(r.name);
+  }
+  return out;
+}
+
 export async function resolveUniqueBlendName(env: Env, base: string): Promise<string> {
   const db = getDb(env);
   const cleaned = (base || "").replace(/\d+$/, "").trim() || "Haven";
-  for (let i = 0; i < 100; i++) {
-    const candidate = i === 0 ? toTitleCase(cleaned) : toTitleCase(inventSemanticWord(nameSeed(cleaned, i)));
-    const inReserve = await db.prepare("SELECT name FROM name_reserve WHERE name = ?").bind(candidate).first();
-    const inBlends = await db.prepare("SELECT name FROM learned_blends WHERE name = ?").bind(candidate).first();
-    if (!inReserve && !inBlends) return candidate;
-  }
-  return toTitleCase(inventSemanticWord(nameSeed(cleaned, Date.now() % 0x7fffffff)));
+  const cands: string[] = [];
+  for (let i = 0; i < 24; i++) cands.push(i === 0 ? toTitleCase(cleaned) : toTitleCase(inventSemanticWord(nameSeed(cleaned, i))));
+  const taken = await reservedNames(db, cands);
+  const free = cands.find((c) => !taken.has(c));
+  if (free) return free;
+  // Every candidate taken: two seed-derived words (~5k combinations), checked in one more lookup.
+  const wide: string[] = [];
+  for (let i = 0; i < 24; i++) wide.push(toTitleCase(inventSemanticWord(nameSeed(cleaned, 1000 + i))) + " " + toTitleCase(inventSemanticWord(nameSeed(cleaned, 2000 + i * 31))));
+  const taken2 = await reservedNames(db, wide);
+  return wide.find((c) => !taken2.has(c)) ?? wide[Date.now() % wide.length];
 }
 
 function nameSeed(s: string, i: number): number {
@@ -292,19 +318,18 @@ export function computeMotionDepth(motionLevel: number): Record<string, number> 
 
 export async function generateUniqueName(env: Env): Promise<string> {
   const db = getDb(env);
-  for (let attempt = 0; attempt < 50; attempt++) {
-    const seed = Math.floor(Math.random() * 1000000) + attempt * 7919;
-    const word = inventSemanticWord(seed);
-    if (word.length >= 4) {
-      const name = toTitleCase(word);
-      const inReserve = await db.prepare("SELECT name FROM name_reserve WHERE name = ?").bind(name).first();
-      const inBlends = await db.prepare("SELECT name FROM learned_blends WHERE name = ?").bind(name).first();
-      const inStatic = await db.prepare("SELECT name FROM static_colors WHERE name = ?").bind(name).first();
-      const inLearned = await db.prepare("SELECT name FROM learned_colors WHERE name = ?").bind(name).first();
-      if (!inReserve && !inBlends && !inStatic && !inLearned) return name;
-    }
+  const word = () => toTitleCase(inventSemanticWord(Math.floor(Math.random() * 0x7fffffff)));
+  // Round 0: one word (the vocabulary is only ~75 words, so it fills up). Round 1: two words. Round 2: three words.
+  // One name_reserve primary-key lookup per round (<= 3 statements, a handful of rows) instead of up to 50 x 4 table scans.
+  for (let round = 0; round < 3; round++) {
+    const cands: string[] = [];
+    for (let k = 0; k < 16; k++) cands.push(Array.from({ length: round + 1 }, word).join(" "));
+    const taken = await reservedNames(db, cands);
+    const free = cands.find((c) => !taken.has(c));
+    if (free) return free;
   }
-  return toTitleCase(inventSemanticWord(Math.floor(Math.random() * 0x7fffffff)));
+  // All 48 candidates were taken (~impossible): a fresh three-word name; 75^3 combinations make a repeat negligible.
+  return [word(), word(), word()].join(" ");
 }
 
 export async function logEvent(env: Env, eventType: string, jobId: string | null, payload: Record<string, unknown> | null): Promise<void> {

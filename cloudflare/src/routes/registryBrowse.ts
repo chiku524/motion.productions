@@ -4,6 +4,7 @@
 import type { Env } from "../env";
 import { getDb, getPrimaryDb, ensureStaticColorsFamilyColumns, readRegistryCounts } from "../db";
 import { getSnapshot } from "../snapshotCache";
+import { recentDoneInterpretations } from "../readCache";
 import { json, err } from "../http";
 import {
   COLOR_FAMILY_META,
@@ -532,13 +533,7 @@ async function browseInterpretation(request: Request, env: Env): Promise<Respons
   const url = new URL(request.url);
   const { limit, offset } = parseLimitOffset(url);
   const q = (url.searchParams.get("q") || "").trim().toLowerCase();
-  const db = getDb(env);
-  const rows = await db
-    .prepare(
-      "SELECT id, prompt, instruction_json, updated_at FROM interpretations WHERE status = 'done' AND instruction_json IS NOT NULL ORDER BY updated_at DESC LIMIT ?",
-    )
-    .bind(SCAN_CAP)
-    .all<{ id: string; prompt: string; instruction_json: string | null; updated_at: string }>();
+  const rows = { results: await recentDoneInterpretations(env, SCAN_CAP) };
 
   let all = (rows.results || []).map((r) => {
     let instruction: unknown = null;

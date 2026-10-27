@@ -22,3 +22,21 @@ It creates a tiny `retention_marker` table lazily (`CREATE TABLE IF NOT EXISTS`)
 Deleting rows does not shrink a SQLite file by itself, and deletes cost writes (row + each index entry), so the existing
 ~1.4 GB cannot be pruned back under 500 MB within the 100 k writes/day cap. Reclaiming space means exporting the must-keep
 tables and recreating the database/tables (needs explicit approval). `cloudflare/migrations_pending/` holds unapplied SQL.
+## Read-scan mitigations (5 M rows read / day)
+Incident: `motion-productions-db` read ~55.7 B rows in one day. Cause: `POST /api/knowledge/name/take` called
+`generateUniqueName`, which made up to 50 attempts x 4 name probes (`name_reserve`, `learned_blends`, `static_colors`,
+`learned_colors`). The names come from a ~75-word vocabulary so collisions are constant, and `WHERE name = ?` on the three
+big tables has no index = a full scan each time (~281 k rows for `learned_blends`). Code-only fix (no schema change, no new writes):
+
+| path | before | after |
+|---|---|---|
+| `POST /api/knowledge/name/take`, `backfill-names`, `resolveUniqueBlendName` | up to ~200 table probes, 3 of them full scans | <= 3 batched `name_reserve` PK lookups (~17 rows each); `name_reserve` is the source of truth and is written on take/backfill |
+| `GET /api/jobs` | unindexed `ORDER BY updated_at/created_at` sort per request, unauthenticated, uncached | snapshot cache (pending 15 s, completed 120 s, stale served on D1 limit), `ORDER BY rowid` (index walk, ~LIMIT rows), normalized cache key, 120 req/min/IP (429 + `Retry-After`, Cache API counter, no D1/KV writes) |
+| `interpretations WHERE status='done'` (registries, browse, knowledge, loop) | sorted all done rows by `updated_at` | `ORDER BY rowid DESC LIMIT n` + 300 s cache (`readCache.recentDoneInterpretations`) |
+| `static_colors / static_sound ORDER BY count DESC` (registries) | full scan per call | 300 s cache, stale on error |
+| `learned_blends WHERE domain`, `jobs ... completed` in knowledge/loop | sorted by an unindexed column | `ORDER BY rowid DESC LIMIT n` over the status/domain index |
+
+Trade-offs: legacy names that never reached `name_reserve` can be generated again (names are labels, ids are identity; when a
+single word is taken the generator widens to 2-3 words). `rowid` order = insertion order, a close proxy for "recent".
+Optional indexes are written but **not applied**: `cloudflare/migrations_pending/0101_optional_read_indexes.sql` (the DB is over its
+500 MB cap, indexes are writes). Tests: `cloudflare/test/readScans.test.mjs`.
