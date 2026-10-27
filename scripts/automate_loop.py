@@ -16,12 +16,38 @@ import os
 import time
 from pathlib import Path
 
-from src.api_client import APIError, api_request, api_request_with_retry, finish_loop_job, slim_learning_analysis
+from src.api_client import (
+    APIError,
+    api_request,
+    api_request_with_retry,
+    finish_loop_job,
+    pop_write_stats,
+    slim_learning_analysis,
+)
 from src.random_utils import fresh_seed, secure_choice, secure_random
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_DELAY_SECONDS = 30
+
+
+class DuplicateClipSkipped(Exception):
+    """The clip is still a near-duplicate of a stored one after every re-roll: do not publish it."""
+
+    def __init__(self, attempts: int, reason: str = "", nearest_id: str | None = None):
+        super().__init__(f"duplicate after {attempts} attempt(s): {reason or 'near-duplicate'}")
+        self.attempts = attempts
+        self.reason = reason
+        self.nearest_id = nearest_id
+
+
+def iteration_outcome(*, run_succeeded: bool, rejected: bool, gate) -> str:
+    """accepted | rejected | unchecked | error, for the per-container metrics log."""
+    if rejected:
+        return "rejected"
+    if not run_succeeded:
+        return "error"
+    return "accepted" if (gate is not None and gate.fingerprint is not None) else "unchecked"
 
 
 def _loop_extraction_focus() -> str:
@@ -412,6 +438,16 @@ def run() -> None:
     except Exception as e:
         logger.warning("Content novelty gate disabled: %s", e)
 
+    metrics_log = None
+    try:
+        from src.knowledge.loop_metrics import LoopMetricsLog, metrics_enabled, metrics_name
+        if metrics_enabled():
+            metrics_log = LoopMetricsLog(
+                name=metrics_name(os.environ.get("LOOP_WORKFLOW_TYPE", "").strip().lower(), _loop_extraction_focus()),
+            )
+    except Exception as e:
+        logger.warning("Loop metrics disabled: %s", e)
+
     # Per-worker offset: stagger startup so multiple workers don't hit D1 simultaneously
     worker_offset = 0
     try:
@@ -515,8 +551,17 @@ def run() -> None:
 
         run_succeeded = False
         growth_ran = False
+        duplicate_skipped = False
         rendered_path: Path | None = None
         gate = None
+        added: dict = {}
+        iter_started = time.monotonic()
+        pop_write_stats()
+        try:
+            from src.knowledge.remote_sync import pop_post_stats
+            pop_post_stats()
+        except Exception:
+            pass
         try:
             run_seed = fresh_seed(job_id, state["run_count"] + 1)
             run_config = dict(config)
@@ -547,6 +592,17 @@ def run() -> None:
             else:
                 path = _render(run_seed)
             rendered_path = Path(path)
+
+            if gate is not None and gate.rejected:
+                raise DuplicateClipSkipped(gate.attempts, gate.verdict.reason, gate.verdict.nearest_id)
+            if gate is not None and novelty_store is not None:
+                # Record the accepted clip NOW (before publish/extraction/posts): the sooner the shared
+                # store sees it, the smaller the window for another container to accept a twin.
+                from src.knowledge.content_novelty import record_result
+                try:
+                    record_result(novelty_store, gate, entry_id=str(job_id), prompt=prompt)
+                except Exception as e:
+                    logger.warning("Novelty store update failed: %s", e)
 
             # R2 free tier: store the clip only when LOOP_UPLOAD_VIDEOS=1; otherwise just mark the job completed.
             finish_loop_job(args.api_base, job_id, path, timeout=120, max_retries=5)
@@ -758,12 +814,6 @@ def run() -> None:
                 require_content_novelty=novelty_store is not None,
                 content_check=(gate.verdict.to_dict() if gate is not None else None),
             )
-            if gate is not None and novelty_store is not None:
-                from src.knowledge.content_novelty import record_result
-                try:
-                    record_result(novelty_store, gate, entry_id=str(job_id), prompt=prompt)
-                except Exception as e:
-                    logger.warning("Novelty store update failed: %s", e)
             state["last_authenticity"] = authenticity
             if authenticity["authentic"]:
                 logger.info(
@@ -790,6 +840,15 @@ def run() -> None:
                 print(f"  (waiting {delay_seconds:.0f}s before next run — check the library at motion.productions)")
                 time.sleep(delay_seconds)
 
+        except DuplicateClipSkipped as e:
+            duplicate_skipped = True
+            logger.warning(
+                "Duplicate clip skipped (job_id=%s, attempts=%s, nearest=%s, %s): not published, no discoveries posted",
+                job_id, e.attempts, e.nearest_id, e.reason,
+            )
+            print(f"duplicate after {e.attempts} attempt(s), skipped (not published)")
+            # Do not hammer D1 with a fresh job row on every immediate retry.
+            time.sleep(delay_seconds)
         except APIError as e:
             logger.warning("API call failed (status=%s, path=%s): %s", e.status_code, e.path, e)
             print(f"✗ {e}")
@@ -799,7 +858,33 @@ def run() -> None:
                 import traceback
                 traceback.print_exc()
 
-        if growth_ran:
+        if metrics_log is not None:
+            try:
+                from src.knowledge.remote_sync import growth_metrics, pop_post_stats
+                post = pop_post_stats()
+                writes = pop_write_stats()
+                metrics_log.log(
+                    workflow=workflow_type,
+                    focus=extraction_focus,
+                    job_id=str(job_id),
+                    outcome=iteration_outcome(run_succeeded=run_succeeded, rejected=duplicate_skipped, gate=gate),
+                    rerolls=max(0, (gate.attempts - 1) if gate is not None else 0),
+                    new_cells=int(growth_metrics(added)["total_added"]) if added else 0,
+                    post_items=post["items"],
+                    post_requests=post["requests"],
+                    write_requests=writes["requests"],
+                    write_failed=writes["failed"],
+                    elapsed_s=round(time.monotonic() - iter_started, 1),
+                )
+            except Exception as e:
+                logger.debug("loop metrics skipped: %s", e)
+
+        if duplicate_skipped:
+            from src.media_cleanup import discard_rendered_media, prune_render_scratch
+            discard_rendered_media(rendered_path)
+            prune_render_scratch(out_dir, keep=0)
+            state["recent_prompts"] = (state.get("recent_prompts", []) + [prompt])[-200:]
+        elif growth_ran:
             from src.media_cleanup import discard_rendered_media, prune_render_scratch
             discard_rendered_media(rendered_path)
             prune_render_scratch(out_dir, keep=0)

@@ -180,6 +180,19 @@ def _rebuild_discovery_payload(
     return out
 
 
+# Per-process counters of discovery items/requests successfully POSTed; read and reset per loop iteration
+# by scripts/automate_loop.py for the local metrics log.
+_post_stats = {"items": 0, "requests": 0}
+
+
+def pop_post_stats() -> dict[str, int]:
+    """Return {items, requests} posted since the last call and reset them."""
+    out = dict(_post_stats)
+    _post_stats["items"] = 0
+    _post_stats["requests"] = 0
+    return out
+
+
 def post_discoveries(
     api_base: str,
     discoveries: dict[str, Any],
@@ -222,6 +235,8 @@ def post_discoveries(
         resp = api_request_with_retry(
             api_base, "POST", "/api/knowledge/discoveries", data=chunk, timeout=90, max_retries=8
         )
+        _post_stats["items"] += n_items
+        _post_stats["requests"] += 1
         merged["truncated"] = merged.get("truncated", False) or resp.get("truncated", False)
         res = resp.get("results", {})
         for k, v in res.items():

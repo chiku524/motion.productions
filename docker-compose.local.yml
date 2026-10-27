@@ -99,6 +99,12 @@ services:
       LOOP_EXTRACTION_FOCUS: frame
       LOOP_STATIC_FOCUS: color
       LOOP_WORKFLOW_TYPE: explorer
+      # One shared content-novelty store for every loop container (bind mount ./knowledge); merge-safe, ~5000 clips
+      NOVELTY_STORE_DIR: /app/knowledge/novelty
+      NOVELTY_STORE_MAX: ${NOVELTY_STORE_MAX:-5000}
+      # Small rotating per-container JSONL metrics log (python scripts/loop_metrics.py)
+      LOOP_METRICS_DIR: /app/knowledge/metrics
+      LOOP_METRICS_NAME: explorer
       LOOP_CAMERA_VARIATION: ${LOOP_CAMERA_VARIATION:-1}
       LOOP_WORKER_OFFSET_SECONDS: "0"
       LOOP_DELAY_SECONDS: "15"
@@ -120,6 +126,10 @@ services:
       LOOP_EXTRACTION_FOCUS: frame
       LOOP_STATIC_FOCUS: color
       LOOP_WORKFLOW_TYPE: exploiter
+      NOVELTY_STORE_DIR: /app/knowledge/novelty
+      NOVELTY_STORE_MAX: ${NOVELTY_STORE_MAX:-5000}
+      LOOP_METRICS_DIR: /app/knowledge/metrics
+      LOOP_METRICS_NAME: exploiter
       LOOP_CAMERA_VARIATION: ${LOOP_CAMERA_VARIATION:-1}
       LOOP_WORKER_OFFSET_SECONDS: "25"
       LOOP_DELAY_SECONDS: "15"
@@ -140,6 +150,10 @@ services:
       PYTHONUNBUFFERED: "1"
       LOOP_EXTRACTION_FOCUS: window
       LOOP_WORKFLOW_TYPE: main
+      NOVELTY_STORE_DIR: /app/knowledge/novelty
+      NOVELTY_STORE_MAX: ${NOVELTY_STORE_MAX:-5000}
+      LOOP_METRICS_DIR: /app/knowledge/metrics
+      LOOP_METRICS_NAME: balanced
       LOOP_CAMERA_VARIATION: ${LOOP_CAMERA_VARIATION:-1}
       LOOP_STATIC_FOCUS: "none"
       LOOP_WORKER_OFFSET_SECONDS: "30"
