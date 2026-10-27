@@ -16,7 +16,7 @@ import os
 import time
 from pathlib import Path
 
-from src.api_client import APIError, api_request, api_request_with_retry, finish_loop_job
+from src.api_client import APIError, api_request, api_request_with_retry, finish_loop_job, slim_learning_analysis
 from src.random_utils import fresh_seed, secure_choice, secure_random
 
 logger = logging.getLogger(__name__)
@@ -233,7 +233,8 @@ def _post_learning_with_retry(
             "mood": getattr(spec, "mood", None),
             "style": getattr(spec, "style", None),
         },
-        "analysis": analysis_dict,
+        # Worker stores only these scalars anyway; do not ship per-frame arrays over the wire.
+        "analysis": slim_learning_analysis(analysis_dict),
     }
     try:
         api_request_with_retry(

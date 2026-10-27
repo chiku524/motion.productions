@@ -63,11 +63,34 @@ def is_free_tier_limit_body(body: str | None) -> bool:
     if not body:
         return False
     low = body.lower()
-    if "free_tier_limit" in low:
+    if "free_tier_limit" in low or "d1_db_full" in low or "exceeded maximum db size" in low:
         return True
     if "cpu time" in low:
         return False
     return "daily" in low and "limit" in low
+
+
+LEARNING_ANALYSIS_KEYS = ("motion_level", "mean_brightness", "mean_contrast")
+
+
+def slim_learning_analysis(analysis: dict | None) -> dict:
+    """Only the scalars the Worker's learning stats aggregate (the rest, e.g. motion_per_frame arrays, bloated D1)."""
+    out: dict = {}
+    for k in LEARNING_ANALYSIS_KEYS:
+        v = (analysis or {}).get(k)
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            out[k] = round(float(v), 3)
+    return out
+
+
+def _note_degraded_success(method: str, path: str, result: object) -> None:
+    """The Worker answers HTTP 200 + {"degraded": true, "error": "d1_db_full"|"free_tier_limit"} instead of a 5xx.
+    A write that was not recorded must pause writes like a 503 limit does (no hammering a full/blocked D1)."""
+    if method == "GET" or not isinstance(result, dict) or result.get("degraded") is not True:
+        return
+    if result.get("recorded") is False or result.get("error") in ("d1_db_full", "free_tier_limit"):
+        start_free_tier_cooldown()
+        logger.warning("API %s %s degraded (%s); writes paused %.0fs", method, path, result.get("error"), limit_cooldown_seconds())
 
 
 def free_tier_cooldown_remaining() -> float:
@@ -158,7 +181,9 @@ def api_request(
         try:
             resp = requests.request(method, url, data=body, headers=headers, timeout=timeout)
             resp.raise_for_status()
-            return _parse_json_response(resp)
+            parsed = _parse_json_response(resp)
+            _note_degraded_success(method, path, parsed)
+            return parsed
         except requests.exceptions.HTTPError as e:
             last_exc = e
             status = e.response.status_code if e.response is not None else None
