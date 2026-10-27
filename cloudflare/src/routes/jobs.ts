@@ -6,6 +6,8 @@ import { getDb } from "../db";
 import { json, err, uuid, corsHeaders } from "../http";
 import { aggregateLearningRuns, logEvent } from "../naming";
 import { getSnapshot } from "../snapshotCache";
+import { slimAnalysis, slimSpec } from "../learningSlim";
+import { maybeRunRetention } from "../retention";
 import { checkDeclaredSize, recordPut, reserveUpload } from "../r2Budget";
 
 /** jobs.r2_key sentinels: no R2 object exists (loops delete renders after discovery; retention may expire others). */
@@ -215,7 +217,7 @@ if (downloadMatch && request.method === "GET") {
 
 // POST /api/learning — log a run for learning (D1)
 if (path === "/api/learning" && request.method === "POST") {
-  let body: { job_id?: string; prompt: string; spec: Record<string, unknown>; analysis: Record<string, unknown> };
+  let body: { job_id?: string; prompt: string; spec: Record<string, unknown>; analysis: Record<string, unknown>; store_full?: boolean };
   try {
     body = (await request.json()) as typeof body;
   } catch {
@@ -227,11 +229,14 @@ if (path === "/api/learning" && request.method === "POST") {
   const analysis = body.analysis && typeof body.analysis === "object" ? body.analysis : {};
   const jobId = typeof body.job_id === "string" ? body.job_id : null;
   const id = uuid();
+  // Loop clips only need the few fields aggregateLearningRuns reads; the full documents were ~22% of the D1 file.
+  const full = body.store_full === true;
   await db.prepare(
     "INSERT INTO learning_runs (id, job_id, prompt, spec_json, analysis_json) VALUES (?, ?, ?, ?, ?)"
   )
-    .bind(id, jobId, prompt, JSON.stringify(spec), JSON.stringify(analysis))
+    .bind(id, jobId, prompt, JSON.stringify(full ? spec : slimSpec(spec)), JSON.stringify(full ? analysis : slimAnalysis(analysis)))
     .run();
+  await maybeRunRetention(env);
   // Do not use KV delete (free tier limit). Stats cache expires via TTL; GET recomputes when stale.
   return json({ id, job_id: jobId, status: "logged" }, 201);
 }
