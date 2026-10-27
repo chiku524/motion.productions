@@ -24,6 +24,16 @@ logger = logging.getLogger(__name__)
 DEFAULT_DELAY_SECONDS = 15
 DEFAULT_DURATION_SECONDS = 2.5
 SOUND_LOOP_FPS = 24
+# Share of cycles that survey unseen sound.L1 (v2) cells instead of pairing v1 primitives; cells per survey clip.
+DEFAULT_V2_SURVEY_RATE = 0.5
+DEFAULT_V2_CELLS_PER_CLIP = 8
+
+
+def _v2_survey_rate() -> float:
+    try:
+        return max(0.0, min(1.0, float(os.environ.get("SOUND_V2_SURVEY_RATE", DEFAULT_V2_SURVEY_RATE))))
+    except ValueError:
+        return DEFAULT_V2_SURVEY_RATE
 
 
 def _pick_audio_params(knowledge: dict) -> tuple[str, str, str]:
@@ -186,6 +196,23 @@ def run() -> None:
                 )
             target_primitive = labels[0] if labels else _pick_target_primitive(api_base)
 
+            # Sound v2 survey: aim this clip at unseen sound.L1 cells. The registry still only records what the
+            # extractor measures from the decoded WAV; the synth just aims (closed loop, deterministic by seed).
+            v2_cells: list[int] = []
+            if random.random() < _v2_survey_rate():
+                try:
+                    from src.knowledge.mission_targets import fetch_mission, pick_target_sound_v2_cells
+
+                    mission = fetch_mission(api_base) if api_base else None
+                    per_clip = max(1, min(DEFAULT_V2_CELLS_PER_CLIP, int(duration * SOUND_LOOP_FPS) // 2))
+                    v2_cells = pick_target_sound_v2_cells(per_clip, config=config, mission=mission)
+                except Exception as e:
+                    logger.warning("v2 cell pick failed: %s", e)
+                    v2_cells = []
+            if v2_cells:
+                pairing, labels, pairing_kind, clip_duration = [], [], "frame", duration
+                source_prompt = f"sound v2 cell survey ({len(v2_cells)} cells)"
+
             generate_audio_only(
                 clip_duration,
                 wav_path,
@@ -196,7 +223,12 @@ def run() -> None:
                 pure_sounds=pairing or None,
                 pairing_kind=pairing_kind,
                 seed=_fresh_audio_seed(cycle),
+                target_v2_cells=v2_cells or None,
             )
+            if v2_cells:
+                from src.knowledge.sound_v2 import note_attempts
+
+                note_attempts(v2_cells, config)
             segments = read_audio_segments_only(
                 wav_path,
                 fps=SOUND_LOOP_FPS,
@@ -207,11 +239,12 @@ def run() -> None:
                 prompt=source_prompt,
                 config=config,
                 collect_novel_for_sync=bool(api_base),
+                v2_targets=v2_cells or None,
             )
-            count = added.get("static_sound", 0)
+            count = added.get("static_sound", 0) + added.get("sound_v2", 0)
             # When decoded audio yields no novel keys, still grow from spec (same as video path).
             # Try a few amplitude jitters so we do not stall on a saturated local mesh.
-            if count == 0:
+            if count == 0 and not v2_cells:
                 from types import SimpleNamespace
                 from src.knowledge.growth_per_instance import (
                     derive_static_sound_from_spec,
@@ -270,7 +303,7 @@ def run() -> None:
                 )
             if count:
                 print(
-                    f"[{cycle}] sound discovery: +{count} "
+                    f"[{cycle}] sound discovery: +{count} (v2 cells +{added.get('sound_v2', 0)}) "
                     f"(kind={pairing_kind}, pair={'+'.join(labels[:4])}, "
                     f"segments={len(segments)})"
                 )
