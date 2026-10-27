@@ -6,6 +6,8 @@
  *   - 0-1 `SELECT ... FROM name_reserve WHERE name IN (...)` (primary-key lookups) when items need names
  *   - ONE db.batch() holding one upsert per UNIQUE (table, key): `INSERT .. ON CONFLICT DO UPDATE
  *     SET count = count + ? RETURNING count`  -> 1 row written per unique key, no row scans
+ *   - learned_blends: deterministic id (sha256 of domain + normalized output) + INSERT OR IGNORE => a repeated blend
+ *     writes 0 rows (previously every clip re-inserted ~13 rows + 2 index rows)
  *   - 0-1 `INSERT OR IGNORE INTO name_reserve` batch for novel generated names
  *   - 0 KV operations (no lease, no cache invalidation, no per-post count bump)
  * "Novel" = the RETURNING count equals the delta we sent (a fresh row starts at `delta`).
@@ -19,6 +21,8 @@ import {
   bumpRegistryCounts,
 } from "./db";
 import { uuid } from "./http";
+import { blendId } from "./blendId";
+import { maybeRunRetention } from "./retention";
 import { inventSemanticWord, titleCaseLabel, toTitleCase, sanitizePureSoundKey } from "./naming";
 import { classifyColorFamily, classifyColorShade } from "./colorBrowse";
 
@@ -191,7 +195,7 @@ export async function writeDiscoveries(env: Env, body: DiscoveriesBody): Promise
 
   const planned: Planned[] = [];
   const seen = new Map<string, Planned>();
-  const blends: Array<{ b: AnyItem; base: string }> = [];
+  const blends: Array<{ b: AnyItem; base: string; id: string }> = [];
   const blendSeen = new Set<string>();
 
   const take = (_cat: string): boolean => {
@@ -263,12 +267,12 @@ export async function writeDiscoveries(env: Env, body: DiscoveriesBody): Promise
     }
     for (const b of body.blends || []) {
       if (!take("blends")) break outer;
-      const sig = `${b.domain}|${JSON.stringify(b.inputs)}|${JSON.stringify(b.output)}`;
-      if (blendSeen.has(sig)) {
+      const id = await blendId(b.domain, b.output);
+      if (blendSeen.has(id)) {
         dupBlends++;
       } else {
-        blendSeen.add(sig);
-        blends.push({ b, base: nm(b.name) || "" });
+        blendSeen.add(id);
+        blends.push({ b, base: nm(b.name) || "", id });
       }
       done("blends");
     }
@@ -329,12 +333,14 @@ export async function writeDiscoveries(env: Env, body: DiscoveriesBody): Promise
         .bind(p.meta!.aspect, p.keyVals[0], p.meta!.depthJson),
     );
   }
+  const blendIdx: number[] = [];
   blends.forEach((x, i) => {
     const b = x.b;
+    blendIdx.push(stmts.length);
     stmts.push(
       db
-        .prepare("INSERT INTO learned_blends (id, name, domain, inputs_json, output_json, primitive_depths_json, source_prompt) VALUES (?, ?, ?, ?, ?, ?, ?)")
-        .bind(uuid(), resolvedBlendNames[i] || "Haven", b.domain, JSON.stringify(b.inputs), JSON.stringify(b.output), b.primitive_depths ? JSON.stringify(b.primitive_depths) : null, String(b.source_prompt || "").slice(0, 120)),
+        .prepare("INSERT OR IGNORE INTO learned_blends (id, name, domain, inputs_json, output_json, primitive_depths_json, source_prompt) VALUES (?, ?, ?, ?, ?, ?, ?)")
+        .bind(x.id, resolvedBlendNames[i] || "Haven", b.domain, JSON.stringify(b.inputs), JSON.stringify(b.output), b.primitive_depths ? JSON.stringify(b.primitive_depths) : null, String(b.source_prompt || "").slice(0, 120)),
     );
   });
   if (jobId) {
@@ -351,10 +357,12 @@ export async function writeDiscoveries(env: Env, body: DiscoveriesBody): Promise
 
   let novel: Record<string, number> = { static_colors: 0, static_sound: 0, learned_colors: 0 };
   const reserveNames: string[] = [];
+  let out: D1Result[] | undefined;
   if (stmts.length) {
-    const out = await db.batch(stmts);
+    const res = await db.batch(stmts);
+    out = res;
     planned.forEach((p, i) => {
-      const row = (out[upsertIdx[i]]?.results || [])[0] as { count?: number } | undefined;
+      const row = (res[upsertIdx[i]]?.results || [])[0] as { count?: number } | undefined;
       p.novel = !!row && row.count === p.delta;
       if (p.novel) {
         if (p.cat === "static_colors") novel.static_colors++;
@@ -364,8 +372,12 @@ export async function writeDiscoveries(env: Env, body: DiscoveriesBody): Promise
       }
     });
   }
+  // Only reserve generated names of blends that were actually inserted (an ignored duplicate keeps its older name).
+  let newBlends = 0;
   blends.forEach((x, i) => {
-    if (!x.base && resolvedBlendNames[i]) reserveNames.push(resolvedBlendNames[i]);
+    const inserted = !stmts.length || ((out?.[blendIdx[i]]?.meta as { changes?: number } | undefined)?.changes ?? 1) > 0;
+    if (inserted) newBlends++;
+    if (inserted && !x.base && resolvedBlendNames[i]) reserveNames.push(resolvedBlendNames[i]);
   });
   if (reserveNames.length) {
     try {
@@ -377,7 +389,9 @@ export async function writeDiscoveries(env: Env, body: DiscoveriesBody): Promise
   if (novel.static_colors || novel.static_sound || novel.learned_colors) {
     await bumpRegistryCounts(env, novel);
   }
-  const resp: Record<string, unknown> = { status: "recorded", results, items_processed: itemsProcessed, unique_rows: planned.length + blends.length, deduped_blends: dupBlends, novel };
+  const resp: Record<string, unknown> = { status: "recorded", results, items_processed: itemsProcessed, unique_rows: planned.length + blends.length, deduped_blends: dupBlends, new_blends: newBlends, novel };
   if (truncated) resp.truncated = true;
+  // Opportunistic log retention (no cron available on the free plan); at most once/day/table, tiny write budget, never throws.
+  await maybeRunRetention(env);
   return { status: 201, body: resp };
 }
