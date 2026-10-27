@@ -23,4 +23,11 @@ export interface Env {
   R2_MAX_UPLOAD_BYTES?: string;
   R2_BUDGET_BYTES?: string;
   R2_RETENTION_DAYS?: string;
+  /** D1 log retention (src/retention.ts): days to keep (3), rows per delete batch (<=500), batches per table per day (3), rows-written budget per daily run (6000), "1" disables. */
+  RETENTION_DAYS?: string;
+  RETENTION_BATCH_ROWS?: string;
+  RETENTION_MAX_BATCHES?: string;
+  RETENTION_WRITE_BUDGET?: string;
+  RETENTION_DISABLED?: string;
+  RETENTION_CHECK_INTERVAL_SEC?: string;
 }
