@@ -25,6 +25,15 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
+def _tag_declared(*groups) -> None:
+    """Pre-seeded grids are declared values (a spec), never measured from a clip, so they are not coverage."""
+    for g in groups:
+        rows = [r for v in g.values() for r in v] if isinstance(g, dict) else g
+        for r in rows:
+            if isinstance(r, dict):
+                r["evidence_tier"] = "declared"
+
+
 def _reset_local_knowledge(config: dict) -> None:
     from src.knowledge.registry import get_registry_dir
     root = get_registry_dir(config)
@@ -115,6 +124,7 @@ def main() -> int:
         print("Local seed complete (--local-only).")
         return 0
 
+    _tag_declared(static_colors, static_sound, dynamic_novel, narrative_novel)
     print(f"Posting primitives to {api_base} ...")
     try:
         resp = post_all_discoveries(
