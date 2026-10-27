@@ -1461,7 +1461,7 @@ if (path === "/api/registries" && request.method === "GET") {
   for (const key of Object.keys(dynamicPayload) as (keyof typeof dynamicPayload)[]) {
     const val = dynamicPayload[key];
     if (Array.isArray(val)) {
-      const paged = pageSlice(val);
+      const paged = pageSlice(val as unknown[]);
       // pageSlice.total is the length of a query already bound by LIMIT regLimit — only a
       // true count when the table has fewer than regLimit rows. Prefer the real COUNT(*).
       dynamicTotals[key as string] = trueTotals?.dynamic?.[key as string] ?? paged.total;
