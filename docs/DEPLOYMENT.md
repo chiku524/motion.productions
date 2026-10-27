@@ -563,7 +563,7 @@ HEALTH_PORT=8080
 
 **One-time backfill (empty registry):** `python scripts/backfill_interpretations.py --api-base https://motion.productions --limit 100`
 
-**Local/Procfile:** `interpret: python scripts/interpret_loop.py` then `py -m procfile start` or `foreman start`.
+**Local:** run `python scripts/interpret_loop.py` directly, or the `interpret` Compose service.
 
 **Linguistic registry:** Run D1 migrations so `linguistic_registry` table exists (`python scripts/run_d1_migrations.py`). **Backfill gibberish names:** `python scripts/backfill_registry_names.py --dry-run` then `python scripts/backfill_registry_names.py --api-base https://motion.productions`.
 

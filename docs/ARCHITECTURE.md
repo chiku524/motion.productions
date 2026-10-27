@@ -149,7 +149,7 @@ Clean organization: every file is in its respective directory.
 | `cloudflare/` | Worker API (D1, R2, KV), migrations, static app. |
 | `video-ai/` | Node FFmpeg recipe render service. |
 | `docker-compose.local.yml` | Local Docker fleet (webjobs, procedural-render, optional loops). |
-| `Dockerfile`, `Dockerfile.video-ai`, `docker-compose.local.yml`, `Procfile` | Deployment (Docker Python workers). |
+| `Dockerfile`, `Dockerfile.video-ai`, `docker-compose.local.yml` | Deployment (Docker Python workers). |
 
 **`scripts/` — entrypoints**
 
