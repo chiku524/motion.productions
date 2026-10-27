@@ -3,6 +3,7 @@
  */
 import type { Env } from "../env";
 import { getDb, getPrimaryDb, ensureStaticColorsFamilyColumns, readRegistryCounts } from "../db";
+import { getSnapshot } from "../snapshotCache";
 import { json, err } from "../http";
 import {
   COLOR_FAMILY_META,
@@ -16,7 +17,6 @@ import {
 } from "../colorBrowse";
 import {
   BROWSE_COLORS_CACHE_KEY,
-  BROWSE_COLOR_FACETS_KEY,
   BROWSE_SOUND_CACHE_KEY,
 } from "../browseCache";
 import { SOUND_ORIGIN_PRIMARIES } from "../naming";
@@ -25,7 +25,6 @@ import { loadMissionStats } from "../missionStats";
 // Free-tier D1: keep ORDER BY count scans small; serve from KV when warm.
 // Explorer UI shows registry_total (true COUNT/KV) separately from this sample.
 const SCAN_CAP = 800;
-const CACHE_TTL_SEC = 300;
 
 type Facet = { id: string; label: string; count: number; sample_rgb?: [number, number, number] };
 
@@ -49,21 +48,20 @@ function pageItems<T>(items: T[], offset: number, limit: number) {
   return { items: slice, total, truncated: offset + slice.length < total };
 }
 
+// Each rebuild scans ORDER BY count over the whole table (no count index), so keep rebuilds rare.
+const BROWSE_SOFT_TTL_SEC = 7200;
+
 async function loadClassifiedColors(env: Env): Promise<ClassifiedColor[]> {
-  const kv = env.MOTION_KV;
-  const registryTotal = (await readRegistryCounts(env))?.static_colors ?? 0;
-  if (kv) {
-    try {
-      const cached = await kv.get(BROWSE_COLORS_CACHE_KEY, "json");
-      if (Array.isArray(cached) && cached.length) {
-        const target = registryTotal > 0 ? Math.min(SCAN_CAP, registryTotal) : SCAN_CAP;
-        // Only trust a full sample (or the whole registry when smaller than the cap).
-        if (cached.length >= target) return cached as ClassifiedColor[];
-      }
-    } catch {
-      /* ignore */
-    }
-  }
+  const snap = await getSnapshot<ClassifiedColor[]>(
+    env,
+    BROWSE_COLORS_CACHE_KEY,
+    { softTtlSec: BROWSE_SOFT_TTL_SEC, hardTtlSec: 7 * 86400, kvPersistSec: 6 * 3600 },
+    () => buildClassifiedColors(env),
+  );
+  return snap.value;
+}
+
+async function buildClassifiedColors(env: Env): Promise<ClassifiedColor[]> {
   const db = getPrimaryDb(env);
   const familyOk = await ensureStaticColorsFamilyColumns(db);
   type Row = {
@@ -106,7 +104,7 @@ async function loadClassifiedColors(env: Env): Promise<ClassifiedColor[]> {
     classified.push(base);
   }
   // Opportunistic backfill (bounded) so SQL filters work for older rows
-  for (const b of backfill.slice(0, 80)) {
+  for (const b of backfill.slice(0, 25)) {
     try {
       await db
         .prepare("UPDATE static_colors SET family = ?, shade = ? WHERE color_key = ? AND (family IS NULL OR shade IS NULL)")
@@ -114,25 +112,6 @@ async function loadClassifiedColors(env: Env): Promise<ClassifiedColor[]> {
         .run();
     } catch {
       break;
-    }
-  }
-  if (kv) {
-    try {
-      await kv.put(BROWSE_COLORS_CACHE_KEY, JSON.stringify(classified), { expirationTtl: CACHE_TTL_SEC });
-      const facets = buildColorFacets(classified, null);
-      await kv.put(
-        BROWSE_COLOR_FACETS_KEY,
-        JSON.stringify({
-          updated_at: new Date().toISOString(),
-          scanned: classified.length,
-          families: facets.families,
-          shades: facets.shades,
-          primitives: facets.primitives.slice(0, 40),
-        }),
-        { expirationTtl: CACHE_TTL_SEC },
-      );
-    } catch {
-      /* ignore */
     }
   }
   return classified;
@@ -270,19 +249,16 @@ function parseSoundOrigins(depthJson: string | null): { depth_breakdown: Record<
 }
 
 async function loadSoundRows(env: Env): Promise<SoundRow[]> {
-  const kv = env.MOTION_KV;
-  const registryTotal = (await readRegistryCounts(env))?.static_sound ?? 0;
-  if (kv) {
-    try {
-      const cached = await kv.get(BROWSE_SOUND_CACHE_KEY, "json");
-      if (Array.isArray(cached) && cached.length) {
-        const target = registryTotal > 0 ? Math.min(SCAN_CAP, registryTotal) : SCAN_CAP;
-        if (cached.length >= target) return cached as SoundRow[];
-      }
-    } catch {
-      /* ignore */
-    }
-  }
+  const snap = await getSnapshot<SoundRow[]>(
+    env,
+    BROWSE_SOUND_CACHE_KEY,
+    { softTtlSec: BROWSE_SOFT_TTL_SEC, hardTtlSec: 7 * 86400, kvPersistSec: 6 * 3600 },
+    () => buildSoundRows(env),
+  );
+  return snap.value;
+}
+
+async function buildSoundRows(env: Env): Promise<SoundRow[]> {
   const db = getPrimaryDb(env);
   const rows = await db
     .prepare(
@@ -311,13 +287,6 @@ async function loadSoundRows(env: Env): Promise<SoundRow[]> {
       timbre: r.timbre || undefined,
     };
   });
-  if (kv) {
-    try {
-      await kv.put(BROWSE_SOUND_CACHE_KEY, JSON.stringify(all), { expirationTtl: CACHE_TTL_SEC });
-    } catch {
-      /* ignore */
-    }
-  }
   return all;
 }
 

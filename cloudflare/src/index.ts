@@ -12,6 +12,8 @@ import { handleJobsRoutes } from "./routes/jobs";
 import { handleKnowledgeRoutes } from "./routes/knowledge";
 import { handleLoopRoutes } from "./routes/loop";
 import { handleRegistriesRoutes } from "./routes/registries";
+import { handleR2Admin, sweepR2 } from "./r2Budget";
+import { isFreeTierLimitError, limitResponse } from "./limits";
 
 export type { Env };
 
@@ -54,6 +56,8 @@ export default {
         if (apiResponse) return apiResponse;
       } catch (e) {
         console.error("handleApi threw:", e);
+        // D1/KV free-tier daily limit: GET -> 200 degraded, writes -> 503 + Retry-After (15 min), never a bare 5xx storm.
+        if (isFreeTierLimitError(e)) return limitResponse(request.method, { details: String(e) });
         return new Response(
           JSON.stringify({ error: "Service temporarily unavailable", details: String(e) }),
           {
@@ -70,6 +74,15 @@ export default {
 
     return env.ASSETS.fetch(request);
   },
+
+  /** Daily cron (wrangler.jsonc triggers.crons): R2 retention + usage re-measure. No D1/KV usage. */
+  async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(
+      sweepR2(env, { reason: "cron" })
+        .then((r) => console.log("r2 sweep", JSON.stringify(r)))
+        .catch((e) => console.error("r2 sweep failed:", e)),
+    );
+  },
 };
 
 async function handleApi(request: Request, env: Env, path: string): Promise<Response | null> {
@@ -77,6 +90,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
   if (authFail) return authFail;
 
   const handlers = [
+    handleR2Admin,
     handleJobsRoutes,
     handleLoopRoutes,
     handleInterpretationRoutes,

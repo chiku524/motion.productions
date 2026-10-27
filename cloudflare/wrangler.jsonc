@@ -13,6 +13,7 @@
   "kv_namespaces": [{ "binding": "MOTION_KV", "id": "e3d001c8396b4623be7052450fe7aadf" }],
   "d1_databases": [{ "binding": "DB", "database_name": "motion-productions-db", "database_id": "7c6e61ce-c4ae-474b-b303-7eb8641f0747" }],
   "r2_buckets": [{ "binding": "VIDEOS", "bucket_name": "motion-productions-videos" }],
+  "triggers": { "crons": ["17 9 * * *"] },
   "assets": { "directory": "./public", "binding": "ASSETS" },
   "vars": {
     "OPENAI_MODEL": "gpt-4o-mini"

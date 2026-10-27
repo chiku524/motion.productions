@@ -3,12 +3,7 @@
  * Procedural renders record their own stamps from the Python render service.
  */
 import type { Env } from "./env";
-import { bumpRegistryCounts, ensureStaticColorsFamilyColumns, getPrimaryDb } from "./db";
-import { uuid } from "./http";
-import { generateUniqueName } from "./naming";
-import { classifyColorFamily, classifyColorShade } from "./colorBrowse";
-import { acquireDiscoveryLease, releaseDiscoveryLease } from "./discoveryLease";
-import { invalidateRegistryReadCaches } from "./browseCache";
+import { writeDiscoveries } from "./discoveryWriter";
 
 function binChannel(v: number): number {
   if (!Number.isFinite(v)) return 0;
@@ -50,54 +45,11 @@ export async function recordRecipeColorDiscoveries(
   }
   if (!colors.length) return 0;
 
-  const lease = await acquireDiscoveryLease(env);
-  if (!lease.ok) return 0;
-  const db = getPrimaryDb(env);
-  let novel = 0;
-  try {
-    const familyColsOk = await ensureStaticColorsFamilyColumns(db);
-    const prompt = sourcePrompt.trim().slice(0, 80);
-    for (const c of colors) {
-      const existing = await db
-        .prepare("SELECT id FROM static_colors WHERE color_key = ?")
-        .bind(c.key)
-        .first();
-      if (existing) {
-        await db.prepare("UPDATE static_colors SET count = count + 1 WHERE color_key = ?").bind(c.key).run();
-        continue;
-      }
-      const name = await generateUniqueName(env);
-      try {
-        await db.prepare("INSERT OR IGNORE INTO name_reserve (name) VALUES (?)").bind(name).run();
-      } catch {
-        /* reserve is best-effort */
-      }
-      const sources = prompt ? JSON.stringify([prompt]) : null;
-      if (familyColsOk) {
-        const family = classifyColorFamily(c.r, c.g, c.b);
-        const shade = classifyColorShade(c.r, c.g, c.b, family);
-        await db
-          .prepare(
-            "INSERT INTO static_colors (id, color_key, r, g, b, opacity, count, sources_json, name, family, shade) VALUES (?, ?, ?, ?, ?, 1, 1, ?, ?, ?, ?)",
-          )
-          .bind(uuid(), c.key, c.r, c.g, c.b, sources, name, family, shade)
-          .run();
-      } else {
-        await db
-          .prepare(
-            "INSERT INTO static_colors (id, color_key, r, g, b, opacity, count, sources_json, name) VALUES (?, ?, ?, ?, ?, 1, 1, ?, ?)",
-          )
-          .bind(uuid(), c.key, c.r, c.g, c.b, sources, name)
-          .run();
-      }
-      novel++;
-    }
-    if (novel > 0) {
-      await bumpRegistryCounts(env, { static_colors: novel });
-      await invalidateRegistryReadCaches(env);
-    }
-    return novel;
-  } finally {
-    await releaseDiscoveryLease(env, lease.holder);
-  }
+  // Shared batched upsert writer (one D1 batch, no lease/KV/cache invalidation).
+  const prompt = sourcePrompt.trim().slice(0, 80);
+  const out = await writeDiscoveries(env, {
+    static_colors: colors.map((c) => ({ key: c.key, r: c.r, g: c.g, b: c.b, opacity: 1, source_prompt: prompt || undefined })),
+  });
+  const novel = (out.body.novel as { static_colors?: number } | undefined)?.static_colors ?? 0;
+  return novel;
 }

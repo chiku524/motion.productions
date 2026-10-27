@@ -5,6 +5,12 @@ import type { Env } from "../env";
 import { getDb } from "../db";
 import { json, err, uuid, corsHeaders } from "../http";
 import { aggregateLearningRuns, logEvent } from "../naming";
+import { getSnapshot } from "../snapshotCache";
+import { checkDeclaredSize, recordPut, reserveUpload } from "../r2Budget";
+
+/** jobs.r2_key sentinels: no R2 object exists (loops delete renders after discovery; retention may expire others). */
+export const R2_KEY_SKIPPED = "skipped:no-upload";
+export const hasR2Object = (k: string | null | undefined): k is string => !!k && !k.startsWith("skipped:") && !k.startsWith("expired:");
 
 export async function handleJobsRoutes(
   request: Request,
@@ -120,11 +126,9 @@ if (jobMatch && request.method === "GET") {
     updated_at: row.updated_at,
     workflow_type: row.workflow_type ?? undefined,
   };
-  if (row.status === "completed" && row.r2_key) {
-    const obj = await env.VIDEOS.get(row.r2_key);
-    if (obj) {
-      out.download_url = `/api/jobs/${id}/download`;
-    }
+  // No R2 head/get here (Class B op per poll): the key in D1 is the source of truth; /download 404s if retention removed it.
+  if (row.status === "completed" && hasR2Object(row.r2_key)) {
+    out.download_url = `/api/jobs/${id}/download`;
   }
   return json(out);
 }
@@ -137,6 +141,12 @@ if (uploadMatch && request.method === "POST") {
   if (!row) return err("Job not found", 404);
   if ((row as { status: string }).status !== "pending") return err("Job already has video", 400);
 
+  // Reject oversized uploads before reading the body, then enforce the storage budget.
+  const declared = Number(request.headers.get("Content-Length") ?? "");
+  if (Number.isFinite(declared) && declared > 0) {
+    const pre = checkDeclaredSize(env, declared);
+    if (!pre.ok) return json({ error: pre.error, ...pre.details }, pre.status);
+  }
   let body: ArrayBuffer;
   let contentType = "video/mp4";
   const ct = request.headers.get("Content-Type") ?? "";
@@ -150,14 +160,37 @@ if (uploadMatch && request.method === "POST") {
     body = await request.arrayBuffer();
   }
   if (body.byteLength === 0) return err("Empty body");
+  const reserve = await reserveUpload(env, body.byteLength);
+  if (!reserve.ok) return json({ error: reserve.error, ...reserve.details }, reserve.status);
   const r2_key = `jobs/${id}/video.mp4`;
   await env.VIDEOS.put(r2_key, body, { httpMetadata: { contentType } });
+  try {
+    await recordPut(env, body.byteLength);
+  } catch (e) {
+    console.error("r2 usage counter update failed (sweep will re-measure):", e);
+  }
   await db.prepare(
     "UPDATE jobs SET status = 'completed', r2_key = ?, updated_at = datetime('now') WHERE id = ?"
   )
     .bind(r2_key, id)
     .run();
   return json({ id, status: "completed", download_url: `/api/jobs/${id}/download` });
+}
+
+// POST /api/jobs/:id/complete — mark a job completed WITHOUT storing a video (loops delete renders after discovery;
+// avoids R2 storage + Class A ops). Sets r2_key to a sentinel so status/progress queries still count the run.
+const completeMatch = path.match(/^\/api\/jobs\/([a-f0-9-]+)\/complete$/);
+if (completeMatch && request.method === "POST") {
+  const id = completeMatch[1];
+  const row = await db.prepare("SELECT id, status FROM jobs WHERE id = ?").bind(id).first();
+  if (!row) return err("Job not found", 404);
+  if ((row as { status: string }).status !== "pending") return err("Job already completed", 400);
+  await db.prepare(
+    "UPDATE jobs SET status = 'completed', r2_key = ?, updated_at = datetime('now') WHERE id = ?"
+  )
+    .bind(R2_KEY_SKIPPED, id)
+    .run();
+  return json({ id, status: "completed", stored: false });
 }
 
 // GET /api/jobs/:id/download — stream video from R2
@@ -168,6 +201,7 @@ if (downloadMatch && request.method === "GET") {
     .bind(id)
     .first<{ r2_key: string | null }>();
   if (!row?.r2_key) return err("Not found", 404);
+  if (!hasR2Object(row.r2_key)) return err("Video not stored", 404);
   const obj = await env.VIDEOS.get(row.r2_key);
   if (!obj) return err("Video not found", 404);
   return new Response(obj.body, {
@@ -307,23 +341,19 @@ if (path === "/api/learning/stats" && request.method === "GET") {
   const safeDefault = { total_runs: 0, by_palette: {}, by_keyword: {}, overall: {} };
   if (!db) return json(safeDefault);
   try {
-    if (env.MOTION_KV) {
-      const cached = await env.MOTION_KV.get("learning:stats");
-      if (cached) return json(JSON.parse(cached));
-    }
+    const statsSnap = await getSnapshot<ReturnType<typeof aggregateLearningRuns>>(
+      env,
+      "learning:stats",
+      { softTtlSec: 1800, hardTtlSec: 86400 },
+      async () => {
     const rows = await db.prepare(
       "SELECT prompt, spec_json, analysis_json FROM learning_runs ORDER BY created_at DESC LIMIT 500"
     )
       .all<{ prompt: string; spec_json: string; analysis_json: string }>();
-    const report = aggregateLearningRuns(rows.results || []);
-    if (env.MOTION_KV) {
-      try {
-        await env.MOTION_KV.put("learning:stats", JSON.stringify(report), { expirationTtl: 120 });
-      } catch {
-        /* ignore KV write failure */
-      }
-    }
-    return json(report);
+    return aggregateLearningRuns(rows.results || []);
+      },
+    );
+    return json(statsSnap.value);
   } catch (e) {
     console.error("GET /api/learning/stats failed:", e);
     return json(safeDefault);

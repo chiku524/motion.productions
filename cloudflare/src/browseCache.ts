@@ -60,11 +60,18 @@ export async function readForCreationGeneration(env: Env): Promise<string> {
   }
 }
 
-/** Call after novel registry writes (discoveries, name backfill, sound sanitize). */
-export async function invalidateRegistryReadCaches(env: Env): Promise<void> {
+/**
+ * Optional hook after registry writes.
+ *
+ * Free-tier policy: a discoveries POST must NOT invalidate read caches. Doing so (3 browse deletes + a
+ * generation bump + a coverage delete = ~6 KV writes per POST) burned the 1,000/day KV write budget and
+ * forced a full for-creation / browse rebuild after every post (D1 5M rows-read/day). Read snapshots are
+ * TTL-driven (see snapshotCache.ts). Pass `{ force: true }` only for rare maintenance actions.
+ */
+export async function invalidateRegistryReadCaches(env: Env, opts: { force?: boolean } = {}): Promise<void> {
+  if (!opts.force) return;
   await invalidateBrowseCaches(env);
   await bumpForCreationGeneration(env);
-  // Coverage cache — short TTL already; delete for immediate consistency
   if (env.MOTION_KV) {
     try {
       await env.MOTION_KV.delete("registries:coverage");

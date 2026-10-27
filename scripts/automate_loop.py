@@ -16,7 +16,7 @@ import os
 import time
 from pathlib import Path
 
-from src.api_client import APIError, api_request, api_request_with_retry
+from src.api_client import APIError, api_request, api_request_with_retry, finish_loop_job
 from src.random_utils import fresh_seed, secure_choice, secure_random
 
 logger = logging.getLogger(__name__)
@@ -547,14 +547,8 @@ def run() -> None:
                 path = _render(run_seed)
             rendered_path = Path(path)
 
-            with open(path, "rb") as f:
-                body = f.read()
-            api_request_with_retry(
-                args.api_base, "POST", f"/api/jobs/{job_id}/upload",
-                raw_body=body, content_type="video/mp4",
-                timeout=120,
-                max_retries=5,
-            )
+            # R2 free tier: store the clip only when LOOP_UPLOAD_VIDEOS=1; otherwise just mark the job completed.
+            finish_loop_job(args.api_base, job_id, path, timeout=120, max_retries=5)
             run_succeeded = True
 
             # Prefer the instruction + spec that actually drove the render (avoid re-roll of random registry picks)

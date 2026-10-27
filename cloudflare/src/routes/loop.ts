@@ -5,12 +5,18 @@ import type { Env } from "../env";
 import { getDb, readRegistryCounts } from "../db";
 import { loadMissionStats } from "../missionStats";
 import { json, err, corsHeaders } from "../http";
+import { getSnapshot } from "../snapshotCache";
+import { shouldWrite, markWritten } from "../kvGate";
+import { isFreeTierLimitError, limitResponse } from "../limits";
 import { COLOR_PRIMARIES_FOR_API } from "../colorPrimaries.generated";
 import {
   STATIC_COLOR_ESTIMATED_CELLS,
   NARRATIVE_ORIGIN_SIZES,
   SOUND_ORIGIN_PRIMARIES,
 } from "../registryConstants.generated";
+
+/** Loop state is persisted at most this often per key (KV free tier: 1,000 writes/day). */
+const LOOP_STATE_MIN_WRITE_SEC = 30 * 60;
 
 const LOOP_WORKER_RE = /^[a-z][a-z0-9_-]{0,31}$/;
 
@@ -66,6 +72,12 @@ if (path === "/api/loop/state" && request.method === "POST") {
   }
   const worker = sanitizeLoopWorker(body.worker) ?? sanitizeLoopWorker(new URL(request.url).searchParams.get("worker"));
   const raw = body.state && typeof body.state === "object" ? body.state : {};
+  // Throttle: a save used to cost 1 KV get + 2 KV puts per loop iteration. Persist at most every
+  // LOOP_STATE_MIN_WRITE_SEC per worker key (and for the shared key); skipped saves are acknowledged.
+  const gateKey = `loop_state_save:${worker ?? "shared"}`;
+  if (!(await shouldWrite(gateKey, LOOP_STATE_MIN_WRITE_SEC))) {
+    return json({ ok: true, throttled: true });
+  }
   // Sanitize: only allow safe JSON; KV has 1 write/sec limit per key — client should space saves
   const counters: Record<string, unknown> = {};
   counters.run_count = typeof raw.run_count === "number" && Number.isFinite(raw.run_count) ? Math.floor(raw.run_count) : 0;
@@ -105,14 +117,19 @@ if (path === "/api/loop/state" && request.method === "POST") {
   try {
     const sharedPayload = JSON.stringify(shared);
     if (sharedPayload.length > 25 * 1024 * 1024) return json({ error: "State too large for KV (max 25MB)" }, 413);
-    await kv.put("loop_state", sharedPayload);
+    if (await shouldWrite("loop_state_shared_put", LOOP_STATE_MIN_WRITE_SEC)) {
+      await kv.put("loop_state", sharedPayload);
+      await markWritten("loop_state_shared_put", LOOP_STATE_MIN_WRITE_SEC);
+    }
     if (worker) {
       const workerPayload = JSON.stringify(counters);
       if (workerPayload.length > 25 * 1024 * 1024) return json({ error: "State too large for KV (max 25MB)" }, 413);
       await kv.put(`loop_state:${worker}`, workerPayload);
     }
+    await markWritten(gateKey, LOOP_STATE_MIN_WRITE_SEC);
     return json({ ok: true });
   } catch (e) {
+    if (isFreeTierLimitError(e)) return limitResponse("POST", { details: String(e) });
     const msg = String(e);
     const isRateLimit = msg.toLowerCase().includes("rate") || msg.toLowerCase().includes("limit");
     const status = isRateLimit ? 429 : 500;
@@ -209,13 +226,13 @@ if (path === "/api/loop/status" && request.method === "GET") {
       }
     }
     let degraded = false;
-    type RunRow = { id: string; prompt: string; duration_seconds: number | null; updated_at: string; workflow_type: string | null };
+    type RunRow = { id: string; prompt: string; duration_seconds: number | null; updated_at: string; workflow_type: string | null; r2_key: string | null };
     let rows: { results?: RunRow[] } = { results: [] };
     try {
     rows = await db.prepare(
-      "SELECT id, prompt, duration_seconds, updated_at, workflow_type FROM jobs WHERE status = 'completed' AND r2_key IS NOT NULL ORDER BY updated_at DESC LIMIT 10"
+      "SELECT id, prompt, duration_seconds, updated_at, workflow_type, r2_key FROM jobs WHERE status = 'completed' AND r2_key IS NOT NULL ORDER BY updated_at DESC LIMIT 10"
     )
-      .all<{ id: string; prompt: string; duration_seconds: number | null; updated_at: string; workflow_type: string | null }>();
+      .all<RunRow>();
     } catch (dbErr) {
       // D1 unavailable (e.g. free-tier daily row-read limit): still serve the KV-backed status.
       degraded = true;
@@ -227,7 +244,7 @@ if (path === "/api/loop/status" && request.method === "GET") {
       duration_seconds: r.duration_seconds,
       updated_at: r.updated_at,
       workflow_type: r.workflow_type ?? undefined,
-      download_url: `/api/jobs/${r.id}/download`,
+      download_url: r.r2_key && !r.r2_key.startsWith("skipped:") && !r.r2_key.startsWith("expired:") ? `/api/jobs/${r.id}/download` : undefined,
     }));
     return json({
       config: {
@@ -243,6 +260,13 @@ if (path === "/api/loop/status" && request.method === "GET") {
       ...(degraded ? { degraded: true } : {}),
     });
   } catch (e) {
+    if (isFreeTierLimitError(e)) {
+      // KV/D1 daily limit: answer 200 with defaults so the dashboard and health checks keep working.
+      return limitResponse("GET", {
+        config: { enabled: true, delay_seconds: 30, duration_seconds: 5 },
+        run_count: 0, last_run_at: null, last_prompt: null, last_job_id: null, recent_runs: [],
+      });
+    }
     return json({ error: "Failed to load loop status", details: String(e) }, 500);
   }
 }
@@ -251,10 +275,11 @@ if (path === "/api/loop/status" && request.method === "GET") {
 if (path === "/api/loop/progress" && request.method === "GET") {
   const last = Math.min(parseInt(new URL(request.url).searchParams.get("last") || "20", 10), 100);
   const progressCacheKey = `loop:progress:${last}`;
-  if (env.MOTION_KV) {
-    const cached = await env.MOTION_KV.get(progressCacheKey);
-    if (cached) return new Response(cached, { headers: { "Content-Type": "application/json", "X-Cache": "HIT" } });
-  }
+  const progressSnap = await getSnapshot<string>(
+    env,
+    progressCacheKey,
+    { softTtlSec: 900, hardTtlSec: 86400, bypass: false },
+    async () => {
   const completed = await db.prepare(
     "SELECT id FROM jobs WHERE status = 'completed' AND r2_key IS NOT NULL ORDER BY updated_at DESC LIMIT ?"
   ).bind(last).all<{ id: string }>();
@@ -406,13 +431,12 @@ if (path === "/api/loop/progress" && request.method === "GET") {
     exploit_count,
     explore_count,
   };
-  const progressBody = JSON.stringify(progressPayload);
-  if (env.MOTION_KV) {
-    try {
-      await env.MOTION_KV.put(progressCacheKey, progressBody, { expirationTtl: 120 });
-    } catch { /* ignore KV write failure */ }
-  }
-  return new Response(progressBody, { headers: { "Content-Type": "application/json" } });
+  return JSON.stringify(progressPayload);
+    },
+  );
+  return new Response(progressSnap.value, {
+    headers: { "Content-Type": "application/json", "X-Cache": progressSnap.source === "built" ? "MISS" : "HIT", ...(progressSnap.degraded ? { "X-Degraded": "free_tier_limit" } : {}) },
+  });
 }
 
 // GET /api/metrics — Prometheus-compatible metrics for dashboards
