@@ -208,10 +208,19 @@ if (path === "/api/loop/status" && request.method === "GET") {
         /* use empty */
       }
     }
-    const rows = await db.prepare(
+    let degraded = false;
+    type RunRow = { id: string; prompt: string; duration_seconds: number | null; updated_at: string; workflow_type: string | null };
+    let rows: { results?: RunRow[] } = { results: [] };
+    try {
+    rows = await db.prepare(
       "SELECT id, prompt, duration_seconds, updated_at, workflow_type FROM jobs WHERE status = 'completed' AND r2_key IS NOT NULL ORDER BY updated_at DESC LIMIT 10"
     )
       .all<{ id: string; prompt: string; duration_seconds: number | null; updated_at: string; workflow_type: string | null }>();
+    } catch (dbErr) {
+      // D1 unavailable (e.g. free-tier daily row-read limit): still serve the KV-backed status.
+      degraded = true;
+      console.error("loop status: recent runs query failed:", dbErr);
+    }
     const recent_runs = (rows.results || []).map((r) => ({
       id: r.id,
       prompt: (r.prompt || "").slice(0, 60) + ((r.prompt?.length ?? 0) > 60 ? "…" : ""),
@@ -231,6 +240,7 @@ if (path === "/api/loop/status" && request.method === "GET") {
       last_prompt: state.last_prompt ?? null,
       last_job_id: state.last_job_id ?? null,
       recent_runs,
+      ...(degraded ? { degraded: true } : {}),
     });
   } catch (e) {
     return json({ error: "Failed to load loop status", details: String(e) }, 500);

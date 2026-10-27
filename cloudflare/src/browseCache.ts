@@ -13,7 +13,9 @@ const BROWSE_KEYS = [
   BROWSE_COLORS_CACHE_KEY,
   BROWSE_COLOR_FACETS_KEY,
   BROWSE_SOUND_CACHE_KEY,
-  MISSION_STATS_KEY,
+  // NOTE: MISSION_STATS_KEY is intentionally NOT here. A whole-table mission-stats rebuild reads
+  // ~4-5k D1 rows; deleting it on every discoveries POST made each loop iteration rebuild it
+  // (D1 free-tier daily read limit was exhausted ~50 min after the loops restarted). TTL-only.
 ] as const;
 
 /** Drop browse list/facet caches so the next GET rebuilds from D1. */

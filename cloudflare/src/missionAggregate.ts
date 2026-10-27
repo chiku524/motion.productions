@@ -88,3 +88,12 @@ export function presentOrigins(counts: Record<string, number>): string[] {
     .filter((k) => counts[k] > 0)
     .sort();
 }
+
+/** True when a cached stats snapshot (ISO `updated_at`) is younger than `softTtlSec`. */
+export function isSnapshotFresh(updatedAt: unknown, nowMs: number, softTtlSec: number): boolean {
+  if (typeof updatedAt !== "string") return false;
+  const t = Date.parse(updatedAt);
+  if (!Number.isFinite(t)) return false;
+  const age = nowMs - t;
+  return age >= 0 && age < softTtlSec * 1000;
+}

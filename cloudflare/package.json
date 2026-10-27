@@ -1,4 +1,4 @@
-{
+﻿{
   "name": "motion-productions-worker",
   "version": "1.0.0",
   "private": true,
@@ -9,7 +9,7 @@
     "db:migrate:local": "wrangler d1 migrations apply motion-productions-db --local",
     "gen:color-primaries": "python ../scripts/gen_color_primaries_ts.py",
     "cf-typegen": "wrangler types",
-    "test": "node --test test/missionAggregate.test.mjs"
+    "test": "node --test \"test/*.test.mjs\""
   },
   "dependencies": {
     "zod": "^3.24.2"
@@ -20,3 +20,5 @@
     "wrangler": "^4.63.0"
   }
 }
+
+
