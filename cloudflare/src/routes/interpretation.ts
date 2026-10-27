@@ -5,6 +5,8 @@ import type { Env } from "../env";
 import { getDb } from "../db";
 import { json, err, uuid } from "../http";
 import { isGibberishPrompt } from "../naming";
+import { getSnapshot } from "../snapshotCache";
+import { isFreeTierLimitError, limitResponse } from "../limits";
 
 export async function handleInterpretationRoutes(
   request: Request,
@@ -78,13 +80,14 @@ if (interpretMatch && request.method === "PATCH") {
 if (path === "/api/interpret/backfill-prompts" && request.method === "GET") {
   const limit = Math.min(parseInt(new URL(request.url).searchParams.get("limit") || "30", 10), 100);
   const backfillCacheKey = `interpret:backfill-prompts:${limit}`;
-  if (env.MOTION_KV) {
-    const cached = await env.MOTION_KV.get(backfillCacheKey);
-    if (cached) return new Response(cached, { headers: { "Content-Type": "application/json", "X-Cache": "HIT" } });
-  }
   // Avoid jobs ⟕ interpretations DISTINCT join (full-scan → D1 CPU 7429 / ~36s 503 under loop load).
   // Cheap path: recent jobs by created_at index, then IN-check against interpretations.
   try {
+    const backfillSnap = await getSnapshot<string>(
+      env,
+      backfillCacheKey,
+      { softTtlSec: 900, hardTtlSec: 86400 },
+      async () => {
     const scan = Math.min(Math.max(limit * 4, 40), 200);
     const recent = await db
       .prepare(
@@ -117,22 +120,13 @@ if (path === "/api/interpret/backfill-prompts" && request.method === "GET") {
       }
     }
     const prompts = candidates.filter((p) => !done.has(p)).slice(0, limit);
-    const backfillBody = JSON.stringify({ prompts });
-    if (env.MOTION_KV) {
-      try {
-        await env.MOTION_KV.put(backfillCacheKey, backfillBody, { expirationTtl: 300 });
-      } catch { /* ignore */ }
-    }
-    return new Response(backfillBody, { headers: { "Content-Type": "application/json" } });
+    return JSON.stringify({ prompts });
+      },
+    );
+    return new Response(backfillSnap.value, { headers: { "Content-Type": "application/json", "X-Cache": backfillSnap.source === "built" ? "MISS" : "HIT" } });
   } catch (e) {
+    if (isFreeTierLimitError(e)) return limitResponse("GET", { prompts: [] });
     console.error("GET /api/interpret/backfill-prompts failed:", e);
-    // Negative-cache empty briefly so interpret retries do not keep pinning D1.
-    const emptyBody = JSON.stringify({ prompts: [], error: "temporarily_unavailable" });
-    if (env.MOTION_KV) {
-      try {
-        await env.MOTION_KV.put(backfillCacheKey, emptyBody, { expirationTtl: 60 });
-      } catch { /* ignore */ }
-    }
     return json({ error: "Failed to load backfill prompts", details: String(e), prompts: [] }, 503);
   }
 }

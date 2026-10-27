@@ -39,6 +39,14 @@ import {
 import { handleRegistryBrowse } from "./registryBrowse";
 import { invalidateRegistryReadCaches } from "../browseCache";
 import { loadMissionStats } from "../missionStats";
+import { getSnapshot } from "../snapshotCache";
+
+/** Thrown by the coverage builder when COUNTs were unreliable: served once, never snapshotted. */
+class UnreliableCoverage extends Error {
+  constructor(public body: string) {
+    super("coverage counts unreliable");
+  }
+}
 
 const SOUND_PRIMARIES_FOR_COVERAGE = [...SOUND_ORIGIN_PRIMARIES] as string[];
 
@@ -203,7 +211,7 @@ if (path === "/api/registries/backfill-names" && request.method === "POST") {
     }
     if (!dryRun && updated > 0) {
       try {
-        await invalidateRegistryReadCaches(env);
+        await invalidateRegistryReadCaches(env, { force: true });
       } catch {
         /* ignore */
       }
@@ -422,23 +430,15 @@ if (path === "/api/registries/sanitize-sound-keys" && request.method === "POST")
 
 // GET /api/registries/coverage — counts and coverage % per registry for completion targeting (§2.1, §2.8)
 if (path === "/api/registries/coverage" && request.method === "GET") {
-  const coverageCacheKey = "registries:coverage";
+  const coverageCacheKey = "registries:coverage:v2";
   const bypassCache = new URL(request.url).searchParams.get("fresh") === "1";
-  if (env.MOTION_KV && !bypassCache) {
-    const cached = await env.MOTION_KV.get(coverageCacheKey);
-    if (cached) {
-      try {
-        const parsed = JSON.parse(cached) as { static_colors_count?: number; static_sound_count?: number };
-        // Never serve a poisoned cache from a transient D1 COUNT failure (0 colors while sound exists).
-        const colorsOk = (parsed.static_colors_count ?? 0) > 0 || (parsed.static_sound_count ?? 0) === 0;
-        if (colorsOk) {
-          return new Response(cached, { headers: { "Content-Type": "application/json", "X-Cache": "HIT" } });
-        }
-      } catch {
-        /* rebuild */
-      }
-    }
-  }
+  // Snapshot (memory -> Cache API -> rarely-written KV). Rebuild reads every narrative_entries row, so keep it rare.
+  try {
+  const coverageSnap = await getSnapshot<string>(
+    env,
+    coverageCacheKey,
+    { softTtlSec: 1800, hardTtlSec: 7 * 86400, kvPersistSec: 6 * 3600, bypass: bypassCache, bypassMinIntervalSec: 300 },
+    async () => {
   // Sizes from registryConstants.generated.ts (full NARRATIVE_ORIGINS / cell space).
   const narrativeAspects = Object.keys(NARRATIVE_ORIGIN_SIZES);
 
@@ -629,22 +629,23 @@ if (path === "/api/registries/coverage" && request.method === "GET") {
     },
   };
   const coverageBody = JSON.stringify(coverage);
-  // Only cache when COUNT queries succeeded and color count is non-zero (or both empty).
+  // Only snapshot when COUNT queries succeeded and color count is non-zero (or both empty).
   const cacheSafe =
     countsReliable &&
     ((staticColorsCount > 0) || (staticSoundCount === 0 && staticColorsCount === 0));
-  if (env.MOTION_KV && cacheSafe) {
-    try {
-      await env.MOTION_KV.put(coverageCacheKey, coverageBody, { expirationTtl: 120 });
-    } catch { /* ignore */ }
-  }
-  return new Response(coverageBody, {
-    headers: {
-      "Content-Type": "application/json",
-      "X-Cache": "MISS",
-      ...(cacheSafe ? {} : { "X-Coverage-Unreliable": "1" }),
+  if (!cacheSafe) throw new UnreliableCoverage(coverageBody);
+  return coverageBody;
     },
+  );
+  return new Response(coverageSnap.value, {
+    headers: { "Content-Type": "application/json", "X-Cache": coverageSnap.source === "built" ? "MISS" : "HIT", ...(coverageSnap.degraded ? { "X-Degraded": "free_tier_limit" } : {}) },
   });
+  } catch (e) {
+    if (e instanceof UnreliableCoverage) {
+      return new Response(e.body, { headers: { "Content-Type": "application/json", "X-Cache": "MISS", "X-Coverage-Unreliable": "1" } });
+    }
+    throw e;
+  }
 }
 
 // GET /api/registries — pure (STATIC) vs non-pure (DYNAMIC + NARRATIVE); depth % vs primitives always

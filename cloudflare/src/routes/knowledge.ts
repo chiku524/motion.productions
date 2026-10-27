@@ -2,27 +2,16 @@
  * Knowledge discoveries, for-creation, colors, name reserve API routes.
  */
 import type { Env } from "../env";
-import {
-  getDb,
-  ensureLearnedColorsDepthColumn,
-  ensureStaticColorsFamilyColumns,
-  upsertLearnedDynamicMeta,
-  bumpRegistryCounts,
-} from "../db";
-import { json, err, uuid, corsHeaders } from "../http";
-import {
-  resolveUniqueBlendName,
-  titleCaseLabel,
-  sanitizePureSoundKey,
-  generateUniqueName,
-} from "../naming";
-import { invalidateRegistryReadCaches, readForCreationGeneration } from "../browseCache";
-import {
-  classifyColorFamily,
-  classifyColorShade,
-  COLOR_FAMILY_META,
-} from "../colorBrowse";
-import { acquireDiscoveryLease, releaseDiscoveryLease } from "../discoveryLease";
+import { getDb } from "../db";
+import { json, err, corsHeaders } from "../http";
+import { generateUniqueName } from "../naming";
+import { acquireDiscoveryLease, releaseDiscoveryLease, type LeaseResult } from "../discoveryLease";
+import { writeDiscoveries, type DiscoveriesBody } from "../discoveryWriter";
+import { getSnapshot } from "../snapshotCache";
+import { isFreeTierLimitError, limitResponse } from "../limits";
+import { classifyColorFamily, COLOR_FAMILY_META } from "../colorBrowse";
+
+const FOR_CREATION_SOFT_TTL_SEC = 4 * 3600;
 
 export async function handleKnowledgeRoutes(
   request: Request,
@@ -62,501 +51,34 @@ if (path === "/api/knowledge/name/take" && request.method === "POST") {
 // Supports: static_colors, static_sound (per-frame) + colors, blends, motion, etc. (dynamic/whole-video)
 // Free-tier Core 4: keep per-request writes small (D1 CPU + 50 queries/request on Free).
 if (path === "/api/knowledge/discoveries" && request.method === "POST") {
-  const DISCOVERIES_MAX_ITEMS = 8;
-  let body: {
-    static_colors?: Array<{ key: string; r: number; g: number; b: number; brightness?: number; luminance?: number; contrast?: number; saturation?: number; chroma?: number; hue?: number; color_variance?: number; opacity?: number; depth_breakdown?: Record<string, unknown>; source_prompt?: string; name?: string }>;
-    static_sound?: Array<{ key: string; amplitude?: number; weight?: number; strength_pct?: number; tone?: string; timbre?: string; depth_breakdown?: Record<string, unknown>; source_prompt?: string; name?: string }>;
-    colors?: Array<{
-      key: string;
-      r: number;
-      g: number;
-      b: number;
-      source_prompt?: string;
-      name?: string;
-      depth_breakdown?: Record<string, unknown>;
-    }>;
-    blends?: Array<{ name: string; domain: string; inputs: Record<string, unknown>; output: Record<string, unknown>; primitive_depths?: Record<string, unknown>; source_prompt?: string }>;
-    motion?: Array<{ key: string; motion_level: number; motion_std: number; motion_trend: string; motion_direction?: string; motion_rhythm?: string; depth_breakdown?: Record<string, unknown>; source_prompt?: string; name?: string }>;
-    lighting?: Array<{ key: string; brightness: number; contrast: number; saturation: number; depth_breakdown?: Record<string, unknown>; source_prompt?: string; name?: string }>;
-    composition?: Array<{ key: string; center_x: number; center_y: number; luminance_balance: number; source_prompt?: string; name?: string; depth_breakdown?: Record<string, unknown> }>;
-    graphics?: Array<{ key: string; edge_density: number; spatial_variance: number; busyness: number; source_prompt?: string; name?: string; depth_breakdown?: Record<string, unknown> }>;
-    temporal?: Array<{
-      key: string;
-      duration: number;
-      motion_trend: string;
-      source_prompt?: string;
-      depth_breakdown?: Record<string, unknown>;
-      name?: string;
-    }>;
-    technical?: Array<{
-      key: string;
-      width: number;
-      height: number;
-      fps: number;
-      source_prompt?: string;
-      depth_breakdown?: Record<string, unknown>;
-      name?: string;
-    }>;
-    audio_semantic?: Array<{ key: string; role: string; mood?: string; tempo?: string; source_prompt?: string; name?: string }>;
-    time?: Array<{ key: string; duration: number; fps: number; source_prompt?: string; name?: string }>;
-    gradient?: Array<{ key: string; gradient_type: string; strength?: number; depth_breakdown?: Record<string, unknown>; source_prompt?: string; name?: string }>;
-    camera?: Array<{ key: string; motion_type: string; speed?: string; depth_breakdown?: Record<string, unknown>; source_prompt?: string; name?: string }>;
-    transition?: Array<{ key: string; type: string; duration_seconds?: number; source_prompt?: string; name?: string }>;
-    depth?: Array<{ key: string; parallax_strength?: number; layer_count?: number; source_prompt?: string; name?: string }>;
-    entities?: Array<{
-      key: string;
-      kind: string;
-      trajectory?: string;
-      bounce?: number | boolean;
-      color_hint?: string;
-      label?: string;
-      directionality?: string;
-      entity_json?: Record<string, unknown>;
-      source_prompt?: string;
-      name?: string;
-    }>;
-    narrative?: Record<string, Array<{ key: string; value?: string; source_prompt?: string; name?: string }>>;
-    job_id?: string;
-  };
+  let body: DiscoveriesBody;
   try {
-    body = (await request.json()) as typeof body;
+    body = (await request.json()) as DiscoveriesBody;
   } catch {
     return err("Invalid JSON");
   }
-  const results: Record<string, number> = { static_colors: 0, static_sound: 0, narrative: 0, colors: 0, blends: 0, motion: 0, lighting: 0, composition: 0, graphics: 0, temporal: 0, technical: 0, audio_semantic: 0, time: 0, gradient: 0, camera: 0, transition: 0, depth: 0, entities: 0 };
-  let itemsProcessed = 0;
-  let truncated = false;
-  let novelStaticColors = 0;
-  let novelStaticSound = 0;
-  let novelLearnedColors = 0;
-
-  const jobIdEarly = typeof body.job_id === "string" ? body.job_id.trim() : "";
-  const narrativeHasItems = Object.values(body.narrative || {}).some((arr) => Array.isArray(arr) && arr.length > 0);
-  const listHasItems = [
-    body.static_colors, body.static_sound, body.colors, body.blends, body.motion, body.lighting,
-    body.composition, body.graphics, body.temporal, body.technical, body.audio_semantic,
-    body.time, body.gradient, body.camera, body.transition, body.depth, body.entities,
-  ].some((arr) => Array.isArray(arr) && arr.length > 0);
-
-  // Diagnostics-only posts (job_id, no items) must not take the write lease — they were
-  // stampeding Core-4 workers and causing 429s that dropped real color/sound syncs.
-  if (!listHasItems && !narrativeHasItems) {
-    // Diagnostics-only posts must not inflate discovery_rate (that metric is novel growth).
-    return json({ status: "recorded", results, items_processed: 0 }, 201);
-  }
-
-  const lease = await acquireDiscoveryLease(env);
-  if (!lease.ok) {
-    const retrySec = Math.ceil(lease.retry_after_ms / 1000);
-    return new Response(
-      JSON.stringify({
-        error: "Discovery writer busy",
-        details: "Another worker holds the discoveries write lease",
-        retry_after_ms: lease.retry_after_ms,
-      }),
-      {
-        status: 429,
-        headers: {
-          "Content-Type": "application/json",
-          "Retry-After": String(Math.max(1, retrySec)),
-          ...corsHeaders,
-        },
-      },
-    );
-  }
-
-  try {
-  const familyColsOk = await ensureStaticColorsFamilyColumns(db);
-  // Static registry: per-frame color entries
-  for (const c of body.static_colors || []) {
-    if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
-    const existing = await db.prepare("SELECT id, name, count FROM static_colors WHERE color_key = ?").bind(c.key).first();
-    if (existing) {
-      await db.prepare("UPDATE static_colors SET count = count + 1 WHERE color_key = ?").bind(c.key).run();
-    } else {
-      const name = (c.name && c.name.trim()) ? c.name : await generateUniqueName(env);
-      if (!c.name || !c.name.trim()) {
-        try { await db.prepare("INSERT OR IGNORE INTO name_reserve (name) VALUES (?)").bind(name).run(); } catch { /* ignore */ }
-      }
-      const family = classifyColorFamily(c.r, c.g, c.b);
-      const shade = classifyColorShade(c.r, c.g, c.b, family);
-      if (familyColsOk) {
-        await db.prepare(
-          "INSERT INTO static_colors (id, color_key, r, g, b, brightness, luminance, contrast, saturation, chroma, hue, color_variance, opacity, count, sources_json, name, depth_breakdown_json, family, shade) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)"
-        ).bind(uuid(), c.key, c.r, c.g, c.b, c.brightness ?? null, c.luminance ?? c.brightness ?? null, c.contrast ?? null, c.saturation ?? null, c.chroma ?? c.saturation ?? null, c.hue ?? null, c.color_variance ?? null, c.opacity ?? null, c.source_prompt ? JSON.stringify([c.source_prompt.slice(0, 80)]) : null, name, c.depth_breakdown ? JSON.stringify(c.depth_breakdown) : null, family, shade).run();
-      } else {
-        await db.prepare(
-          "INSERT INTO static_colors (id, color_key, r, g, b, brightness, luminance, contrast, saturation, chroma, hue, color_variance, opacity, count, sources_json, name, depth_breakdown_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)"
-        ).bind(uuid(), c.key, c.r, c.g, c.b, c.brightness ?? null, c.luminance ?? c.brightness ?? null, c.contrast ?? null, c.saturation ?? null, c.chroma ?? c.saturation ?? null, c.hue ?? null, c.color_variance ?? null, c.opacity ?? null, c.source_prompt ? JSON.stringify([c.source_prompt.slice(0, 80)]) : null, name, c.depth_breakdown ? JSON.stringify(c.depth_breakdown) : null).run();
-      }
-      novelStaticColors++;
-    }
-    results.static_colors++;
-    itemsProcessed++;
-  }
-  // Static registry: per-frame sound entries
-  for (const s of body.static_sound || []) {
-    if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
-    const rawKey = s.key || "";
-    const key = sanitizePureSoundKey(rawKey);
-    const existing = await db.prepare("SELECT id, name, count FROM static_sound WHERE sound_key = ?").bind(key).first();
-    if (existing) {
-      await db.prepare("UPDATE static_sound SET count = count + 1 WHERE sound_key = ?").bind(key).run();
-    } else {
-      const name = (s.name && s.name.trim()) ? s.name : await generateUniqueName(env);
-      if (!s.name || !s.name.trim()) {
-        try { await db.prepare("INSERT OR IGNORE INTO name_reserve (name) VALUES (?)").bind(name).run(); } catch { /* ignore */ }
-      }
-      await db.prepare(
-        "INSERT INTO static_sound (id, sound_key, amplitude, weight, tone, timbre, count, sources_json, name, depth_breakdown_json, strength_pct) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)"
-      ).bind(uuid(), key, s.amplitude ?? null, s.weight ?? null, s.tone ?? null, s.timbre ?? null, s.source_prompt ? JSON.stringify([s.source_prompt.slice(0, 80)]) : null, name, s.depth_breakdown ? JSON.stringify(s.depth_breakdown) : null, s.strength_pct ?? s.amplitude ?? s.weight ?? null).run();
-      novelStaticSound++;
-    }
-    results.static_sound++;
-    itemsProcessed++;
-  }
-  // Narrative registry: themes, plots, settings, genre, mood, scene_type
-  const narrativeAspects = ["genre", "mood", "plots", "settings", "themes", "style", "scene_type"];
-  narrative_loop: for (const aspect of narrativeAspects) {
-    for (const item of body.narrative?.[aspect] || []) {
-      if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break narrative_loop; }
-      const key = (item.key || "").trim().toLowerCase();
-      if (!key) continue;
-      const existing = await db.prepare("SELECT id, name, count FROM narrative_entries WHERE aspect = ? AND entry_key = ?").bind(aspect, key).first();
-      if (existing) {
-        await db.prepare("UPDATE narrative_entries SET count = count + 1 WHERE aspect = ? AND entry_key = ?").bind(aspect, key).run();
-      } else {
-        const valueStr = (item.value ?? item.key ?? key).slice(0, 200);
-        const name = (item.name && item.name.trim()) ? item.name.trim() : titleCaseLabel(valueStr || key);
-        if (!(item.name && item.name.trim())) {
-          try { await db.prepare("INSERT OR IGNORE INTO name_reserve (name) VALUES (?)").bind(name).run(); } catch { /* ignore */ }
-        }
-        await db.prepare(
-          "INSERT INTO narrative_entries (id, aspect, entry_key, value, count, sources_json, name) VALUES (?, ?, ?, ?, 1, ?, ?)"
-        ).bind(uuid(), aspect, key, valueStr, item.source_prompt ? JSON.stringify([item.source_prompt.slice(0, 80)]) : null, name).run();
-      }
-      results.narrative++;
-      itemsProcessed++;
-    }
-  }
-  if ((body.colors || []).length > 0) {
-    const depthOk = await ensureLearnedColorsDepthColumn(db);
-    if (!depthOk) {
-      return json(
-        { error: "learned_colors.depth_breakdown_json is not available yet (D1 ALTER pending). Retry later or add the column in the D1 dashboard." },
-        503,
+  // The single-writer KV lease is OPT-IN (DISCOVERY_LEASE=1): it costs 2 KV writes per POST (1,000/day free).
+  // Writes are now one batched upsert statement set, so concurrent workers no longer stampede D1.
+  let lease: LeaseResult | null = null;
+  if (env.DISCOVERY_LEASE === "1") {
+    lease = await acquireDiscoveryLease(env);
+    if (!lease.ok) {
+      const retrySec = Math.ceil(lease.retry_after_ms / 1000);
+      return new Response(
+        JSON.stringify({ error: "Discovery writer busy", details: "Another worker holds the discoveries write lease", retry_after_ms: lease.retry_after_ms }),
+        { status: 429, headers: { "Content-Type": "application/json", "Retry-After": String(Math.max(1, retrySec)), ...corsHeaders } },
       );
     }
   }
-  for (const c of body.colors || []) {
-    if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
-    const existing = await db.prepare("SELECT id, name, count FROM learned_colors WHERE color_key = ?").bind(c.key).first();
-    const depthJson = c.depth_breakdown && typeof c.depth_breakdown === "object" ? JSON.stringify(c.depth_breakdown) : null;
-    if (existing) {
-      await db.prepare("UPDATE learned_colors SET count = count + 1 WHERE color_key = ?").bind(c.key).run();
-      if (depthJson) {
-        await db.prepare("UPDATE learned_colors SET depth_breakdown_json = ? WHERE color_key = ?").bind(depthJson, c.key).run();
-      }
-    } else {
-      const name = (c.name && String(c.name).trim()) || await generateUniqueName(env);
-      if (!c.name || !String(c.name).trim()) await db.prepare("INSERT OR IGNORE INTO name_reserve (name) VALUES (?)").bind(name).run();
-      await db.prepare(
-        "INSERT INTO learned_colors (id, color_key, r, g, b, count, sources_json, name, depth_breakdown_json) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)"
-      ).bind(uuid(), c.key, c.r, c.g, c.b, c.source_prompt ? JSON.stringify([c.source_prompt.slice(0, 80)]) : null, name, depthJson).run();
-      novelLearnedColors++;
-    }
-    results.colors++;
-    itemsProcessed++;
-  }
-  for (const b of body.blends || []) {
-    if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
-    // Prefer client name; only run uniqueness resolve when provided (skips generateUniqueName's 4 SELECTs).
-    let name = (b.name && b.name.trim()) ? b.name.trim() : await generateUniqueName(env);
-    if (b.name && b.name.trim()) {
-      name = await resolveUniqueBlendName(env, name);
-    } else {
-      await db.prepare("INSERT OR IGNORE INTO name_reserve (name) VALUES (?)").bind(name).run();
-    }
-    await db.prepare(
-      "INSERT INTO learned_blends (id, name, domain, inputs_json, output_json, primitive_depths_json, source_prompt) VALUES (?, ?, ?, ?, ?, ?, ?)"
-    ).bind(uuid(), name, b.domain, JSON.stringify(b.inputs), JSON.stringify(b.output), b.primitive_depths ? JSON.stringify(b.primitive_depths) : null, (b.source_prompt || "").slice(0, 120)).run();
-    results.blends++;
-    itemsProcessed++;
-  }
-  for (const t of body.time || []) {
-    if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
-    const existing = await db.prepare("SELECT id FROM learned_time WHERE profile_key = ?").bind(t.key).first();
-    if (existing) {
-      await db.prepare("UPDATE learned_time SET count = count + 1 WHERE profile_key = ?").bind(t.key).run();
-    } else {
-      const name = (t.name && String(t.name).trim()) || await generateUniqueName(env);
-      if (!t.name || !String(t.name).trim()) await db.prepare("INSERT OR IGNORE INTO name_reserve (name) VALUES (?)").bind(name).run();
-      await db.prepare(
-        "INSERT INTO learned_time (id, profile_key, duration, fps, count, sources_json, name) VALUES (?, ?, ?, ?, 1, ?, ?)"
-      ).bind(uuid(), t.key, t.duration, t.fps, t.source_prompt ? JSON.stringify([t.source_prompt.slice(0, 80)]) : null, name).run();
-    }
-    results.time++;
-    itemsProcessed++;
-  }
-  for (const m of body.motion || []) {
-    if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
-    const existing = await db.prepare("SELECT id FROM learned_motion WHERE profile_key = ?").bind(m.key).first();
-    const motionDepthJson =
-      m.depth_breakdown && typeof m.depth_breakdown === "object" ? JSON.stringify(m.depth_breakdown) : null;
-    if (existing) {
-      await db.prepare("UPDATE learned_motion SET count = count + 1 WHERE profile_key = ?").bind(m.key).run();
-      if (motionDepthJson) {
-        await db.prepare("UPDATE learned_motion SET depth_breakdown_json = ? WHERE profile_key = ?").bind(motionDepthJson, m.key).run();
-      }
-    } else {
-      const name = (m.name && String(m.name).trim()) || await generateUniqueName(env);
-      if (!m.name || !String(m.name).trim()) await db.prepare("INSERT OR IGNORE INTO name_reserve (name) VALUES (?)").bind(name).run();
-      await db.prepare(
-        "INSERT INTO learned_motion (id, profile_key, motion_level, motion_std, motion_trend, motion_direction, motion_rhythm, count, sources_json, name, depth_breakdown_json) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)"
-      ).bind(uuid(), m.key, m.motion_level ?? 0, m.motion_std ?? 0, m.motion_trend ?? "steady", m.motion_direction ?? "neutral", m.motion_rhythm ?? "steady", m.source_prompt ? JSON.stringify([m.source_prompt.slice(0, 80)]) : null, name, motionDepthJson).run();
-    }
-    results.motion++;
-    itemsProcessed++;
-  }
-  for (const l of body.lighting || []) {
-    if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
-    const existing = await db.prepare("SELECT id FROM learned_lighting WHERE profile_key = ?").bind(l.key).first();
-    if (existing) {
-      await db.prepare("UPDATE learned_lighting SET count = count + 1 WHERE profile_key = ?").bind(l.key).run();
-    } else {
-      const name = (l.name && String(l.name).trim()) || await generateUniqueName(env);
-      if (!l.name || !String(l.name).trim()) await db.prepare("INSERT OR IGNORE INTO name_reserve (name) VALUES (?)").bind(name).run();
-      await db.prepare(
-        "INSERT INTO learned_lighting (id, profile_key, brightness, contrast, saturation, count, sources_json, name, depth_breakdown_json) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)"
-      ).bind(uuid(), l.key, l.brightness, l.contrast, l.saturation, l.source_prompt ? JSON.stringify([l.source_prompt.slice(0, 80)]) : null, name, l.depth_breakdown ? JSON.stringify(l.depth_breakdown) : null).run();
-    }
-    results.lighting++;
-    itemsProcessed++;
-  }
-  for (const c of body.composition || []) {
-    if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
-    const existing = await db.prepare("SELECT id FROM learned_composition WHERE profile_key = ?").bind(c.key).first();
-    if (existing) {
-      await db.prepare("UPDATE learned_composition SET count = count + 1 WHERE profile_key = ?").bind(c.key).run();
-    } else {
-      const name = (c.name && String(c.name).trim()) || await generateUniqueName(env);
-      if (!c.name || !String(c.name).trim()) await db.prepare("INSERT OR IGNORE INTO name_reserve (name) VALUES (?)").bind(name).run();
-      await db.prepare(
-        "INSERT INTO learned_composition (id, profile_key, center_x, center_y, luminance_balance, count, sources_json, name) VALUES (?, ?, ?, ?, ?, 1, ?, ?)"
-      ).bind(uuid(), c.key, c.center_x, c.center_y, c.luminance_balance, c.source_prompt ? JSON.stringify([c.source_prompt.slice(0, 80)]) : null, name).run();
-      if (c.depth_breakdown && typeof c.depth_breakdown === "object") {
-        await upsertLearnedDynamicMeta(db, "composition", c.key, JSON.stringify(c.depth_breakdown));
-      }
-    }
-    results.composition++;
-    itemsProcessed++;
-  }
-  for (const g of body.graphics || []) {
-    if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
-    const existing = await db.prepare("SELECT id FROM learned_graphics WHERE profile_key = ?").bind(g.key).first();
-    if (existing) {
-      await db.prepare("UPDATE learned_graphics SET count = count + 1 WHERE profile_key = ?").bind(g.key).run();
-    } else {
-      const name = (g.name && String(g.name).trim()) || await generateUniqueName(env);
-      if (!g.name || !String(g.name).trim()) await db.prepare("INSERT OR IGNORE INTO name_reserve (name) VALUES (?)").bind(name).run();
-      await db.prepare(
-        "INSERT INTO learned_graphics (id, profile_key, edge_density, spatial_variance, busyness, count, sources_json, name) VALUES (?, ?, ?, ?, ?, 1, ?, ?)"
-      ).bind(uuid(), g.key, g.edge_density, g.spatial_variance, g.busyness, g.source_prompt ? JSON.stringify([g.source_prompt.slice(0, 80)]) : null, name).run();
-      if (g.depth_breakdown && typeof g.depth_breakdown === "object") {
-        await upsertLearnedDynamicMeta(db, "graphics", g.key, JSON.stringify(g.depth_breakdown));
-      }
-    }
-    results.graphics++;
-    itemsProcessed++;
-  }
-  for (const t of body.temporal || []) {
-    if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
-    const depthJson =
-      t.depth_breakdown && typeof t.depth_breakdown === "object" ? JSON.stringify(t.depth_breakdown) : null;
-    const existing = await db.prepare("SELECT id FROM learned_temporal WHERE profile_key = ?").bind(t.key).first();
-    if (existing) {
-      await db.prepare("UPDATE learned_temporal SET count = count + 1 WHERE profile_key = ?").bind(t.key).run();
-    } else {
-      const name = (t.name && String(t.name).trim()) || await generateUniqueName(env);
-      if (!t.name || !String(t.name).trim()) await db.prepare("INSERT OR IGNORE INTO name_reserve (name) VALUES (?)").bind(name).run();
-      await db.prepare(
-        "INSERT INTO learned_temporal (id, profile_key, duration, motion_trend, count, sources_json, name) VALUES (?, ?, ?, ?, 1, ?, ?)"
-      )
-        .bind(uuid(), t.key, t.duration, t.motion_trend, t.source_prompt ? JSON.stringify([t.source_prompt.slice(0, 80)]) : null, name)
-        .run();
-    }
-    await upsertLearnedDynamicMeta(db, "temporal", t.key, depthJson);
-    results.temporal++;
-    itemsProcessed++;
-  }
-  for (const t of body.technical || []) {
-    if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
-    const depthJson =
-      t.depth_breakdown && typeof t.depth_breakdown === "object" ? JSON.stringify(t.depth_breakdown) : null;
-    const existing = await db.prepare("SELECT id FROM learned_technical WHERE profile_key = ?").bind(t.key).first();
-    if (existing) {
-      await db.prepare("UPDATE learned_technical SET count = count + 1 WHERE profile_key = ?").bind(t.key).run();
-    } else {
-      const name = (t.name && String(t.name).trim()) || await generateUniqueName(env);
-      if (!t.name || !String(t.name).trim()) await db.prepare("INSERT OR IGNORE INTO name_reserve (name) VALUES (?)").bind(name).run();
-      await db.prepare(
-        "INSERT INTO learned_technical (id, profile_key, width, height, fps, count, sources_json, name) VALUES (?, ?, ?, ?, ?, 1, ?, ?)"
-      )
-        .bind(uuid(), t.key, t.width, t.height, t.fps, t.source_prompt ? JSON.stringify([t.source_prompt.slice(0, 80)]) : null, name)
-        .run();
-    }
-    await upsertLearnedDynamicMeta(db, "technical", t.key, depthJson);
-    results.technical++;
-    itemsProcessed++;
-  }
-  for (const a of body.audio_semantic || []) {
-    if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
-    const existing = await db.prepare("SELECT id FROM learned_audio_semantic WHERE profile_key = ?").bind(a.key).first();
-    if (existing) {
-      await db.prepare("UPDATE learned_audio_semantic SET count = count + 1 WHERE profile_key = ?").bind(a.key).run();
-    } else {
-      const name = (a.name && a.name.trim()) ? a.name : await generateUniqueName(env);
-      if (!a.name || !a.name.trim()) await db.prepare("INSERT OR IGNORE INTO name_reserve (name) VALUES (?)").bind(name).run();
-      await db.prepare(
-        "INSERT INTO learned_audio_semantic (id, profile_key, role, count, sources_json, name) VALUES (?, ?, ?, 1, ?, ?)"
-      ).bind(uuid(), a.key, a.role || "ambient", a.source_prompt ? JSON.stringify([a.source_prompt.slice(0, 80)]) : null, name).run();
-    }
-    results.audio_semantic++;
-    itemsProcessed++;
-  }
-  for (const g of body.gradient || []) {
-    if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
-    const existing = await db.prepare("SELECT id FROM learned_gradient WHERE profile_key = ?").bind(g.key).first();
-    if (existing) {
-      await db.prepare("UPDATE learned_gradient SET count = count + 1 WHERE profile_key = ?").bind(g.key).run();
-    } else {
-      const name = (g.name && String(g.name).trim()) || await generateUniqueName(env);
-      if (!g.name || !String(g.name).trim()) await db.prepare("INSERT OR IGNORE INTO name_reserve (name) VALUES (?)").bind(name).run();
-      await db.prepare(
-        "INSERT INTO learned_gradient (id, profile_key, gradient_type, strength, count, sources_json, name, depth_breakdown_json) VALUES (?, ?, ?, ?, 1, ?, ?, ?)"
-      ).bind(uuid(), g.key, g.gradient_type ?? "angled", g.strength ?? null, g.source_prompt ? JSON.stringify([g.source_prompt.slice(0, 80)]) : null, name, g.depth_breakdown ? JSON.stringify(g.depth_breakdown) : null).run();
-    }
-    results.gradient++;
-    itemsProcessed++;
-  }
-  for (const c of body.camera || []) {
-    if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
-    const existing = await db.prepare("SELECT id FROM learned_camera WHERE profile_key = ?").bind(c.key).first();
-    if (existing) {
-      await db.prepare("UPDATE learned_camera SET count = count + 1 WHERE profile_key = ?").bind(c.key).run();
-    } else {
-      const name = (c.name && String(c.name).trim()) || await generateUniqueName(env);
-      if (!c.name || !String(c.name).trim()) await db.prepare("INSERT OR IGNORE INTO name_reserve (name) VALUES (?)").bind(name).run();
-      await db.prepare(
-        "INSERT INTO learned_camera (id, profile_key, motion_type, speed, count, sources_json, name, depth_breakdown_json) VALUES (?, ?, ?, ?, 1, ?, ?, ?)"
-      ).bind(uuid(), c.key, c.motion_type ?? "static", c.speed ?? null, c.source_prompt ? JSON.stringify([c.source_prompt.slice(0, 80)]) : null, name, c.depth_breakdown ? JSON.stringify(c.depth_breakdown) : null).run();
-    }
-    results.camera++;
-    itemsProcessed++;
-  }
-  for (const t of body.transition || []) {
-    if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
-    const existing = await db.prepare("SELECT id FROM learned_transition WHERE profile_key = ?").bind(t.key).first();
-    if (existing) {
-      await db.prepare("UPDATE learned_transition SET count = count + 1 WHERE profile_key = ?").bind(t.key).run();
-    } else {
-      const name = (t.name && String(t.name).trim()) || await generateUniqueName(env);
-      if (!t.name || !String(t.name).trim()) await db.prepare("INSERT OR IGNORE INTO name_reserve (name) VALUES (?)").bind(name).run();
-      await db.prepare(
-        "INSERT INTO learned_transition (id, profile_key, type, duration_seconds, count, sources_json, name) VALUES (?, ?, ?, ?, 1, ?, ?)"
-      ).bind(uuid(), t.key, t.type ?? "cut", t.duration_seconds ?? null, t.source_prompt ? JSON.stringify([t.source_prompt.slice(0, 80)]) : null, name).run();
-    }
-    results.transition++;
-    itemsProcessed++;
-  }
-  for (const d of body.depth || []) {
-    if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
-    const existing = await db.prepare("SELECT id FROM learned_depth WHERE profile_key = ?").bind(d.key).first();
-    if (existing) {
-      await db.prepare("UPDATE learned_depth SET count = count + 1 WHERE profile_key = ?").bind(d.key).run();
-    } else {
-      const name = (d.name && String(d.name).trim()) || await generateUniqueName(env);
-      if (!d.name || !String(d.name).trim()) await db.prepare("INSERT OR IGNORE INTO name_reserve (name) VALUES (?)").bind(name).run();
-      await db.prepare(
-        "INSERT INTO learned_depth (id, profile_key, parallax_strength, layer_count, count, sources_json, name) VALUES (?, ?, ?, ?, 1, ?, ?)"
-      ).bind(uuid(), d.key, d.parallax_strength ?? null, d.layer_count ?? null, d.source_prompt ? JSON.stringify([d.source_prompt.slice(0, 80)]) : null, name).run();
-    }
-    results.depth++;
-    itemsProcessed++;
-  }
-  for (const e of body.entities || []) {
-    if (itemsProcessed >= DISCOVERIES_MAX_ITEMS) { truncated = true; break; }
-    const existing = await db.prepare("SELECT id FROM learned_entities WHERE profile_key = ?").bind(e.key).first();
-    const bounceVal = e.bounce === true || e.bounce === 1 ? 1 : 0;
-    const entityJson =
-      e.entity_json && typeof e.entity_json === "object" ? JSON.stringify(e.entity_json) : null;
-    if (existing) {
-      await db.prepare("UPDATE learned_entities SET count = count + 1 WHERE profile_key = ?").bind(e.key).run();
-      if (entityJson) {
-        await db.prepare("UPDATE learned_entities SET entity_json = ? WHERE profile_key = ?").bind(entityJson, e.key).run();
-      }
-    } else {
-      const name = (e.name && e.name.trim()) ? e.name : await generateUniqueName(env);
-      if (!e.name || !e.name.trim()) {
-        try { await db.prepare("INSERT OR IGNORE INTO name_reserve (name) VALUES (?)").bind(name).run(); } catch { /* ignore */ }
-      }
-      await db.prepare(
-        "INSERT INTO learned_entities (id, profile_key, kind, trajectory, bounce, color_hint, label, directionality, count, sources_json, name, entity_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)"
-      ).bind(
-        uuid(),
-        e.key,
-        e.kind || "circle",
-        e.trajectory ?? "none",
-        bounceVal,
-        e.color_hint ?? null,
-        e.label ?? null,
-        e.directionality ?? "none",
-        e.source_prompt ? JSON.stringify([e.source_prompt.slice(0, 80)]) : null,
-        name,
-        entityJson
-      ).run();
-    }
-    results.entities++;
-    itemsProcessed++;
-  }
-  const jobId = typeof (body as { job_id?: string }).job_id === "string" ? (body as { job_id: string }).job_id.trim() : null;
-  // Record discovery run when job_id present (even if no discovery rows) so diagnostics show "attempted"
-  if (jobId) {
-    try {
-      await db.prepare("INSERT INTO discovery_runs (id, job_id) VALUES (?, ?)")
-        .bind(uuid(), jobId).run();
-    } catch {
-      // Ignore duplicate or missing table
-    }
-  }
-  if (novelStaticColors || novelStaticSound || novelLearnedColors) {
-    await bumpRegistryCounts(env, {
-      static_colors: novelStaticColors,
-      static_sound: novelStaticSound,
-      learned_colors: novelLearnedColors,
-    });
-  }
-  // Bust browse + for-creation caches whenever discoveries land (including count bumps / dynamic).
-  const anyRecorded = Object.values(results).some((n) => typeof n === "number" && n > 0) || !!jobId;
-  if (anyRecorded) {
-    try {
-      await invalidateRegistryReadCaches(env);
-    } catch {
-      /* ignore */
-    }
-  }
-  const resp: { status: string; results: Record<string, number>; truncated?: boolean; items_processed?: number } = {
-    status: "recorded",
-    results,
-    items_processed: itemsProcessed,
-  };
-  if (truncated) resp.truncated = true;
-  return json(resp, 201);
+  try {
+    const out = await writeDiscoveries(env, body);
+    return json(out.body, out.status);
   } catch (e) {
+    if (isFreeTierLimitError(e)) return limitResponse("POST", { details: String(e) });
     console.error("POST /api/knowledge/discoveries failed:", e);
     return json({ error: "Failed to record discoveries", details: String(e) }, 500);
   } finally {
-    await releaseDiscoveryLease(env, lease.holder);
+    if (lease && lease.ok) await releaseDiscoveryLease(env, lease.holder);
   }
 }
 
@@ -576,12 +98,15 @@ if (path === "/api/knowledge/for-creation" && request.method === "GET") {
   const interpLimit = Math.min(parseInt(interpLimitParam, 10), 120);
   // Free-tier: bound static_colors ORDER BY count (large table → CPU 7429).
   const colorScan = Math.min(Math.max(limit * 3, 60), 120);
-  const gen = await readForCreationGeneration(env);
-  const cacheKey = `knowledge:for-creation:${gen}:${limit}:${interpLimit}`;
-  if (env.MOTION_KV) {
-    const cached = await env.MOTION_KV.get(cacheKey);
-    if (cached) return new Response(cached, { headers: { "Content-Type": "application/json", "X-Cache": "HIT" } });
-  }
+  // Snapshot: memory -> Cache API -> rarely-written KV. Soft TTL is long because the ORDER BY count queries scan the
+  // whole static_colors table (~28k rows each); never invalidated per post. `fresh=1` is rate limited (5 min).
+  const cacheKey = `knowledge:for-creation:v2:${limit}:${interpLimit}`;
+  const wantFresh = new URL(request.url).searchParams.get("fresh") === "1";
+  const snap = await getSnapshot<string>(
+    env,
+    cacheKey,
+    { softTtlSec: FOR_CREATION_SOFT_TTL_SEC, hardTtlSec: 7 * 86400, kvPersistSec: 6 * 3600, bypass: wantFresh, bypassMinIntervalSec: 300 },
+    async () => {
   // Single batch reduces D1 round-trips and CPU overhead
   const batchResults = await db.batch([
     db.prepare("SELECT color_key, r, g, b, count, sources_json, name FROM learned_colors ORDER BY count DESC LIMIT ?").bind(limit),
@@ -861,14 +386,17 @@ if (path === "/api/knowledge/for-creation" && request.method === "GET") {
     static_sound,
     narrative,
   };
-  const body = JSON.stringify(payload);
-  if (env.MOTION_KV) {
-    try {
-      await env.MOTION_KV.put(cacheKey, body, { expirationTtl: 300 });
-    } catch { /* ignore KV write failure */ }
-  }
-  return new Response(body, { headers: { "Content-Type": "application/json" } });
+  return JSON.stringify(payload);
+    },
+  );
+  return new Response(snap.value, {
+    headers: { "Content-Type": "application/json", "X-Cache": snap.source === "built" ? "MISS" : "HIT", ...(snap.degraded ? { "X-Degraded": "free_tier_limit" } : {}) },
+  });
   } catch (e) {
+    if (isFreeTierLimitError(e)) {
+      // No stale copy anywhere yet: answer 200 with an empty-but-shaped payload so loops keep running.
+      return limitResponse("GET", { learned_colors: {}, learned_motion: [], learned_audio: [], learned_audio_semantic: [], learned_gradient: [], learned_camera: [], learned_entities: [], interpretation_prompts: [], static_colors: [], static_sound: [], narrative: {} });
+    }
     console.error("GET /api/knowledge/for-creation failed:", e);
     return json({ error: "Failed to load for-creation", details: String(e) }, 500);
   }
