@@ -17,7 +17,7 @@ import json
 import time
 from pathlib import Path
 
-from src.api_client import api_request
+from src.api_client import api_request, finish_loop_job
 from src.automation import generate_procedural_prompt
 from src.config import load_config
 from src.pipeline import generate_full_video
@@ -130,12 +130,7 @@ def main() -> None:
                 config=config,
             )
 
-            with open(path, "rb") as f:
-                body = f.read()
-            api_request(
-                args.api_base, "POST", f"/api/jobs/{job_id}/upload",
-                raw_body=body, content_type="video/mp4",
-            )
+            finish_loop_job(args.api_base, job_id, path, max_retries=0)
 
             from src.analysis import analyze_video
             from src.interpretation import interpret_user_prompt

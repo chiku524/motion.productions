@@ -43,6 +43,47 @@ D1_BACKOFF_INCREMENT = 5.0
 D1_JITTER_MAX_SECONDS = 8.0
 
 
+# Cloudflare Free-tier daily limits (D1 5M reads / 100k writes, KV 1,000 writes per day) reset at 00:00 UTC.
+# Retrying a blocked binding only burns more of the budget, so a limit response (Worker body
+# {"error": "free_tier_limit"}) is NOT retried and puts all write requests on a cooldown.
+LIMIT_COOLDOWN_SECONDS_DEFAULT = 900.0
+_limit_cooldown_until = 0.0
+
+
+def limit_cooldown_seconds() -> float:
+    raw = os.environ.get("FREE_TIER_LIMIT_COOLDOWN_SECONDS", "")
+    try:
+        return max(1.0, float(raw)) if raw.strip() else LIMIT_COOLDOWN_SECONDS_DEFAULT
+    except ValueError:
+        return LIMIT_COOLDOWN_SECONDS_DEFAULT
+
+
+def is_free_tier_limit_body(body: str | None) -> bool:
+    """True when an error body says a Cloudflare daily free-tier quota is exhausted (not a transient CPU limit)."""
+    if not body:
+        return False
+    low = body.lower()
+    if "free_tier_limit" in low:
+        return True
+    if "cpu time" in low:
+        return False
+    return "daily" in low and "limit" in low
+
+
+def free_tier_cooldown_remaining() -> float:
+    return max(0.0, _limit_cooldown_until - time.monotonic())
+
+
+def start_free_tier_cooldown(seconds: float | None = None) -> None:
+    global _limit_cooldown_until
+    _limit_cooldown_until = time.monotonic() + (seconds if seconds is not None else limit_cooldown_seconds())
+
+
+def reset_free_tier_cooldown() -> None:
+    global _limit_cooldown_until
+    _limit_cooldown_until = 0.0
+
+
 class APIError(Exception):
     """API call failed with status or invalid response."""
     def __init__(self, message: str, status_code: int | None = None, path: str = "", body: str | None = None):
@@ -83,6 +124,12 @@ def api_request(
     If max_retries > 0, retries on 5xx and connection errors only.
     """
     url = f"{api_base.rstrip('/')}{path}"
+    if method != "GET" and free_tier_cooldown_remaining() > 0:
+        # Do not hit a blocked Worker: skip writes until the cooldown ends (reads still flow, they are served degraded).
+        raise APIError(
+            f"API {method} {path} skipped: Cloudflare free-tier limit cooldown ({free_tier_cooldown_remaining():.0f}s left)",
+            status_code=503, path=path, body='{"error":"free_tier_limit","skipped":true}',
+        )
     # Jitter for heavy D1 endpoints: spread concurrent requests from multiple workers
     needs_jitter = (
         (method == "GET" and (
@@ -115,7 +162,15 @@ def api_request(
         except requests.exceptions.HTTPError as e:
             last_exc = e
             status = e.response.status_code if e.response is not None else None
-            err_body = e.response.text[:500] if e.response and e.response.text else None
+            # `is not None`: a requests.Response is falsy for 4xx/5xx, so a plain truthiness test dropped every error body
+            err_body = e.response.text[:500] if e.response is not None and e.response.text else None
+            if status in (429, 503) and is_free_tier_limit_body(err_body):
+                start_free_tier_cooldown()
+                logger.warning(
+                    "API %s %s hit the Cloudflare free-tier daily limit; no retry, writes paused %.0fs",
+                    method, path, limit_cooldown_seconds(),
+                )
+                raise APIError(f"API {method} {path} free_tier_limit: {err_body}", status_code=status, path=path, body=err_body) from e
             # Retry on 5xx and 429 (rate limit, e.g. KV 1 write/sec)
             retryable = status and (500 <= status < 600 or status == 429) and attempt < max_retries
             if retryable:
@@ -145,7 +200,7 @@ def api_request(
                                 delay = max(5.0, min(float(ms) / 1000.0, 25.0))
                         except (json.JSONDecodeError, TypeError, ValueError):
                             pass
-                    if e.response and "Retry-After" in e.response.headers:
+                    if e.response is not None and "Retry-After" in e.response.headers:
                         try:
                             header_delay = float(e.response.headers["Retry-After"])
                             delay = max(delay, min(header_delay, 25.0), 5.0)
@@ -220,5 +275,34 @@ def api_post_binary(api_base: str, path: str, body: bytes, content_type: str = "
             _parse_json_response(resp)
     except requests.exceptions.HTTPError as e:
         status = e.response.status_code if e.response is not None else None
-        err_body = e.response.text[:500] if e.response and e.response.text else None
+        err_body = e.response.text[:500] if e.response is not None and e.response.text else None
         raise APIError(f"API POST {path} failed: {e}", status_code=status, path=path, body=err_body) from e
+
+
+def loop_upload_videos_enabled() -> bool:
+    """Loop clips are NOT stored in R2 by default (free tier: 10 GB). Set LOOP_UPLOAD_VIDEOS=1 to upload them."""
+    return (os.environ.get("LOOP_UPLOAD_VIDEOS") or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def finish_loop_job(
+    api_base: str,
+    job_id: str,
+    video_path: str | os.PathLike | None = None,
+    *,
+    timeout: int = 120,
+    max_retries: int = DEFAULT_MAX_RETRIES,
+) -> dict:
+    """
+    Complete a loop-owned job. Uploads the clip only when LOOP_UPLOAD_VIDEOS is truthy; otherwise marks the job
+    completed with POST /api/jobs/{id}/complete (no R2 write). Web-submitted jobs keep using the upload route.
+    """
+    if loop_upload_videos_enabled() and video_path is not None:
+        with open(video_path, "rb") as f:
+            body = f.read()
+        return api_request_with_retry(
+            api_base, "POST", f"/api/jobs/{job_id}/upload",
+            raw_body=body, content_type="video/mp4", timeout=timeout, max_retries=max_retries,
+        )
+    return api_request_with_retry(
+        api_base, "POST", f"/api/jobs/{job_id}/complete", data={}, timeout=60, max_retries=max_retries,
+    )

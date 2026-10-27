@@ -2,18 +2,18 @@
 Remote sync: POST discoveries to the Cloudflare API (D1/KV).
 When api_base is set, growth persists to D1 instead of local JSON.
 
-Cloudflare Free D1 allows ~50 queries/request. Blends cost ~3 queries each
-(name uniqueness checks), so we keep a small weighted budget per POST.
+The Worker writes every POST with one batched upsert (a handful of D1 subrequests regardless of item
+count, deduped in-request), so chunks can be large; fewer, bigger POSTs minimise per-request overhead.
 """
 from typing import Any
 
-# Match API DISCOVERIES_MAX_ITEMS. Keep small for Cloudflare Free D1 CPU pressure.
+# Must be <= the Worker DISCOVERIES_MAX_ITEMS (default 40). One clip is ~35 items => normally 1 POST.
 # Override via env DISCOVERIES_MAX_ITEMS / DISCOVERIES_CHUNK_PAUSE_SECONDS (Docker loops).
-DISCOVERIES_MAX_ITEMS = 8
+DISCOVERIES_MAX_ITEMS = 36
 # Pause between chunks so concurrent loops do not stampede D1 / write lease.
-DISCOVERIES_CHUNK_PAUSE_SECONDS = 3.5
-# Blends run resolveUniqueBlendName (~3 D1 queries); weight them higher in the budget.
-_BLEND_ITEM_WEIGHT = 3
+DISCOVERIES_CHUNK_PAUSE_SECONDS = 1.0
+# Blends no longer cost extra D1 queries (name checks are batched), so they weigh the same as any item.
+_BLEND_ITEM_WEIGHT = 1
 
 
 def _max_items() -> int:
@@ -23,7 +23,7 @@ def _max_items() -> int:
         n = int(raw) if raw.strip() else DISCOVERIES_MAX_ITEMS
     except ValueError:
         n = DISCOVERIES_MAX_ITEMS
-    return max(3, min(n, 50))
+    return max(3, min(n, 80))
 
 
 def _item_weight(category: str) -> int:
