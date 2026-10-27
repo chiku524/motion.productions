@@ -106,6 +106,75 @@ class TestParityClassify(unittest.TestCase):
         self.assertEqual(classify_color_family_rgb(250, 250, 250), "white")
         self.assertEqual(classify_color_family_rgb(10, 10, 10), "black")
 
+class TestColorQueueTargeting(unittest.TestCase):
+    """LOOP_COLOR_QUEUE / queue=: deterministic stride queue replaces weighted sampling for the colour axis."""
+
+    def setUp(self):
+        import tempfile
+
+        from src.knowledge import mission_targets as mt
+        from src.knowledge.color_cells import ColorCellStore
+
+        self.mt = mt
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store = ColorCellStore(self.tmp.name)
+        mt._color_calls = 0
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _queue(self, i, n):
+        from src.knowledge.color_cells import ColorWorkQueue
+
+        return ColorWorkQueue(self.store, i, n)
+
+    def test_families_are_deterministic_and_need_no_mission_or_rng(self):
+        def run():
+            self.mt._color_calls = 0
+            return [self.mt.pick_target_color_family("", None, None, queue=self._queue(0, 4)) for _ in range(12)]
+
+        a, b = run(), run()
+        self.assertEqual(a, b)
+        self.assertTrue(set(a) <= set(self.mt.FAMILY_SUBJECTS))
+        self.assertGreater(len(set(a)), 2)  # steps through the lookahead rather than repeating one family
+
+    def test_containers_get_disjoint_cells(self):
+        cells = [set(self.mt.pick_target_color_cells(200, queue=self._queue(i, 4))) for i in range(4)]
+        for i in range(4):
+            for j in range(i + 1, 4):
+                self.assertFalse(cells[i] & cells[j])
+
+    def test_covered_cells_are_skipped(self):
+        q = self._queue(1, 3)
+        first = self.mt.pick_target_color_cells(10, queue=q)
+        self.store.mark("verified", first[:5])
+        self.assertEqual(self.mt.pick_target_color_cells(5, queue=q), first[5:10])
+
+    def test_env_flag_selects_queue_and_default_stays_weighted(self):
+        import os
+        from unittest import mock
+
+        from src.knowledge.mission_targets import FAMILY_SUBJECTS
+
+        mission = {"colors": {"families": [{"id": k, "count": 999 if k != "pink" else 0} for k in FAMILY_SUBJECTS]}}
+        self.assertFalse(self.mt.color_queue_enabled())
+        rng = __import__("random").Random(1)
+        picks = {self.mt.pick_target_color_family("", mission, rng) for _ in range(40)}
+        self.assertIn("pink", picks)  # weighted behaviour unchanged by default
+        with mock.patch.dict(os.environ, {"LOOP_COLOR_QUEUE": "1", "COLOR_CELLS_DIR": self.tmp.name}):
+            self.mt._COLOR_STORE = None
+            self.assertTrue(self.mt.color_queue_enabled())
+            fam = self.mt.pick_target_color_family("", mission, None)
+            self.assertIn(fam, FAMILY_SUBJECTS)
+            self.mt._COLOR_STORE = None
+
+    def test_queue_failure_falls_back_to_weighted(self):
+        class Broken:
+            def next_cells(self, *a, **k):
+                raise RuntimeError("no store")
+
+        fam = self.mt.pick_target_color_family("", {"colors": {"families": []}}, __import__("random").Random(2), queue=Broken())
+        self.assertIn(fam, self.mt.FAMILY_SUBJECTS)
 
 if __name__ == "__main__":
     unittest.main()

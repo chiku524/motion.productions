@@ -103,16 +103,63 @@ def sound_origin_counts(mission: dict[str, Any] | None) -> dict[str, int]:
     return {p: (1 if p in present else 0) for p in SOUND_ORIGIN_PRIMITIVES}
 
 
+_COLOR_STORE: Any = None
+_color_calls = 0
+
+
+def color_queue_enabled() -> bool:
+    """``LOOP_COLOR_QUEUE=1``: the colour axis follows the deterministic work queue instead of weighted sampling."""
+    import os
+
+    return (os.environ.get("LOOP_COLOR_QUEUE", "").strip().lower() in ("1", "true", "yes", "on"))
+
+
+def color_work_queue(stream: str = "survey") -> Any:
+    """This container's stride of the seeded Feistel queue over exact colour cells (no D1 read, no randomness).
+
+    Worker identity comes from CONTAINER_INDEX / CONTAINER_COUNT (or a hostname hash), so containers sharing the
+    knowledge volume walk disjoint permutation positions. Cursors are shared with the survey (same stream name).
+    """
+    global _COLOR_STORE
+    from .color_cells import ColorCellStore, ColorWorkQueue
+
+    if _COLOR_STORE is None:
+        _COLOR_STORE = ColorCellStore()
+    return ColorWorkQueue(_COLOR_STORE, stream=stream)
+
+
+def pick_target_color_cells(n: int = 8, *, queue: Any = None) -> list[int]:
+    """Next ``n`` unseen exact colour cells for this worker (peek: the survey is what consumes them)."""
+    q = queue if queue is not None else color_work_queue()
+    return [int(c) for c in q.next_cells(n, consume=False)]
+
+
 def pick_target_color_family(
-    api_base: str = "", mission: dict[str, Any] | None = None, rng: Any = None
+    api_base: str = "", mission: dict[str, Any] | None = None, rng: Any = None, *, queue: Any = None
 ) -> str | None:
-    """Weighted-random hue family: emptier families are likelier, but all can be drawn."""
+    """Hue family to bias the creative prompt toward.
+
+    Queue mode (``queue=`` given or ``LOOP_COLOR_QUEUE=1``): the family of the next unseen cell in this worker's
+    deterministic stride, stepping through the stride's lookahead on successive calls; no D1 read, no rng.
+    Otherwise (and on any queue failure): weighted-random, emptier families likelier (needs the mission payload).
+    """
+    global _color_calls
+    if queue is not None or color_queue_enabled():
+        try:
+            cells = pick_target_color_cells(16, queue=queue)
+            if cells:
+                from .color_cells import id_to_rgb
+
+                cell = cells[_color_calls % len(cells)]
+                _color_calls += 1
+                return classify_color_family_rgb(*id_to_rgb(cell))
+        except Exception as e:  # never let the queue break prompt generation
+            logger.warning("colour queue unavailable, falling back to weighted sampling: %s", e)
     from ..random_utils import weighted_choice
 
     m = mission if mission is not None else fetch_mission(api_base)
     weights = underfill_weights(color_family_counts(m))
     return weighted_choice(list(weights), list(weights.values()), rng)
-
 
 def pick_target_sound_origin(
     api_base: str = "", mission: dict[str, Any] | None = None, rng: Any = None
