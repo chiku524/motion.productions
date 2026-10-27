@@ -259,6 +259,7 @@ export function normalizeTimbreToPrimitive(timbre: string, amplitude = 0.5, tone
 }
 
 export function sanitizePureSoundKey(key: string): string {
+  if (key.startsWith("s2.")) return key; // sound v2 (sound.L1) cell keys are exact measurements, never re-labelled
   if (!key || !key.includes("_")) return key;
   const parts = key.split("_");
   if (parts.length < 3) return key;

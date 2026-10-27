@@ -16,6 +16,7 @@ import {
   classifyColorShade,
 } from "./colorBrowse";
 import { SOUND_ORIGIN_PRIMARIES } from "./naming";
+import { SOUND_V2_SPACE_SIZE, encodeSeenBitmap, hasSoundV2Prefix, parseSoundV2Key, soundV2Ordinal } from "./soundKeyspace";
 import { MISSION_STATS_KEY } from "./browseCache";
 import { getSnapshot } from "./snapshotCache";
 import {
@@ -41,9 +42,27 @@ export type MissionFacet = {
   sample_rgb?: [number, number, number];
 };
 
+/** Evidence tiers (docs/EXHAUSTIVE_REGISTRY_PLAN.md): only observed + verified count as coverage. */
+export const EVIDENCE_TIER_POLICY =
+  "covered = observed + verified. declared (seeds, spec values, camera/audio-semantic/transition/depth guesses) never covers a cell. " +
+  "D1 stores a tier only for sound v2 cells (depth_breakdown_json.tier); other categories are tiered client-side.";
+
+export type SoundV2Stats = {
+  space: "sound.L1";
+  space_size: number;
+  covered: number;
+  coverage_pct: number;
+  by_tier: { observed: number; verified: number; declared: number };
+  /** Hex bitmap of covered cell ordinals (same layout as src/knowledge/sound_v2.py encode_bitmap). */
+  seen_bitmap: string;
+  tier_policy: string;
+};
+
 export type MissionStats = {
   colors: { total: number; families: MissionFacet[]; shades: MissionFacet[]; estimated_rows: number };
   sound: { total: number; origin_counts: Record<string, number>; origins_present: string[] };
+  /** Additive (absent in snapshots cached before sound v2). */
+  sound_v2?: SoundV2Stats;
   scan: "full";
   updated_at: string;
 };
@@ -116,6 +135,40 @@ async function loadColorStats(env: Env): Promise<MissionStats["colors"]> {
   };
 }
 
+/** Sound v2 coverage from the (<= 6144) `s2.` rows of static_sound; part of the cached 2 h snapshot. */
+export async function loadSoundV2Stats(env: Env): Promise<SoundV2Stats> {
+  const db = getPrimaryDb(env);
+  const ordinals: number[] = [];
+  const by = { observed: 0, verified: 0, declared: 0 };
+  try {
+    const rows = await db
+      .prepare(
+        "SELECT sound_key, CASE WHEN json_valid(depth_breakdown_json) THEN json_extract(depth_breakdown_json, '$.tier') END AS tier " +
+          "FROM static_sound WHERE sound_key LIKE 's2.%'",
+      )
+      .all<{ sound_key: string; tier: string | null }>();
+    for (const r of rows.results || []) {
+      const bins = hasSoundV2Prefix(r.sound_key) ? parseSoundV2Key(r.sound_key) : null;
+      if (!bins) continue;
+      const tier = r.tier === "verified" ? "verified" : r.tier === "declared" ? "declared" : "observed";
+      by[tier] += 1;
+      if (tier !== "declared") ordinals.push(soundV2Ordinal(bins));
+    }
+  } catch (e) {
+    console.error("mission sound v2 scan failed:", e);
+  }
+  const covered = by.observed + by.verified;
+  return {
+    space: "sound.L1",
+    space_size: SOUND_V2_SPACE_SIZE,
+    covered,
+    coverage_pct: Math.round((100 * covered) / SOUND_V2_SPACE_SIZE * 1000) / 1000,
+    by_tier: by,
+    seen_bitmap: encodeSeenBitmap(ordinals),
+    tier_policy: EVIDENCE_TIER_POLICY,
+  };
+}
+
 async function loadSoundStats(env: Env): Promise<MissionStats["sound"]> {
   const db = getPrimaryDb(env);
   const origins = SOUND_ORIGIN_PRIMARIES as readonly string[];
@@ -132,7 +185,7 @@ async function loadSoundStats(env: Env): Promise<MissionStats["sound"]> {
   let total = 0;
   try {
     const rows = await db
-      .prepare("SELECT depth_breakdown_json FROM static_sound ORDER BY rowid DESC LIMIT 3000")
+      .prepare("SELECT depth_breakdown_json FROM static_sound WHERE sound_key NOT LIKE 's2.%' ORDER BY rowid DESC LIMIT 3000")
       .all<{ depth_breakdown_json: string | null }>();
     for (const r of rows.results || []) {
       total += 1;
@@ -171,8 +224,8 @@ export async function loadMissionStats(env: Env, fresh = false): Promise<Mission
       bypassMinIntervalSec: 300,
     },
     async () => {
-      const [colors, sound] = await Promise.all([loadColorStats(env), loadSoundStats(env)]);
-      return { colors, sound, scan: "full", updated_at: new Date().toISOString() } as MissionStats;
+      const [colors, sound, sound_v2] = await Promise.all([loadColorStats(env), loadSoundStats(env), loadSoundV2Stats(env)]);
+      return { colors, sound, sound_v2, scan: "full", updated_at: new Date().toISOString() } as MissionStats;
     },
   );
   return snap.value;

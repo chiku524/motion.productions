@@ -70,7 +70,7 @@ export function buildSoundOriginCountSql(origins: readonly string[]): string {
         `COALESCE(json_extract(depth_breakdown_json, '$.${o}'), 0) > 0) THEN 1 ELSE 0 END) AS "${o}"`,
     )
     .join(", ");
-  return `SELECT COUNT(*) AS total, ${cols} FROM static_sound`;
+  return `SELECT COUNT(*) AS total, ${cols} FROM static_sound WHERE sound_key NOT LIKE 's2.%'`;
 }
 
 export function parseSoundOriginCounts(
