@@ -15,3 +15,5 @@ and move the file into `migrations/` with the next free number (so migration his
 * `learned_blends` has no index on `name`, yet `naming.ts` / `registries.ts` run `WHERE name = ?` against it. On a table this big
   that is a full scan per lookup (read-quota burner). An index would cost storage; decide after measuring (see `docs/D1_FREE_TIER.md`).
 * Dropping / recreating tables to reclaim space (free route: deletes cost writes, 1 GB of deletes is impractical). Unapproved.
+## Sound v2 needs no migration
+Sound v2 (`sound.L1`, 6,144 cells) is stored as ordinary `s2.AA-B-F-K-Z` rows in the existing `static_sound` table: the cell id (`sound.L1#NNNNN`) goes in `name`, and the evidence tier in `depth_breakdown_json.tier`. There is no new table or column, and no extra statement per upsert. v1 reads add `sound_key NOT LIKE 's2.%'`, which is evaluated on rows the existing scans already touch. If a dedicated `tier` column is ever wanted, draft it here first; it is not required.
