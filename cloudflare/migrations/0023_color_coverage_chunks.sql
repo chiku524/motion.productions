@@ -1,4 +1,4 @@
--- 0101_color_coverage_chunks.sql  (PENDING, NOT APPLIED; see README.md in this folder)
+-- 0101_color_coverage_chunks.sql  (APPLIED to remote D1 2026-10-27 via d1 execute; idempotent CREATE IF NOT EXISTS)
 --
 -- Exact 8-bit colour coverage ("color.L2.a20", 2^24 cells) as ONE ROW PER 64 KiB CHUNK, never one row per colour.
 -- 32 chunks per space x (observed | verified | declared) bit planes in the same row: the whole registry is 32 rows.

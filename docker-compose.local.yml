@@ -112,8 +112,8 @@ services:
       COLOR_CELLS_DIR: /app/knowledge/color_cells
       CONTAINER_INDEX: "0"
       CONTAINER_COUNT: ${COLOR_CONTAINER_COUNT:-2}
-      # D1 sync of coverage chunks stays OFF until migrations_pending/0101 is applied (then set COLOR_SYNC=1)
-      COLOR_SYNC: ${COLOR_SYNC:-0}
+      # D1 sync of coverage chunks (32 rows max per sync; migration 0101 applied 2026-10-27). Set COLOR_SYNC=0 to disable
+      COLOR_SYNC: ${COLOR_SYNC:-1}
       LOOP_CAMERA_VARIATION: ${LOOP_CAMERA_VARIATION:-1}
       LOOP_WORKER_OFFSET_SECONDS: "0"
       LOOP_DELAY_SECONDS: "15"
@@ -170,8 +170,8 @@ services:
       COLOR_CELLS_DIR: /app/knowledge/color_cells
       CONTAINER_INDEX: "1"
       CONTAINER_COUNT: ${COLOR_CONTAINER_COUNT:-2}
-      # D1 sync of coverage chunks stays OFF until migrations_pending/0101 is applied (then set COLOR_SYNC=1)
-      COLOR_SYNC: ${COLOR_SYNC:-0}
+      # D1 sync of coverage chunks (32 rows max per sync; migration 0101 applied 2026-10-27). Set COLOR_SYNC=0 to disable
+      COLOR_SYNC: ${COLOR_SYNC:-1}
       LOOP_CAMERA_VARIATION: ${LOOP_CAMERA_VARIATION:-1}
       LOOP_STATIC_FOCUS: "none"
       LOOP_WORKER_OFFSET_SECONDS: "30"
