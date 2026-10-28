@@ -61,7 +61,7 @@ workflows:
     env:
       WORKER_START_SCRIPT: interpret_loop
       API_BASE: https://motion.productions
-      INTERPRET_DELAY_SECONDS: "10"
+      INTERPRET_DELAY_SECONDS: "90"
 
   # Pure sound discovery: no video. Generates procedural audio → extract → grow static_sound → sync.
   sound:

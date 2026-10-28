@@ -453,7 +453,7 @@ The start command is taken from **Dockerfile CMD** (`python scripts/worker_start
 
 | Variable | Value |
 |----------|--------|
-| `INTERPRET_DELAY_SECONDS` | `10` (seconds between poll cycles) |
+| `INTERPRET_DELAY_SECONDS` | `90` (seconds between cycles; the queue poll itself backs off to >= 120 s while empty) |
 
 Effect: Fills the **interpretation registry** (D1 `interpretations` table) from queue items and from backfill (prompts from jobs that don’t yet have an interpretation). Stored values are used by the main pipeline via `interpretation_prompts` in knowledge for creation.
 
@@ -528,7 +528,7 @@ LOOP_WORKFLOW_TYPE=main
 ```env
 WORKER_START_SCRIPT=interpret_loop
 API_BASE=https://motion.productions
-INTERPRET_DELAY_SECONDS=10
+INTERPRET_DELAY_SECONDS=90
 HEALTH_PORT=8080
 ```
 
@@ -556,7 +556,7 @@ HEALTH_PORT=8080
 
 1. **Create a new worker service** from this repo; name it (e.g. `motion-interpret`).
 2. **Root Directory** empty; **Builder:** Dockerfile. Do not override the image **CMD** (use `worker_start.py`).
-3. **Environment variables:** `WORKER_START_SCRIPT` = `interpret_loop`; `API_BASE` = `https://motion.productions`; optional: `INTERPRET_DELAY_SECONDS=10`, `HEALTH_PORT=8080`
+3. **Environment variables:** `WORKER_START_SCRIPT` = `interpret_loop`; `API_BASE` = `https://motion.productions`; optional: `INTERPRET_DELAY_SECONDS=90`, `HEALTH_PORT=8080`
 4. **Deploy** — Worker runs `worker_start.py` → `interpret_loop.py`; polls the interpretation queue every 10 seconds.
 
 **Verify:** Logs show `Interpretation worker started (no create/render)` and `interpreted:` / `backfill:` messages. `GET https://motion.productions/api/knowledge/for-creation` returns `interpretation_prompts` when the worker has stored results.
