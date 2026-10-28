@@ -119,7 +119,7 @@ if (path === "/api/knowledge/for-creation" && request.method === "GET") {
     db.prepare("SELECT prompt, instruction_json FROM interpretations WHERE status = 'done' AND instruction_json IS NOT NULL ORDER BY rowid DESC LIMIT ?").bind(interpLimit),
     db.prepare("SELECT color_key, r, g, b, name, count, created_at FROM static_colors ORDER BY count DESC LIMIT ?").bind(colorScan),
     db.prepare("SELECT color_key, r, g, b, name, count, created_at FROM static_colors ORDER BY count ASC, created_at DESC LIMIT ?").bind(limit),
-    db.prepare("SELECT sound_key, tone, timbre, amplitude, name, count, created_at FROM static_sound ORDER BY count DESC LIMIT ?").bind(Math.min(colorScan, 200)),
+    db.prepare("SELECT sound_key, tone, timbre, amplitude, name, count, created_at FROM static_sound WHERE sound_key NOT LIKE 's2.%' ORDER BY count DESC LIMIT ?").bind(Math.min(colorScan, 200)),
     db.prepare("SELECT aspect, entry_key, value, name, count FROM narrative_entries ORDER BY count DESC LIMIT ?").bind(Math.min(colorScan, 200)),
   ]);
   type ColorRow = { color_key: string; r: number; g: number; b: number; count: number; sources_json: string | null; name: string };

@@ -7,9 +7,12 @@ unknown. grow_from_video() = static (color, sound); grow_dynamic_from_video() = 
 via grow_narrative_from_spec(). Works with local JSON registries; can batch and sync
 to API (D1) when api_base is set.
 """
+import contextlib
+import contextvars
 from pathlib import Path
 from typing import Any
 
+from .evidence import DECLARED, OBSERVED, best_tier, entry_tier, window_tiers
 from .extractor_per_instance import (
     extract_static_per_frame,
     extract_dynamic_per_window,
@@ -39,6 +42,21 @@ def _static_color_key(color: dict[str, Any], tolerance: int = 25, opacity_steps:
     o_step = round(opacity * (opacity_steps - 1)) / (opacity_steps - 1) if opacity_steps > 1 else round(opacity, 2)
     rgb_key = _color_key(float(r), float(g), float(b), tolerance=tolerance)
     return f"{rgb_key}_{round(o_step, 2)}"
+
+
+# Evidence tier override (docs/EXHAUSTIVE_REGISTRY_PLAN.md). Seeding runs inside evidence_scope(DECLARED) so a
+# pre-seeded primitive is never counted as coverage; otherwise the tier comes from the extracted window itself.
+_EVIDENCE_OVERRIDE: contextvars.ContextVar[str | None] = contextvars.ContextVar("evidence_override", default=None)
+
+
+@contextlib.contextmanager
+def evidence_scope(tier: str | None):
+    """Force every registry write inside the block to this tier (e.g. DECLARED while seeding)."""
+    token = _EVIDENCE_OVERRIDE.set(tier)
+    try:
+        yield
+    finally:
+        _EVIDENCE_OVERRIDE.reset(token)
 
 
 def _static_sound_key(sound: dict[str, Any]) -> str:
@@ -362,6 +380,17 @@ def ensure_dynamic_primitives_seeded(
     novel_for_sync: dict[str, list[dict[str, Any]]] | None = None,
     force_novel: bool = False,
 ) -> dict[str, int]:
+    """Seed the dynamic grid. Everything seeded is tier "declared": it is a spec grid, never coverage."""
+    with evidence_scope(DECLARED):
+        return _ensure_dynamic_primitives_seeded(config, novel_for_sync=novel_for_sync, force_novel=force_novel)
+
+
+def _ensure_dynamic_primitives_seeded(
+    config: dict[str, Any] | None = None,
+    *,
+    novel_for_sync: dict[str, list[dict[str, Any]]] | None = None,
+    force_novel: bool = False,
+) -> dict[str, int]:
     """
     Seed dynamic registry with all origin primitives so every known non-pure value exists.
     Covers: gradient, camera (type×speed×steadiness), transition (+durations), audio_semantic
@@ -622,11 +651,14 @@ def ensure_static_sound_in_registry(
         zcr=sound.get("zcr"),
     )
     strength_pct = depth_breakdown.get("strength_pct") if isinstance(depth_breakdown, dict) else amp
+    # Only a sound the extractor measured from a decoded clip carries evidence_tier; spec/seed sounds are declared.
+    tier = _EVIDENCE_OVERRIDE.get() or sound.get("evidence_tier") or DECLARED
     if key in existing:
         entries_by_key = {e.get("key"): e for e in entries if e.get("key")}
         e = entries_by_key.get(key)
         name = (e or {}).get("name") or ""
         if e is not None:
+            e["evidence_tier"] = best_tier(entry_tier("static_sound", e), tier)
             e["count"] = e.get("count", 0) + 1
             if source_prompt:
                 e.setdefault("sources", []).append(source_prompt[:80])
@@ -662,6 +694,7 @@ def ensure_static_sound_in_registry(
         "count": 1,
         "sources": [source_prompt[:80]] if source_prompt else ["primitive_seed"],
         "depth_breakdown": depth_breakdown,
+        "evidence_tier": tier,
     }
     data.setdefault("entries", []).append(entry)
     data["count"] = len(data["entries"])
@@ -677,8 +710,38 @@ def ensure_static_sound_in_registry(
             "depth_breakdown": depth_breakdown,
             "source_prompt": source_prompt[:80] if source_prompt else "primitive_seed",
             "name": name,
+            "evidence_tier": tier,
         })
     return name
+
+
+def grow_sound_v2_from_segments(
+    sounds: list[dict[str, Any]],
+    *,
+    prompt: str = "",
+    config: dict[str, Any] | None = None,
+    out_sound: list[dict[str, Any]] | None = None,
+    targets: list[int] | None = None,
+) -> int:
+    """Record the sound.L1 (v2) cells measured in one decoded clip. Returns the number of new local cells.
+
+    Additive: v1 growth is untouched. Payloads (capped per clip) are appended to out_sound as ordinary
+    static_sound rows with an ``s2.`` key, so the Worker needs no new table and no extra POST.
+    """
+    if not any(isinstance(s, dict) and s.get("v2_key") for s in sounds or []):
+        return 0
+    from . import sound_v2
+
+    res = sound_v2.record_clip_cells(
+        sounds,
+        config=config,
+        source_prompt=prompt,
+        targets=targets,
+        max_payloads=None if out_sound is not None else 0,
+    )
+    if out_sound is not None:
+        out_sound.extend(res["payloads"])
+    return int(res["new"])
 
 
 def grow_static_sound_from_audio_segments(
@@ -688,6 +751,7 @@ def grow_static_sound_from_audio_segments(
     config: dict[str, Any] | None = None,
     collect_novel_for_sync: bool = False,
     force_novel: bool = False,
+    v2_targets: list[int] | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """
     Grow the pure-sound mesh (static_sound registry) from per-frame segments.
@@ -709,6 +773,10 @@ def grow_static_sound_from_audio_segments(
             force_novel=force_novel,
         ):
             added["static_sound"] += 1
+    added["sound_v2"] = grow_sound_v2_from_segments(
+        audio_segments, prompt=prompt, config=config,
+        out_sound=novel_list if collect_novel_for_sync else None, targets=v2_targets,
+    )
     return added, novel_list
 
 
@@ -729,6 +797,7 @@ def _ensure_dynamic_in_registry(
     api_payload: dict[str, Any] | None = None,
     registry_cache: dict[str, dict[str, Any]] | None = None,
     force_novel: bool = False,
+    window: dict[str, Any] | None = None,
 ) -> str | None:
     """Generic: add one dynamic entry if key not in registry. Returns name if added.
     When registry_cache is provided, uses cached registry data to avoid repeated disk reads.
@@ -740,10 +809,14 @@ def _ensure_dynamic_in_registry(
         if registry_cache is not None:
             registry_cache[aspect] = data
     existing = _entries_keys(data)
+    tier = _EVIDENCE_OVERRIDE.get() or window_tiers(window or {}).get(aspect, OBSERVED)
+    if api_payload is not None:
+        api_payload = {**api_payload, "evidence_tier": tier}
     if key in existing:
         name = ""
         for e in data.get("entries", []):
             if e.get("key") == key:
+                e["evidence_tier"] = best_tier(entry_tier(aspect, e), tier)
                 e["count"] = e.get("count", 0) + 1
                 if source_prompt:
                     e.setdefault("sources", []).append(source_prompt[:80])
@@ -758,7 +831,7 @@ def _ensure_dynamic_in_registry(
         return None
     names = {e.get("name", "") for e in data.get("entries", []) if e.get("name")}
     name = generate_sensible_name(aspect, key, existing_names=names)
-    entry = {"key": key, "name": name, "count": 1, "sources": [source_prompt[:80]] if source_prompt else ["primitive_seed"], **entry_payload}
+    entry = {"key": key, "name": name, "count": 1, "sources": [source_prompt[:80]] if source_prompt else ["primitive_seed"], "evidence_tier": tier, **entry_payload}
     data.setdefault("entries", []).append(entry)
     data["count"] = len(data["entries"])
     save_dynamic_registry(aspect, data, config)
@@ -799,7 +872,7 @@ def ensure_dynamic_motion_in_registry(
         "motion_rhythm": payload["motion_rhythm"],
         "depth_breakdown": compute_motion_depth(motion_level, motion_trend),
     }
-    return _ensure_dynamic_in_registry("motion", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache, force_novel=force_novel)
+    return _ensure_dynamic_in_registry("motion", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache, force_novel=force_novel, window=window)
 
 
 def ensure_dynamic_time_in_registry(
@@ -815,7 +888,7 @@ def ensure_dynamic_time_in_registry(
     key = _time_key(time_dict)
     payload = {"duration": time_dict.get("duration"), "fps": time_dict.get("fps"), "rate": time_dict.get("rate", time_dict.get("fps"))}
     api = {"key": key, "duration": payload["duration"], "fps": payload["fps"], "rate": payload.get("rate", payload["fps"])}
-    return _ensure_dynamic_in_registry("time", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache, force_novel=force_novel)
+    return _ensure_dynamic_in_registry("time", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache, force_novel=force_novel, window=window)
 
 
 def ensure_dynamic_lighting_in_registry(
@@ -842,7 +915,7 @@ def ensure_dynamic_lighting_in_registry(
         "saturation": saturation,
         "depth_breakdown": depth,
     }
-    return _ensure_dynamic_in_registry("lighting", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache, force_novel=force_novel)
+    return _ensure_dynamic_in_registry("lighting", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache, force_novel=force_novel, window=window)
 
 
 def ensure_dynamic_composition_in_registry(
@@ -869,7 +942,7 @@ def ensure_dynamic_composition_in_registry(
         "luminance_balance": lb,
         "depth_breakdown": depth,
     }
-    return _ensure_dynamic_in_registry("composition", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache, force_novel=force_novel)
+    return _ensure_dynamic_in_registry("composition", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache, force_novel=force_novel, window=window)
 
 
 def ensure_dynamic_graphics_in_registry(
@@ -896,7 +969,7 @@ def ensure_dynamic_graphics_in_registry(
         "busyness": busy,
         "depth_breakdown": depth,
     }
-    return _ensure_dynamic_in_registry("graphics", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache, force_novel=force_novel)
+    return _ensure_dynamic_in_registry("graphics", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache, force_novel=force_novel, window=window)
 
 
 def ensure_dynamic_temporal_in_registry(
@@ -922,7 +995,7 @@ def ensure_dynamic_temporal_in_registry(
         "motion_trend": payload["motion_trend"],
         "depth_breakdown": depth,
     }
-    return _ensure_dynamic_in_registry("temporal", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache, force_novel=force_novel)
+    return _ensure_dynamic_in_registry("temporal", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache, force_novel=force_novel, window=window)
 
 
 def ensure_dynamic_technical_in_registry(
@@ -952,7 +1025,7 @@ def ensure_dynamic_technical_in_registry(
         "fps": f,
         "depth_breakdown": depth,
     }
-    return _ensure_dynamic_in_registry("technical", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache, force_novel=force_novel)
+    return _ensure_dynamic_in_registry("technical", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache, force_novel=force_novel, window=window)
 
 
 def ensure_dynamic_gradient_in_registry(
@@ -978,7 +1051,7 @@ def ensure_dynamic_gradient_in_registry(
         "strength": payload["strength"],
         "depth_breakdown": depth,
     }
-    return _ensure_dynamic_in_registry("gradient", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache, force_novel=force_novel)
+    return _ensure_dynamic_in_registry("gradient", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache, force_novel=force_novel, window=window)
 
 
 def ensure_dynamic_camera_in_registry(
@@ -1012,7 +1085,7 @@ def ensure_dynamic_camera_in_registry(
         "steadiness": steadiness,
         "depth_breakdown": depth,
     }
-    return _ensure_dynamic_in_registry("camera", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache, force_novel=force_novel)
+    return _ensure_dynamic_in_registry("camera", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache, force_novel=force_novel, window=window)
 
 
 def ensure_dynamic_transition_in_registry(
@@ -1033,7 +1106,7 @@ def ensure_dynamic_transition_in_registry(
     depth = {ttype: 1.0}
     payload = {"type": ttype, "duration_seconds": trans.get("duration_seconds", trans.get("duration", 0)), "depth_breakdown": depth}
     api = {"key": key, "type": payload["type"], "duration_seconds": payload["duration_seconds"], "depth_breakdown": depth}
-    return _ensure_dynamic_in_registry("transition", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache, force_novel=force_novel)
+    return _ensure_dynamic_in_registry("transition", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache, force_novel=force_novel, window=window)
 
 
 def ensure_dynamic_depth_in_registry(
@@ -1055,7 +1128,7 @@ def ensure_dynamic_depth_in_registry(
     depth = {"parallax_strength": round(float(parallax), 3), "layer_count": int(layers)}
     payload = {"parallax_strength": parallax, "layer_count": layers, "depth_breakdown": depth}
     api = {"key": key, "parallax_strength": payload["parallax_strength"], "layer_count": payload["layer_count"], "depth_breakdown": depth}
-    return _ensure_dynamic_in_registry("depth", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache, force_novel=force_novel)
+    return _ensure_dynamic_in_registry("depth", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache, force_novel=force_novel, window=window)
 
 
 def ensure_dynamic_audio_semantic_in_registry(
@@ -1089,7 +1162,7 @@ def ensure_dynamic_audio_semantic_in_registry(
     depth_breakdown: dict[str, Any] = {"role": role, "mood": mood or "neutral", "tempo": tempo or "medium", "presence": presence or "ambient"}
     payload["depth_breakdown"] = depth_breakdown
     api = {"key": key, "role": role, "mood": mood, "tempo": tempo, "depth_breakdown": depth_breakdown}
-    return _ensure_dynamic_in_registry("audio_semantic", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache, force_novel=force_novel)
+    return _ensure_dynamic_in_registry("audio_semantic", key, payload, source_prompt=source_prompt, config=config, out_novel=out_novel, api_payload=api, registry_cache=registry_cache, force_novel=force_novel, window=window)
 
 
 def grow_from_video(
@@ -1136,9 +1209,11 @@ def grow_from_video(
     out_sound = novel_for_sync["static_sound"] if collect_novel_for_sync else None
 
     # Static only: every frame (color + sound); primitives already seeded above
+    v2_sounds: list[dict[str, Any]] = []
     for frame in extract_static_per_frame(
         path, max_frames=max_frames, sample_every=sample_every
     ):
+        v2_sounds.append(frame.get("sound", {}))
         if ensure_static_color_in_registry(
             frame.get("color", {}),
             source_prompt=prompt,
@@ -1150,6 +1225,7 @@ def grow_from_video(
             frame.get("sound", {}), source_prompt=prompt, config=config, out_novel=out_sound
         ):
             added["static_sound"] += 1
+    added["sound_v2"] = grow_sound_v2_from_segments(v2_sounds, prompt=prompt, config=config, out_sound=out_sound)
 
     record_spec_discovery_values(
         spec,
@@ -1367,8 +1443,11 @@ def grow_all_from_video(
 
     do_static_color = do_frame and (static_focus in ("both", "color"))
     do_static_sound = do_frame and (static_focus in ("both", "sound"))
+    v2_sounds: list[dict[str, Any]] = []
     if do_frame:
         for frame in _extract_static_from_preloaded(frames, fps, audio_segments):
+            if do_static_sound:
+                v2_sounds.append(frame.get("sound", {}))
             if do_static_color and ensure_static_color_in_registry(
                 frame.get("color", {}),
                 source_prompt=prompt,
@@ -1380,6 +1459,8 @@ def grow_all_from_video(
                 frame.get("sound", {}), source_prompt=prompt, config=config, out_novel=out_sound
             ):
                 added["static_sound"] += 1
+        if do_static_sound:
+            added["sound_v2"] = grow_sound_v2_from_segments(v2_sounds, prompt=prompt, config=config, out_sound=out_sound)
         # When decoded audio was empty (or no segments), still grow static_sound from spec so the registry gets entries
         if do_static_sound and spec and added["static_sound"] == 0:
             spec_sound = derive_static_sound_from_spec(spec)

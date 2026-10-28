@@ -263,7 +263,7 @@ async function buildSoundRows(env: Env): Promise<SoundRow[]> {
   const db = getPrimaryDb(env);
   const rows = await db
     .prepare(
-      "SELECT sound_key, name, count, depth_breakdown_json, strength_pct, tone, timbre FROM static_sound ORDER BY count DESC LIMIT ?",
+      "SELECT sound_key, name, count, depth_breakdown_json, strength_pct, tone, timbre FROM static_sound WHERE sound_key NOT LIKE 's2.%' ORDER BY count DESC LIMIT ?",
     )
     .bind(SCAN_CAP)
     .all<{
@@ -721,6 +721,8 @@ async function browseMission(env: Env, fresh = false): Promise<Response> {
       aspects_filled: narrativeAspects,
       aspects_total: narrativeTotal,
     },
+    // Additive: sound v2 (sound.L1) coverage by evidence tier + seen bitmap for targeted sampling.
+    ...(stats.sound_v2 ? { sound_v2: stats.sound_v2 } : {}),
     scan: stats.scan,
     updated_at: stats.updated_at,
     hint:

@@ -8,6 +8,8 @@ from typing import Any, Iterator
 
 import numpy as np
 
+from ..audio.features import measure_audio_frame
+from .evidence import DECLARED, OBSERVED
 from ..analysis.metrics import (
     brightness_and_contrast,
     color_variance,
@@ -133,39 +135,22 @@ def _extract_audio_segments(
         if len(samples) == 0:
             out.append({"amplitude": 0.0, "weight": 0.0, "tone": "silent", "timbre": "silent"})
             continue
-        # RMS amplitude (normalize to 0–1 range; 16-bit max 32768)
-        samples_f = samples.astype(np.float64)
-        rms = float(np.sqrt(np.mean(samples_f ** 2)))
-        amplitude = min(1.0, rms / 32768.0) if rms else 0.0
+        # One shared measurement (also used by the sound v2 synth to aim at a cell): RMS amplitude, peak_hz,
+        # spectral flatness, attack ratio, zcr. Stereo is mixed down; the FFT axis uses the real chunk length.
+        m = measure_audio_frame(samples, segment.frame_rate, segment.channels)
+        amplitude = m["amplitude"]
         weight = amplitude
         tone = "silent" if amplitude < 0.01 else "mid"
-        peak_hz = 0.0
-        spectral_flatness = 0.5
-        attack_ratio = 0.0
-        zcr = 0.0
-        # Simple tone from dominant frequency (FFT) + features for everyday primitive classification
-        if len(samples) >= 256:
-            chunk = samples_f[:2048]
-            fft = np.abs(np.fft.rfft(chunk))
-            freqs = np.fft.rfftfreq(2048, 1.0 / segment.frame_rate)
-            if len(fft) and np.max(fft) > 0:
-                peak_idx = int(np.argmax(fft))
-                peak_hz = float(freqs[peak_idx])
-                if peak_hz < 200:
-                    tone = "low"
-                elif peak_hz < 2000:
-                    tone = "mid"
-                else:
-                    tone = "high"
-                geom = np.exp(np.mean(np.log(fft + 1e-12)))
-                arith = np.mean(fft) + 1e-12
-                spectral_flatness = float(min(1.0, max(0.0, geom / arith)))
-            half = max(1, len(chunk) // 2)
-            attack_rms = float(np.sqrt(np.mean(chunk[:half] ** 2)))
-            tail_rms = float(np.sqrt(np.mean(chunk[half:] ** 2))) + 1e-12
-            attack_ratio = float(min(1.0, attack_rms / (attack_rms + tail_rms)))
-            signs = np.sign(chunk)
-            zcr = float(np.mean(signs[1:] != signs[:-1]))
+        peak_hz = m["peak_hz"]
+        spectral_flatness = m["spectral_flatness"]
+        attack_ratio = m["attack_ratio"]
+        zcr = m["zcr"]
+        if peak_hz > 0:
+            tone = "low" if peak_hz < 200 else ("mid" if peak_hz < 2000 else "high")
+        v2_key = None
+        if len(samples) // max(1, segment.channels) >= 256:
+            from .keyspace import sound_v2_key  # binned from the unrounded measurement
+            v2_key = sound_v2_key(amplitude, peak_hz, spectral_flatness, attack_ratio, zcr)
         from .blend_depth import classify_sound_primitive
         primitive = classify_sound_primitive(
             amplitude, tone,
@@ -182,6 +167,9 @@ def _extract_audio_segments(
             "spectral_flatness": round(spectral_flatness, 3),
             "attack_ratio": round(attack_ratio, 3),
             "zcr": round(zcr, 3),
+            "peak_hz": round(peak_hz, 1),
+            # Sound v2 cell measured from THIS decoded frame (evidence tier: observed).
+            **({"v2_key": v2_key, "evidence_tier": OBSERVED} if v2_key else {}),
         })
     return out
 
@@ -278,6 +266,73 @@ def _derive_audio_semantic_from_segments(
     return {"role": role, "type": role, "mood": mood, "tempo": tempo, "presence": presence}
 
 
+def _gray_small(frame: np.ndarray) -> np.ndarray:
+    f = frame[::4, ::4].astype(np.float64)
+    return f.mean(axis=-1) if f.ndim == 3 else f
+
+
+def measure_transition_duration(frames: list[np.ndarray], boundary: int, fps: float) -> float | None:
+    """
+    Real transition duration (seconds) around the frame index where a new window starts.
+
+    Looks at consecutive-frame change in a +-0.5 s band. A cut is one spike (duration 0.0); a dissolve or
+    fade keeps the change elevated above the clip's background motion for several frames, and the length of
+    that run is the duration. Returns None when it cannot be measured (too few frames / shape change).
+    """
+    n = len(frames)
+    if fps <= 0 or boundary < 1 or boundary >= n or n < 4:
+        return None
+    try:
+        span = max(2, int(round(fps * 0.5)))
+        lo, hi = max(1, boundary - span), min(n - 1, boundary + span)
+        d: dict[int, float] = {}
+        prev = _gray_small(frames[lo - 1])
+        for i in range(lo, hi + 1):
+            cur = _gray_small(frames[i])
+            if cur.shape != prev.shape:
+                return None
+            d[i] = float(np.abs(cur - prev).mean())
+            prev = cur
+        # background motion: median change in the band outside the boundary neighbourhood
+        outside = [v for i, v in d.items() if abs(i - boundary) > 2]
+        base = float(np.median(outside)) if outside else 0.0
+        peak = max(d[i] for i in d if abs(i - boundary) <= 1)
+        if peak <= base * 1.5 + 0.5:
+            return 0.0  # nothing stands out from the clip's own motion: no transition event
+        thr = base + 0.5 * (peak - base)
+        centre = max((i for i in d if abs(i - boundary) <= 1), key=lambda i: d[i])
+        run = 1
+        i = centre - 1
+        while i in d and d[i] >= thr:
+            run += 1
+            i -= 1
+        i = centre + 1
+        while i in d and d[i] >= thr:
+            run += 1
+            i += 1
+        return 0.0 if run <= 1 else round(run / fps, 3)
+    except Exception:
+        return None
+
+
+def measure_depth_proxy(grid_motion: list[np.ndarray]) -> dict[str, Any] | None:
+    """
+    Depth proxy from motion parallax: how differently the 3x3 image regions move over the window (near things
+    move more than far things). Returns {parallax_strength, layer_count, proxy} or None without motion data.
+    This is a measured proxy, not true depth.
+    """
+    if not grid_motion:
+        return None
+    g = np.mean(np.stack(grid_motion), axis=0).ravel()  # mean motion per region
+    top = float(g.max())
+    if top < 0.5:
+        return {"parallax_strength": 0.0, "layer_count": 1, "proxy": "motion_parallax_grid"}
+    spread = float(np.std(g) / (np.mean(g) + 1e-9))
+    strength = round(min(1.0, spread) * 10) / 10  # 0.1 steps keep the key space small
+    levels = {int(v) for v in np.floor(g / top * 3.999)}  # 4 relative motion levels
+    return {"parallax_strength": float(strength), "layer_count": int(max(1, len(levels))), "proxy": "motion_parallax_grid"}
+
+
 def _extract_dynamic_from_preloaded(
     frames: list[np.ndarray],
     fps: float,
@@ -301,6 +356,7 @@ def _extract_dynamic_from_preloaded(
 
         # Motion over window (level, trend, direction, rhythm)
         per_motion: list[float] = []
+        grid_motion: list[np.ndarray] = []
         direction_scores: list[tuple[float, float]] = []
         for j in range(1, len(window_frames)):
             fa = window_frames[j - 1].astype(np.float64)
@@ -311,6 +367,9 @@ def _extract_dynamic_from_preloaded(
                     diff = diff.mean(axis=-1)
                 per_motion.append(float(diff.mean()))
                 h, ww = diff.shape[:2]
+                if h >= 3 and ww >= 3:
+                    gh, gw = (h // 3) * 3, (ww // 3) * 3
+                    grid_motion.append(diff[:gh, :gw].reshape(3, gh // 3, 3, gw // 3).mean(axis=(1, 3)))
                 if ww >= 2 and h >= 2:
                     left = float(diff[:, : ww // 2].sum())
                     right = float(diff[:, ww // 2 :].sum())
@@ -402,7 +461,24 @@ def _extract_dynamic_from_preloaded(
                     transition_type = "dissolve"
                 else:
                     transition_type = "fade"
-        transition_dict = {"type": transition_type, "duration_seconds": transition_duration_seconds}
+        # Real duration from the frames around the boundary (was a constant 0.0). Unmeasurable -> declared.
+        measured_duration = measure_transition_duration(frames, start_i, fps) if w > 0 else None
+        if measured_duration is not None:
+            transition_duration_seconds = measured_duration
+        transition_dict = {
+            "type": transition_type,
+            "duration_seconds": transition_duration_seconds,
+            "measured": measured_duration is not None,
+        }
+        depth_proxy = measure_depth_proxy(grid_motion)
+        # Evidence per category: only what was measured from pixels/samples is observed. Camera is still a
+        # guess from frame differences and audio_semantic a guess from loudness, so both stay declared.
+        evidence = {
+            "camera": DECLARED,
+            "audio_semantic": DECLARED,
+            "transition": OBSERVED if measured_duration is not None else DECLARED,
+            "depth": OBSERVED if depth_proxy else DECLARED,
+        }
 
         yield {
             "window_index": w,
@@ -424,7 +500,8 @@ def _extract_dynamic_from_preloaded(
             "graphics": {"edge_density": edge_den, "spatial_variance": spat_var, "busyness": 0.5 * edge_den + 0.5 * spat_var},
             "audio_semantic": audio_semantic,
             "transition": transition_dict,
-            "depth": {},
+            "depth": depth_proxy or {},
+            "evidence": evidence,
         }
 
 

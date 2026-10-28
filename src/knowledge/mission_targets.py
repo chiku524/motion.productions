@@ -127,6 +127,22 @@ def pick_target_sound_origin(
     return weighted_choice(list(weights), list(weights.values()), rng)
 
 
+def pick_target_sound_v2_cells(
+    n: int = 8,
+    *,
+    config: dict[str, Any] | None = None,
+    mission: dict[str, Any] | None = None,
+    rng: Any = None,
+) -> list[int]:
+    """Up to n sound.L1 (v2) cell ordinals nobody has measured yet (local store + Worker seen bitmap).
+
+    Untried cells come first; cells the synth repeatedly failed to hit are deprioritised, never excluded.
+    """
+    from . import sound_v2
+
+    return sound_v2.pick_unseen_cells(n, config=config, mission=mission, rng=rng)
+
+
 def color_family_prompt_bits(family: str, shade: str | None = None) -> tuple[str, str]:
     """Return (subject, shade_cue) for prompt assembly."""
     from ..random_utils import secure_choice

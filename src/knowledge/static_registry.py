@@ -221,6 +221,7 @@ STATIC_ASPECTS = [
 STATIC_REGISTRY_FILES = {
     "color": "static_colors.json",
     "sound": "static_sound.json",
+    "sound_v2": "static_sound_v2.json",
 }
 
 

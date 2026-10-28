@@ -25,6 +25,7 @@ import { blendId } from "./blendId";
 import { maybeRunRetention } from "./retention";
 import { inventSemanticWord, titleCaseLabel, toTitleCase, sanitizePureSoundKey } from "./naming";
 import { classifyColorFamily, classifyColorShade } from "./colorBrowse";
+import { hasSoundV2Prefix, isSoundV2Key, soundV2CellId } from "./soundKeyspace";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type AnyItem = Record<string, any>;
@@ -63,6 +64,10 @@ interface Planned {
 const src = (p?: string) => (p ? JSON.stringify([String(p).slice(0, 80)]) : null);
 const nm = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
 const depthOf = (d: unknown): string | null => (d && typeof d === "object" ? JSON.stringify(d) : null);
+const SOUND_V2_TIERS = ["observed", "verified", "declared"];
+/** v2 cell rows keep the first depth blob; a later "verified" observation upgrades it (same single-row upsert). */
+const SOUND_V2_TIER_UPGRADE =
+  "depth_breakdown_json = CASE WHEN json_extract(excluded.depth_breakdown_json, '$.tier') = 'verified' THEN excluded.depth_breakdown_json ELSE depth_breakdown_json END";
 const COALESCE_DEPTH = "depth_breakdown_json = COALESCE(excluded.depth_breakdown_json, depth_breakdown_json)";
 
 function plan(items: Planned[], seen: Map<string, Planned>, p: Planned): void {
@@ -234,12 +239,27 @@ export async function writeDiscoveries(env: Env, body: DiscoveriesBody): Promise
       done("static_colors");
     }
     for (const s of body.static_sound || []) {
+      const rawKey = String(s.key || "");
+      const v2 = hasSoundV2Prefix(rawKey);
+      if (v2 && !isSoundV2Key(rawKey)) continue; // malformed sound v2 key: never becomes a row
       if (!take("static_sound")) break outer;
-      const key = sanitizePureSoundKey(s.key || "");
+      const key = v2 ? rawKey : sanitizePureSoundKey(rawKey);
+      let depthJson: string | null = s.depth_breakdown ? JSON.stringify(s.depth_breakdown) : null;
+      if (v2) {
+        // Same single static_sound upsert as v1 (no extra table, no extra statement); the evidence tier rides in the blob.
+        const tier = String(s.evidence_tier ?? s.depth_breakdown?.tier ?? "observed").toLowerCase();
+        depthJson = JSON.stringify({
+          ...(s.depth_breakdown && typeof s.depth_breakdown === "object" ? s.depth_breakdown : {}),
+          space: "sound.L1",
+          cell_id: soundV2CellId(key),
+          tier: SOUND_V2_TIERS.includes(tier) ? tier : "observed",
+        });
+      }
       plan(planned, seen, {
         cat: "static_sound", table: "static_sound", keyCols: ["sound_key"], keyVals: [key],
-        cols: { amplitude: s.amplitude ?? null, weight: s.weight ?? null, tone: s.tone ?? null, timbre: s.timbre ?? null, depth_breakdown_json: s.depth_breakdown ? JSON.stringify(s.depth_breakdown) : null, strength_pct: s.strength_pct ?? s.amplitude ?? s.weight ?? null },
-        sources: src(s.source_prompt), providedName: nm(s.name), autoName: "semantic", extraUpdate: [], delta: 1,
+        cols: { amplitude: s.amplitude ?? null, weight: s.weight ?? null, tone: s.tone ?? null, timbre: s.timbre ?? null, depth_breakdown_json: depthJson, strength_pct: s.strength_pct ?? s.amplitude ?? s.weight ?? null },
+        sources: src(s.source_prompt), providedName: nm(s.name) ?? (v2 ? soundV2CellId(key) : null), autoName: "semantic",
+        extraUpdate: v2 ? [SOUND_V2_TIER_UPGRADE] : [], delta: 1,
       });
       done("static_sound");
     }
@@ -366,7 +386,11 @@ export async function writeDiscoveries(env: Env, body: DiscoveriesBody): Promise
       p.novel = !!row && row.count === p.delta;
       if (p.novel) {
         if (p.cat === "static_colors") novel.static_colors++;
-        if (p.cat === "static_sound") novel.static_sound++;
+        if (p.cat === "static_sound") {
+          // sound v2 cells are counted apart so the v1 static_sound counter keeps its meaning
+          if (hasSoundV2Prefix(String(p.keyVals[0]))) novel.sound_v2 = (novel.sound_v2 || 0) + 1;
+          else novel.static_sound++;
+        }
         if (p.cat === "colors") novel.learned_colors++;
         if (!p.providedName && p.name && p.autoName === "semantic") reserveNames.push(p.name);
       }

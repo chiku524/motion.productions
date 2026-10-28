@@ -39,7 +39,7 @@ import {
 } from "../naming";
 import { handleRegistryBrowse } from "./registryBrowse";
 import { invalidateRegistryReadCaches } from "../browseCache";
-import { loadMissionStats } from "../missionStats";
+import { EVIDENCE_TIER_POLICY, loadMissionStats } from "../missionStats";
 import { getSnapshot } from "../snapshotCache";
 import { cachedRows, recentDoneInterpretations } from "../readCache";
 
@@ -327,7 +327,7 @@ if (path === "/api/registries/health" && request.method === "GET") {
   let gibberishNames = 0;
   let narrativeNameMismatches = 0;
   try {
-    const ss = await db.prepare("SELECT sound_key FROM static_sound LIMIT 1000")
+    const ss = await db.prepare("SELECT sound_key FROM static_sound WHERE sound_key NOT LIKE 's2.%' LIMIT 1000")
       .all<{ sound_key: string }>();
     for (const r of ss.results || []) {
       pureSoundTotal++;
@@ -411,7 +411,7 @@ if (path === "/api/registries/sanitize-sound-keys" && request.method === "POST")
   let updated = 0;
   let merged = 0;
   try {
-    const rows = await db.prepare("SELECT id, sound_key, count FROM static_sound").all<{ id: string; sound_key: string; count: number }>();
+    const rows = await db.prepare("SELECT id, sound_key, count FROM static_sound WHERE sound_key NOT LIKE 's2.%'").all<{ id: string; sound_key: string; count: number }>();
     for (const row of rows.results || []) {
       const canonical = sanitizePureSoundKey(row.sound_key);
       if (canonical === row.sound_key) continue;
@@ -475,7 +475,7 @@ if (path === "/api/registries/coverage" && request.method === "GET") {
     countsSource = "kv";
   } else {
     const scCount = await countTable("SELECT COUNT(*) as c FROM static_colors");
-    const ssCount = await countTable("SELECT COUNT(*) as c FROM static_sound");
+    const ssCount = await countTable("SELECT COUNT(*) as c FROM static_sound WHERE sound_key NOT LIKE 's2.%'");
     const lcCount = await countTable("SELECT COUNT(*) as c FROM learned_colors");
     if (scCount == null || ssCount == null) {
       countsReliable = false;
@@ -518,11 +518,16 @@ if (path === "/api/registries/coverage" && request.method === "GET") {
     } catch { /* ignore */ }
   }
 
+  let soundV2: Record<string, unknown> | undefined;
   try {
     // Same whole-table aggregate as /api/registries/mission (was: first 200 arbitrary rows), so the
     // two endpoints can no longer disagree about which sound origins exist.
     const ms = await loadMissionStats(env, bypassCache);
     for (const o of ms.sound.origins_present) soundPrimitives.add(o);
+    if (ms.sound_v2) {
+      const { seen_bitmap: _bitmap, ...rest } = ms.sound_v2; // the bitmap is for /mission; coverage stays small
+      soundV2 = rest;
+    }
   } catch { /* ignore */ }
 
   const staticColorsCoveragePct = STATIC_COLOR_ESTIMATED_CELLS > 0
@@ -616,6 +621,9 @@ if (path === "/api/registries/coverage" && request.method === "GET") {
     narrative_plots_style_min_coverage_pct: narrativePlotsStyleMinCoveragePct,
     plots_coverage_pct: plotsCov,
     style_coverage_pct: styleCov,
+    // Additive: coverage by evidence tier. Only observed + verified count; declared never covers a cell.
+    ...(soundV2 ? { sound_v2: soundV2 } : {}),
+    evidence_tier_policy: EVIDENCE_TIER_POLICY,
     /** Mirrors src/knowledge/completion_targets.py for UI progress bars. */
     targets: {
       static_color_estimated_cells: STATIC_COLOR_ESTIMATED_CELLS,
@@ -797,9 +805,9 @@ if (path === "/api/registries" && request.method === "GET") {
       ).bind(regLimit).all<{ color_key: string; r: number; g: number; b: number; name: string; count: number; depth_breakdown_json: string | null }>();
       return { results: r.results || [] };
     });
-    const staticSoundOnly = await cachedRows(env, `reg:static_sound:top:v1:${regLimit}`, 300, async () => {
+    const staticSoundOnly = await cachedRows(env, `reg:static_sound:top:v2:${regLimit}`, 300, async () => {
       const r = await db.prepare(
-        "SELECT sound_key, name, count, depth_breakdown_json, strength_pct FROM static_sound ORDER BY count DESC LIMIT ?"
+        "SELECT sound_key, name, count, depth_breakdown_json, strength_pct FROM static_sound WHERE sound_key NOT LIKE 's2.%' ORDER BY count DESC LIMIT ?"
       ).bind(regLimit).all<{ sound_key: string; name: string; count: number; depth_breakdown_json: string | null; strength_pct: number | null }>();
       return { results: r.results || [] };
     });
@@ -952,8 +960,8 @@ if (path === "/api/registries" && request.method === "GET") {
     const r = await db.prepare("SELECT color_key, r, g, b, name, count, depth_breakdown_json FROM static_colors ORDER BY count DESC LIMIT ?").bind(regLimit).all<{ color_key: string; r: number; g: number; b: number; name: string; count: number; depth_breakdown_json: string | null }>();
     return { results: r.results || [] };
   });
-  const staticSound = await cachedRows(env, `reg:static_sound:top:v1:${regLimit}`, 300, async () => {
-    const r = await db.prepare("SELECT sound_key, name, count, depth_breakdown_json, strength_pct FROM static_sound ORDER BY count DESC LIMIT ?").bind(regLimit).all<{ sound_key: string; name: string; count: number; depth_breakdown_json: string | null; strength_pct: number | null }>();
+  const staticSound = await cachedRows(env, `reg:static_sound:top:v2:${regLimit}`, 300, async () => {
+    const r = await db.prepare("SELECT sound_key, name, count, depth_breakdown_json, strength_pct FROM static_sound WHERE sound_key NOT LIKE 's2.%' ORDER BY count DESC LIMIT ?").bind(regLimit).all<{ sound_key: string; name: string; count: number; depth_breakdown_json: string | null; strength_pct: number | null }>();
     return { results: r.results || [] };
   });
   const learnedColors = learnedColorsDepthOk

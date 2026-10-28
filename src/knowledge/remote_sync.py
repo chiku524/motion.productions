@@ -33,6 +33,32 @@ def _item_weight(category: str) -> int:
     return 1
 
 
+def _cap_sound_v2(discoveries: dict[str, Any], max_items: int) -> dict[str, Any]:
+    """Keep sound v2 (``s2.`` key) rows within the room one POST already has, so they never add a request.
+
+    v2 rows travel as ordinary static_sound items. At most SOUND_V2_MAX_PER_CLIP leave per clip and only
+    into budget left over by everything else; v1 and every other category are never displaced.
+    """
+    rows = discoveries.get("static_sound") or []
+    v2 = [r for r in rows if isinstance(r, dict) and str(r.get("key", "")).startswith("s2.")]
+    if not v2:
+        return discoveries
+    from .sound_v2 import max_per_clip
+
+    narrative = discoveries.get("narrative") or {}
+    others = sum(
+        len(v) for k, v in discoveries.items()
+        if isinstance(v, list) and k != "static_sound"
+    ) + sum(len(v) for v in narrative.values() if isinstance(v, list)) + (len(rows) - len(v2))
+    allowed = max(0, min(max_per_clip(), max_items - others))
+    if len(v2) <= allowed:
+        return discoveries
+    keep = v2[:allowed]
+    out = dict(discoveries)
+    out["static_sound"] = [r for r in rows if r not in v2] + keep
+    return out
+
+
 def _chunk_discoveries(discoveries: dict[str, Any]) -> list[dict[str, Any]]:
     """
     Split discoveries into chunks of at most DISCOVERIES_MAX_ITEMS weighted budget.
@@ -42,6 +68,7 @@ def _chunk_discoveries(discoveries: dict[str, Any]) -> list[dict[str, Any]]:
     """
     max_items = _max_items()
     job_id = discoveries.pop("job_id", None)
+    discoveries = _cap_sound_v2(discoveries, max_items)
     chunks: list[dict[str, Any]] = []
     current: dict[str, Any] = {}
     count = 0

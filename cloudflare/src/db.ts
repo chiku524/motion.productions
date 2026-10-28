@@ -302,7 +302,7 @@ async function computeTrueTotals(primaryDb: D1Database): Promise<TrueRegistryTot
   };
   const [static_colors, static_sound, interpretation, linguistic] = await Promise.all([
     count("SELECT COUNT(*) as c FROM static_colors"),
-    count("SELECT COUNT(*) as c FROM static_sound"),
+    count("SELECT COUNT(*) as c FROM static_sound WHERE sound_key NOT LIKE 's2.%'"),
     count("SELECT COUNT(*) as c FROM interpretations WHERE status = 'done' AND instruction_json IS NOT NULL"),
     count("SELECT COUNT(*) as c FROM linguistic_registry"),
   ]);

@@ -18,6 +18,35 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Sound v2: the synth used to squeeze every amplitude into -30..-18 dB, so measured RMS above ~0.13 was
+# unreachable and amplitude keys collapsed. amp_to_db maps a registry amplitude (target RMS, 0..1) to the
+# dB of a sine whose measured RMS equals it, capped at PEAK_CEILING_DB so clips never clip.
+PEAK_CEILING_DB = -1.0
+SILENT_DB = -60.0
+# Creative (video) clips stay at the old listening level: headroom shifts the whole range down, so the old
+# mid amplitude (0.5 -> -23 dB) is unchanged while the span is now ~-77..-18 dB instead of -28..-18.
+CREATIVE_HEADROOM_DB = float(os.environ.get("SOUND_CREATIVE_HEADROOM_DB", "20") or 20)
+
+
+def amp_to_db(amplitude: float) -> float:
+    """Volume (dB, for a sine) whose RMS equals ``amplitude`` (0..1); log-scale, capped at the peak ceiling."""
+    import math
+
+    a = max(0.0, min(1.0, float(amplitude or 0.0)))
+    if a < 0.001:
+        return SILENT_DB
+    return max(SILENT_DB, min(PEAK_CEILING_DB, 20.0 * math.log10(a) + 3.0103))
+
+
+def limit_peak(audio, ceiling_db: float = PEAK_CEILING_DB):
+    """Scale an AudioSegment down (never up) so its peak stays at or below ceiling_db. Deterministic."""
+    try:
+        if audio.max > 0 and audio.max_dBFS > ceiling_db:
+            return audio.apply_gain(ceiling_db - audio.max_dBFS)
+    except Exception:  # pragma: no cover - defensive: never fail a clip over the limiter
+        pass
+    return audio
+
 
 def generate_silence(duration_seconds: float, sample_rate: int = 44100) -> "bytes":
     """Generate silence as raw PCM bytes."""
@@ -260,7 +289,7 @@ def _tone_to_freq_db(tone: str, amplitude: float) -> tuple[float, float]:
     freq = freq_map.get(tone_lower, 220.0)
     # Amplitude 0–1 → dB about -30 (quiet) to -18 (audible)
     amp = max(0.0, min(1.0, float(amplitude or 0.5)))
-    db = -30.0 + amp * 12.0
+    db = amp_to_db(amp) - CREATIVE_HEADROOM_DB  # log scale; was -30..-18 dB (amplitude keys > ~0.13 unreachable)
     return freq, db
 
 
@@ -565,7 +594,7 @@ def generate_audio_from_pure_sounds(
     for idx, entry in enumerate(entries):
         prim = _primitive_from_entry(entry)
         amp = float(entry.get("amplitude") or entry.get("weight") or 0.5)
-        db = -28.0 + max(0.0, min(1.0, amp)) * 10.0
+        db = amp_to_db(amp) - CREATIVE_HEADROOM_DB  # was -28 + amp*10 (10 dB span); now log-scale full range
         if rng is not None:
             db += rng.uniform(-2.5, 2.5)
         layers.append(
@@ -586,7 +615,7 @@ def generate_audio_from_pure_sounds(
             else:
                 offset_ms = (i * 47) % max(1, duration_ms // 4) if n > 2 else 0
             base = base.overlay(layer + layer_db, position=offset_ms)
-        return base
+        return limit_peak(base)
 
     window_ms = rng.choice((500, 700, 1000)) if rng is not None else 1000
     n_win = max(1, (duration_ms + window_ms - 1) // window_ms)
@@ -615,7 +644,7 @@ def generate_audio_from_pure_sounds(
             f = max(1, min(fade, lead_len // 2 - 1))
             lead = lead.fade_in(f).fade_out(f)
             base = base.overlay(lead, position=pos + start)
-    return base
+    return limit_peak(base)
 
 
 def _repeat_to_duration(segment, duration_ms: int):
@@ -734,6 +763,7 @@ def generate_audio_only(
     pure_sounds: list[dict] | None = None,
     pairing_kind: str = "frame",
     seed: int | None = None,
+    target_v2_cells: list[int] | None = None,
 ) -> Path:
     """
     Generate procedural audio to a WAV file (no video). Used by the sound-only
@@ -743,7 +773,12 @@ def generate_audio_only(
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     duration_ms = int(duration_seconds * 1000)
-    if pure_sounds:
+    if target_v2_cells:
+        # Sound v2 survey: aim frames at specific unseen sound.L1 cells (closed-loop, deterministic by seed).
+        from .v2_synth import synth_v2_cells
+
+        audio, _plans = synth_v2_cells(list(target_v2_cells), duration_ms, seed=int(seed or 0))
+    elif pure_sounds:
         audio = generate_audio_from_pure_sounds(
             pure_sounds,
             duration_ms=duration_ms,
