@@ -179,7 +179,9 @@ def test_post_discoveries_exhausted_keeps_working_locally_and_flushes_after_rese
     monkeypatch.setenv("D1_BUDGET_WEIGHTS", "sound=100")
     clock = Clock(utc(2026, 10, 27, 23, 59))
     wb.reset_budget(wb.WriteBudget(name="sound", clock=clock))
-    body = lambda n: {"static_sound": [{"key": f"{n}-{i}"} for i in range(3)]}  # 15 rows per POST
+    def body(n):  # 15 rows per POST
+        return {"static_sound": [{"key": f"{n}-{i}"} for i in range(3)]}
+
     sent = deferred = 0
     for n in range(10):
         res = remote_sync.post_discoveries("http://api", body(n))  # never raises on denial
@@ -289,7 +291,7 @@ def test_interpretation_only_novel_prompt_and_shape_become_rows(tmp_path):
     assert o.record("a blue sea", instr(colors=["blue"]), "generate") == "queued"
     assert len(o) == 2
     lines = [json.loads(x) for x in o.jsonl_path.read_text(encoding="utf-8").splitlines()]
-    assert [l["prompt"] for l in lines] == ["a crimson sun"]
+    assert [ln["prompt"] for ln in lines] == ["a crimson sun"]
     assert o.seen("a red sun") and not o.seen("never seen")
 
 
