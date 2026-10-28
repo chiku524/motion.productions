@@ -35,6 +35,10 @@ from typing import Any, Callable, Mapping
 
 logger = logging.getLogger(__name__)
 
+
+def _now() -> float:
+    return time.time()  # looked up at call time so a simulated clock (dry-run harness) can replace time.time
+
 DEFAULT_DAILY_BUDGET = 70000
 DEFAULT_WEIGHTS: dict[str, float] = {"explorer": 30, "balanced": 30, "interpret": 15, "sound": 10, "other": 5}
 OTHER = "other"
@@ -272,7 +276,7 @@ class WriteBudget:
         weights: Mapping[str, float] | None = None,
         low_fraction: float | None = None,
         pace_burst: float | None = None,
-        clock: Callable[[], float] = time.time,
+        clock: Callable[[], float] = _now,
     ):
         self.name = name or budget_name()
         self.dir = Path(directory) if directory else default_budget_dir()

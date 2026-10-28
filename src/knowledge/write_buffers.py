@@ -30,6 +30,10 @@ from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
+
+def _now() -> float:
+    return time.time()  # looked up at call time so a simulated clock (dry-run harness) can replace time.time
+
 # Flush order: the discoveries that grow the registries (colors, sound, motion) go first when the budget is short.
 CATEGORY_RANK = {
     "static_colors": 0, "colors": 0, "static_sound": 1, "motion": 2, "blends": 3, "narrative": 4,
@@ -117,7 +121,7 @@ class DiscoverySpool:
         flush_max_items: int | None = None,
         max_spool_items: int | None = None,
         path: Path | None = None,
-        clock: Callable[[], float] = time.time,
+        clock: Callable[[], float] = _now,
     ):
         self.name = name or _container_name()
         self.clock = clock
@@ -308,7 +312,7 @@ class LinguisticCoalescer:
         flush_interval: float | None = None,
         flush_max_items: int | None = None,
         path: Path | None = None,
-        clock: Callable[[], float] = time.time,
+        clock: Callable[[], float] = _now,
     ):
         self.name = name or _container_name()
         self.clock = clock
@@ -428,7 +432,7 @@ class InterpretationOutbox:
         flush_interval: float | None = None,
         flush_max_items: int | None = None,
         path: Path | None = None,
-        clock: Callable[[], float] = time.time,
+        clock: Callable[[], float] = _now,
     ):
         self.name = name or _container_name()
         self.clock = clock
