@@ -11,7 +11,7 @@ import { createHarness, bundleModule } from "./helpers/harness.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const VECTORS = JSON.parse(fs.readFileSync(path.join(ROOT, "..", "tests", "vectors", "color_cells_vectors.json"), "utf8"));
-const PENDING = fs.readFileSync(path.join(ROOT, "migrations_pending", "0101_color_coverage_chunks.sql"), "utf8");
+const PENDING = fs.readFileSync(path.join(ROOT, "migrations", "0023_color_coverage_chunks.sql"), "utf8");
 const SECRET = "test-secret";
 const AUTH = { Authorization: `Bearer ${SECRET}` };
 
@@ -26,7 +26,12 @@ before(async () => {
       for (const s of PENDING.replace(/--.*$/gm, "").split(/;\s*(?:\n|$)/).map((x) => x.trim()).filter(Boolean)) await db.prepare(s).run();
     },
   });
-  hBare = await createHarness({ bindings: { MOTION_API_SECRET: SECRET, RETENTION_DISABLED: "1" } }); // table NOT created
+  hBare = await createHarness({
+    bindings: { MOTION_API_SECRET: SECRET, RETENTION_DISABLED: "1" },
+    seed: async ({ db }) => {
+      await db.prepare("DROP TABLE IF EXISTS color_coverage_chunks").run(); // simulate a DB where the table is absent
+    },
+  });
 });
 after(async () => {
   cleanup?.();
