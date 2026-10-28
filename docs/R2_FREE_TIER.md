@@ -1,4 +1,4 @@
-# Cloudflare Free-tier budget (D1, KV, R2)
+﻿# Cloudflare Free-tier budget (D1, KV, R2)
 
 Everything here must fit the **Free** plan. Daily limits reset at **00:00 UTC** (8 PM ET / 7 PM EST).
 
@@ -64,3 +64,16 @@ Deletes are free; the sweep itself costs a handful of Class A ops per day.
 
 `cd cloudflare && npm test` (Miniflare harness in `test/helpers/harness.mjs`: `phase0`, `r2Limits`, `snapshotCache`) and
 `pytest tests/test_free_tier_limits.py`.
+
+### Bucket lifecycle rule and Oct 2026 cleanup
+
+* **Lifecycle rule (set 2026-10-28):** bucket `motion-productions-videos` has an object-expiry rule
+  `Expire jobs/ after 7 days` (prefix `jobs/`, delete after 604800 s) next to the default multipart-abort rule (7 days).
+  R2 applies it by object age, so it also covers anything the Worker sweep misses. `video-ai/` is not covered.
+  Read it back with `GET /accounts/{id}/r2/buckets/motion-productions-videos/lifecycle`.
+* **One-time cleanup (2026-10-28):** the bucket had grown to about 379 GB (about 279k objects, all `jobs/<id>/video.mp4`,
+  Feb 8 - Oct 26) because loop clips were uploaded until Oct 26 and the Worker sweep never ran on that backlog.
+  All `jobs/` objects older than 7 days (about 271k objects, about 374 GB) were deleted through the R2 object list/delete API.
+  Kept: `video-ai/` (2 objects) and `jobs/` objects newer than 7 days. After the cleanup the bucket held 8,329 objects / about 5.4 GB
+  (under the 10 GB free tier). Old job download links for deleted videos now return 404; the registry lives in D1 and is unaffected.
+  Log: `C:\Users\chiku\d1-audit\out\r2-cleanup.log` (local, not in git).
