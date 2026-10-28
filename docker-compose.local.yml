@@ -20,6 +20,17 @@
 
 name: motion-local
 
+x-d1-budget: &d1-budget
+  # Shared hard cap on D1 rows written per UTC day across ALL containers (Cloudflare Free = 100,000/day incl. index writes).
+  # Ledger lives on the shared ./knowledge volume and resets at 00:00 UTC. Weights (percent): interpret 15, sound 10,
+  # explorer 30, balanced 30, everything else 5 (10% is unallotted reserve). 0 disables the gate. See docs/D1_FREE_TIER.md.
+  D1_DAILY_WRITE_BUDGET: ${D1_DAILY_WRITE_BUDGET:-70000}
+  WRITE_BUDGET_DIR: /app/knowledge/write_budget
+  WRITE_BUFFER_DIR: /app/knowledge/write_buffer
+  WRITE_BUFFERS: ${WRITE_BUFFERS:-1}
+  # Idle this many seconds when the allowance is spent (0 = keep working locally, just stop posting)
+  WRITE_BUDGET_SLEEP_WHEN_EXHAUSTED_S: ${WRITE_BUDGET_SLEEP_WHEN_EXHAUSTED_S:-0}
+
 x-python-worker: &python-worker
   build:
     context: .
@@ -30,6 +41,7 @@ x-python-worker: &python-worker
     HEALTH_PORT: "8080"
     PYTHONUNBUFFERED: "1"
     PYTHONDONTWRITEBYTECODE: "1"
+    <<: *d1-budget
     # Free-tier D1: small weighted chunks + pause between POSTs (blends cost ~3 queries each)
     DISCOVERIES_MAX_ITEMS: ${DISCOVERIES_MAX_ITEMS:-36}
     DISCOVERIES_CHUNK_PAUSE_SECONDS: ${DISCOVERIES_CHUNK_PAUSE_SECONDS:-1.0}
@@ -45,6 +57,8 @@ services:
   webjobs:
     <<: *python-worker
     environment:
+      <<: *d1-budget
+      D1_BUDGET_NAME: webjobs
       API_BASE: ${API_BASE:-https://motion.productions}
       MOTION_API_SECRET: ${MOTION_API_SECRET:-}
       HEALTH_PORT: "8080"
@@ -69,6 +83,8 @@ services:
   procedural-render:
     <<: *python-worker
     environment:
+      <<: *d1-budget
+      D1_BUDGET_NAME: procedural-render
       API_BASE: ${API_BASE:-https://motion.productions}
       MOTION_API_SECRET: ${MOTION_API_SECRET:-}
       PYTHONUNBUFFERED: "1"
@@ -92,6 +108,11 @@ services:
     <<: *python-worker
     profiles: ["free", "loops", "loops-full"]
     environment:
+      <<: *d1-budget
+      D1_BUDGET_NAME: explorer
+      DISCOVERY_FLUSH_INTERVAL_S: ${DISCOVERY_FLUSH_INTERVAL_S:-120}   # coalesce count bumps / novel cells for 2 min, then one merged POST
+      DISCOVERY_FLUSH_MAX_ITEMS: ${DISCOVERY_FLUSH_MAX_ITEMS:-72}
+      LINGUISTIC_FLUSH_INTERVAL_S: ${LINGUISTIC_FLUSH_INTERVAL_S:-900}
       API_BASE: ${API_BASE:-https://motion.productions}
       MOTION_API_SECRET: ${MOTION_API_SECRET:-}
       HEALTH_PORT: "8080"
@@ -128,6 +149,11 @@ services:
     <<: *python-worker
     profiles: ["loops-full"]
     environment:
+      <<: *d1-budget
+      D1_BUDGET_NAME: exploiter
+      DISCOVERY_FLUSH_INTERVAL_S: ${DISCOVERY_FLUSH_INTERVAL_S:-120}   # coalesce count bumps / novel cells for 2 min, then one merged POST
+      DISCOVERY_FLUSH_MAX_ITEMS: ${DISCOVERY_FLUSH_MAX_ITEMS:-72}
+      LINGUISTIC_FLUSH_INTERVAL_S: ${LINGUISTIC_FLUSH_INTERVAL_S:-900}
       API_BASE: ${API_BASE:-https://motion.productions}
       MOTION_API_SECRET: ${MOTION_API_SECRET:-}
       HEALTH_PORT: "8080"
@@ -153,6 +179,11 @@ services:
     <<: *python-worker
     profiles: ["free", "loops", "loops-full"]
     environment:
+      <<: *d1-budget
+      D1_BUDGET_NAME: balanced
+      DISCOVERY_FLUSH_INTERVAL_S: ${DISCOVERY_FLUSH_INTERVAL_S:-120}   # coalesce count bumps / novel cells for 2 min, then one merged POST
+      DISCOVERY_FLUSH_MAX_ITEMS: ${DISCOVERY_FLUSH_MAX_ITEMS:-72}
+      LINGUISTIC_FLUSH_INTERVAL_S: ${LINGUISTIC_FLUSH_INTERVAL_S:-900}
       API_BASE: ${API_BASE:-https://motion.productions}
       MOTION_API_SECRET: ${MOTION_API_SECRET:-}
       HEALTH_PORT: "8080"
@@ -187,6 +218,13 @@ services:
     <<: *python-worker
     profiles: ["free", "loops", "loops-full"]
     environment:
+      <<: *d1-budget
+      D1_BUDGET_NAME: interpret
+      WRITE_BUDGET_SLEEP_WHEN_EXHAUSTED_S: ${INTERPRET_SLEEP_WHEN_EXHAUSTED_S:-900}   # idle once the allowance is spent
+      INTERPRET_FLUSH_INTERVAL_S: ${INTERPRET_FLUSH_INTERVAL_S:-600}   # only novel prompts+shapes are POSTed (batched); the rest go to a local JSONL
+      INTERPRET_FLUSH_MAX_ITEMS: ${INTERPRET_FLUSH_MAX_ITEMS:-10}
+      LINGUISTIC_FLUSH_INTERVAL_S: ${LINGUISTIC_FLUSH_INTERVAL_S:-900}
+      LINGUISTIC_FLUSH_MAX_ITEMS: ${LINGUISTIC_FLUSH_MAX_ITEMS:-40}
       API_BASE: ${API_BASE:-https://motion.productions}
       MOTION_API_SECRET: ${MOTION_API_SECRET:-}
       HEALTH_PORT: "8080"
@@ -201,6 +239,11 @@ services:
     <<: *python-worker
     profiles: ["free", "loops", "loops-full"]
     environment:
+      <<: *d1-budget
+      D1_BUDGET_NAME: sound
+      WRITE_BUDGET_SLEEP_WHEN_EXHAUSTED_S: ${SOUND_SLEEP_WHEN_EXHAUSTED_S:-900}
+      DISCOVERY_FLUSH_INTERVAL_S: ${SOUND_FLUSH_INTERVAL_S:-600}   # post only novel sound cells: one capped POST every 10 min
+      DISCOVERY_FLUSH_MAX_ITEMS: ${SOUND_FLUSH_MAX_ITEMS:-24}
       API_BASE: ${API_BASE:-https://motion.productions}
       MOTION_API_SECRET: ${MOTION_API_SECRET:-}
       HEALTH_PORT: "8080"
@@ -208,7 +251,7 @@ services:
       WORKER_START_SCRIPT: sound_loop
       SOUND_LOOP_DELAY_SECONDS: "75"
       SOUND_LOOP_DURATION_SECONDS: "2.5"
-      DISCOVERIES_MAX_ITEMS: "36"
+      DISCOVERIES_MAX_ITEMS: ${SOUND_POST_MAX_ITEMS:-12}   # per-POST cap
       DISCOVERIES_CHUNK_PAUSE_SECONDS: "1.0"
     ports:
       - "8087:8080"
