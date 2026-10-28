@@ -94,8 +94,13 @@ estimate stands**, which only makes the client more conservative.
 ### Observing it
 `python scripts/loop_metrics.py` prints, in addition to the clip metrics, a **D1 write budget** table: rows used today,
 allowance, %, posts, denied rows and projected rows/day per container (including interpret and sound, which keep no clip
-metrics), and the projected total across all containers. `python scripts/write_budget_dryrun.py` simulates 10 minutes of
-loop output for every container against a mock Worker (no network) and prints the projected rows/day under the budget.
+metrics), and the projected total across all containers. `python scripts/write_budget_dryrun.py` simulates 10 minutes and
+a full UTC day of loop output for every container against a mock Worker (no network, virtual clock, ~2.5 min to run) and prints
+baseline vs budgeted rows. The per-iteration work is a calibrated MODEL, not a measurement. Result with the compose defaults:
+baseline demand ~346k rows/day (explorer 90k, balanced 93k, interpret 142k, sound 19k; crosses 100k at ~06:30 UTC), budgeted
+~56k rows/day (explorer 21.0k, balanced 21.0k, interpret 5.0k, sound 7.0k, webjobs 1.9k, render 0.3k), 0 Worker rejections.
+explorer, balanced and sound spend their whole allowance (surplus novel items stay in the local spool; the oldest lowest-priority
+items are dropped when the spool is full), interpret stays under (low-priority pacing).
 Tests: `tests/test_write_budget.py`, `tests/test_write_buffers.py`, `tests/test_compose_budget.py`,
 `cloudflare/test/writeBudget.test.mjs`.
 
