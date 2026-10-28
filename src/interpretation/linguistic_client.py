@@ -37,11 +37,29 @@ def post_linguistic_growth(
     items: list[dict[str, Any]],
 ) -> dict[str, int]:
     """
-    Post extracted mappings to linguistic registry. Batches into chunks of 14
-    to stay under D1 query limit. items: [{"span", "canonical", "domain", "variant_type"?}]
+    Queue extracted mappings for the linguistic registry and flush what is due.
+
+    Repeated bumps of the same (domain, span) are merged locally with summed ``count`` and sent as ONE batched
+    upsert per ``LINGUISTIC_FLUSH_INTERVAL_S`` / ``LINGUISTIC_FLUSH_MAX_ITEMS`` (an INSERT costs 5 D1 rows, a
+    bump of an existing span 1). Anything denied by the write budget stays queued locally.
+    items: [{"span", "canonical", "domain", "variant_type"?, "count"?}]
+    Returns {"inserted", "updated", "queued"}; ``WRITE_BUFFERS=0`` posts directly like before.
     """
     if not items:
-        return {"inserted": 0, "updated": 0}
+        return {"inserted": 0, "updated": 0, "queued": 0}
+    from ..knowledge.remote_sync import buffers_enabled
+
+    if buffers_enabled():
+        from ..knowledge.write_buffers import get_linguistic_coalescer
+
+        co = get_linguistic_coalescer()
+        co.add(items)
+        res = co.flush(api_base)
+        return {"inserted": res["inserted"], "updated": res["updated"], "queued": res["queued"]}
+    return _post_linguistic_direct(api_base, items)
+
+
+def _post_linguistic_direct(api_base: str, items: list[dict[str, Any]]) -> dict[str, int]:
     total_inserted = 0
     total_updated = 0
     try:

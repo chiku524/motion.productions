@@ -74,6 +74,11 @@ def run() -> None:
     from src.knowledge.lookup import get_knowledge_for_creation
     from src.workflow_utils import setup_graceful_shutdown, start_health_server, request_shutdown
 
+    from src.knowledge.remote_sync import buffers_enabled
+    from src.knowledge.write_buffers import flush_all, get_interpretation_outbox, idle_when_exhausted
+
+    use_buffers = buffers_enabled()
+    outbox = get_interpretation_outbox()
     setup_graceful_shutdown()
     health_port = args.health_port if args.health_port is not None else int(os.environ.get("HEALTH_PORT", "0"))
     if health_port > 0:
@@ -91,6 +96,14 @@ def run() -> None:
             print("Shutdown requested, exiting")
             break
         cycle += 1
+        if api_base and use_buffers:
+            # Send what the local buffers hold if it is due and the shared D1 write budget allows (else it stays
+            # buffered; interpretation itself is local, so the loop keeps working either way).
+            flush_all(api_base)
+            idle = idle_when_exhausted()
+            if idle > 0:
+                logger.info("D1 write budget used up / backing off: sleeping %.0fs", idle)
+                time.sleep(idle)
         try:
             # 1) Process queue: GET pending → interpret → PATCH result
             try:
@@ -149,6 +162,8 @@ def run() -> None:
                     )
                     raw = [p.strip() for p in backfill.get("prompts", []) if p and isinstance(p, str)]
                     prompts = filter_gibberish_prompts(raw, strict=True)
+                    if use_buffers:
+                        prompts = [p for p in prompts if not outbox.seen(p)]  # already decided locally: no re-work, no row
                     if prompts:
                         linguistic_registry = _cached_fetch(
                             "linguistic", cache, CACHE_TTL_SECONDS,
@@ -156,6 +171,7 @@ def run() -> None:
                         )
                         batch: list[dict] = []
                         backfill_extracted: list[dict] = []
+                        local_only = 0
                         for prompt in prompts:
                             try:
                                 instruction = interpret_user_prompt(
@@ -165,13 +181,28 @@ def run() -> None:
                                     knowledge=knowledge or None,
                                 )
                                 payload = instruction.to_api_dict() if hasattr(instruction, "to_api_dict") else instruction.to_dict()
-                                batch.append({"prompt": prompt, "instruction": payload, "source": "backfill"})
+                                if use_buffers:
+                                    # novel by a local check -> outbox (batched POST); otherwise a local JSONL only
+                                    verdict = outbox.record(prompt, payload, source="backfill")
+                                    if verdict == "dropped":
+                                        continue
+                                    if verdict == "local":
+                                        local_only += 1
+                                else:
+                                    batch.append({"prompt": prompt, "instruction": payload, "source": "backfill"})
                                 extracted = extract_linguistic_mappings(prompt, instruction)
                                 for e in extracted:
                                     e["variant_type"] = e.get("variant_type", "synonym")
                                 backfill_extracted.extend(extracted)
                             except Exception as e:
                                 logger.warning("Backfill interpret failed for %s: %s", prompt[:40], e)
+                        if use_buffers:
+                            res = outbox.flush(api_base)
+                            if res["inserted"] or local_only:
+                                print(f"[{cycle}] backfill: {res['inserted']} recorded, {local_only} kept local, {res['queued']} queued")
+                            if backfill_extracted:
+                                result = post_linguistic_growth(api_base, backfill_extracted)
+                                print(f"[{cycle}] backfill linguistic: queued {result.get('queued', 0)} (+{result.get('inserted', 0)} / ~{result.get('updated', 0)})")
                         if batch:
                             try:
                                 n = 0
@@ -195,16 +226,7 @@ def run() -> None:
                                     except Exception as e:
                                         logger.warning("Backfill linguistic growth failed: %s", e)
                             except APIError as e:
-                                logger.warning("POST /api/interpretations/batch failed: %s — falling back to single POSTs", e)
-                                for it in batch:
-                                    try:
-                                        api_request_with_retry(
-                                            api_base, "POST", "/api/interpretations",
-                                            data=it, timeout=15,
-                                        )
-                                        print(f"[{cycle}] backfill: {it['prompt'][:50]}…")
-                                    except APIError:
-                                        pass
+                                logger.warning("POST /api/interpretations/batch failed: %s", e)
                 except APIError as e:
                     logger.warning("GET /api/interpret/backfill-prompts failed: %s", e)
 
@@ -239,11 +261,15 @@ def run() -> None:
                                 knowledge=knowledge or None,
                             )
                             payload = instruction.to_api_dict() if hasattr(instruction, "to_api_dict") else instruction.to_dict()
-                            api_request_with_retry(
-                                api_base, "POST", "/api/interpretations",
-                                data={"prompt": prompt, "instruction": payload, "source": "generate"},
-                                timeout=15,
-                            )
+                            if use_buffers:
+                                if outbox.record(prompt, payload, source="generate") == "dropped":
+                                    continue
+                            else:
+                                api_request_with_retry(
+                                    api_base, "POST", "/api/interpretations",
+                                    data={"prompt": prompt, "instruction": payload, "source": "generate"},
+                                    timeout=15,
+                                )
                             extracted = extract_linguistic_mappings(prompt, instruction)
                             for e in extracted:
                                 e["variant_type"] = e.get("variant_type", "synonym")
@@ -251,6 +277,8 @@ def run() -> None:
                             print(f"[{cycle}] generated: {prompt[:50]}…")
                         except Exception as e:
                             logger.warning("Generate/interpret failed for %s: %s", prompt[:40], e)
+                    if use_buffers:
+                        outbox.flush(api_base)
                     if all_extracted:
                         result = post_linguistic_growth(api_base, all_extracted)
                         if result.get("inserted", 0) or result.get("updated", 0):

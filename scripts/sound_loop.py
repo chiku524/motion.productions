@@ -158,6 +158,18 @@ def run() -> None:
             print("Shutdown requested, exiting")
             break
         cycle += 1
+        if api_base:
+            # Novel cells are buffered locally and posted in small capped batches on SOUND/DISCOVERY_FLUSH_INTERVAL_S,
+            # only while the shared daily D1 write budget allows; synthesis + the local registry never stop.
+            try:
+                from src.knowledge.write_buffers import flush_all, idle_when_exhausted
+                flush_all(api_base)
+                idle = idle_when_exhausted()
+                if idle > 0:
+                    logger.info("D1 write budget used up / backing off: sleeping %.0fs", idle)
+                    time.sleep(idle)
+            except Exception as e:
+                logger.debug("write buffer flush skipped: %s", e)
         wav_path = out_dir / f"sound_loop_{cycle}.wav"
         try:
             knowledge = {}

@@ -220,7 +220,54 @@ def pop_post_stats() -> dict[str, int]:
     return out
 
 
+def buffers_enabled() -> bool:
+    """Local write buffers (merge/dedupe + deferred flush) are on unless WRITE_BUFFERS=0."""
+    import os
+    return (os.environ.get("WRITE_BUFFERS", "1") or "1").strip().lower() not in ("0", "off", "false", "no")
+
+
+def is_local_job_id(job_id: str | None) -> bool:
+    """Ids minted locally when POST /api/jobs was skipped by the write budget ("local-..."): D1 knows nothing of them."""
+    return bool(job_id) and str(job_id).startswith("local-")
+
+
 def post_discoveries(
+    api_base: str,
+    discoveries: dict[str, Any],
+    *,
+    job_id: str | None = None,
+) -> dict[str, Any]:
+    """
+    Add discoveries to the local spool (merged by identity, ``count_delta`` summed) and flush what is due, novel
+    color/sound/motion first, within the shared D1 write budget. Items that cannot be sent now (budget used up,
+    shared back-off, Worker error) stay in the persisted spool and go out on a later call: this never raises
+    for a budget denial. The result carries ``deferred`` (items still buffered). ``WRITE_BUFFERS=0`` restores
+    the direct, unbuffered path.
+    """
+    import os
+    if not buffers_enabled():
+        return _post_discoveries_direct(api_base, discoveries, job_id=job_id)
+    from .write_buffers import get_discovery_spool
+
+    payload = dict(discoveries)
+    jid = job_id or payload.pop("job_id", None)
+    payload.pop("job_id", None)
+    spool = get_discovery_spool()
+    if payload:
+        spool.add(payload)
+    if not len(spool):
+        return {}
+    pause = float(os.environ.get("DISCOVERIES_CHUNK_PAUSE_SECONDS", DISCOVERIES_CHUNK_PAUSE_SECONDS))
+    res = spool.flush(api_base, job_id=None if is_local_job_id(jid) else jid, pause=pause)
+    merged: dict[str, Any] = {"status": "recorded" if res["posted"] or not res["deferred"] else "deferred",
+                              "results": res["results"], "truncated": False}
+    merged["deferred"] = res["deferred"]
+    if res.get("skipped"):
+        merged["skipped"] = res["skipped"]
+    return merged
+
+
+def _post_discoveries_direct(
     api_base: str,
     discoveries: dict[str, Any],
     *,

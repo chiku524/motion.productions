@@ -18,12 +18,14 @@ from pathlib import Path
 
 from src.api_client import (
     APIError,
+    WriteBudgetSkipped,
     api_request,
     api_request_with_retry,
     finish_loop_job,
     pop_write_stats,
     slim_learning_analysis,
 )
+from src.knowledge.remote_sync import is_local_job_id
 from src.random_utils import fresh_seed, secure_choice, secure_random
 
 logger = logging.getLogger(__name__)
@@ -497,6 +499,18 @@ def run() -> None:
 
         raw_delay = loop_config.get("delay_seconds") or (args.delay if args.delay is not None else float(os.environ.get("LOOP_DELAY_SECONDS", "0")) or 0)
         delay_seconds = max(8, float(raw_delay))  # min 8s to reduce D1 overload with concurrent workers
+        if args.api_base:
+            # Send whatever the local buffers hold (discoveries / linguistic / interpretations) if it is due and
+            # the shared daily D1 write budget allows; otherwise it stays buffered and we keep working locally.
+            try:
+                from src.knowledge.write_buffers import flush_all, idle_when_exhausted
+                flush_all(args.api_base)
+                _idle = idle_when_exhausted()
+                if _idle > 0:
+                    print(f"  (D1 write budget used up / backing off; sleeping {_idle:.0f}s, data stays buffered locally)")
+                    time.sleep(_idle)
+            except Exception as e:
+                logger.debug("write buffer flush skipped: %s", e)
         run_color_survey_step(args.api_base)  # exact-colour cells; opt-in, local, never published
         coverage = _load_coverage(args.api_base) if args.api_base else None
         workflow_type = (os.environ.get("LOOP_WORKFLOW_TYPE") or "main").strip().lower() or "main"
@@ -555,6 +569,12 @@ def run() -> None:
                 data={"prompt": prompt, "duration_seconds": duration, "workflow_type": workflow_type},
                 timeout=30,
             )
+        except WriteBudgetSkipped as e:
+            # Out of write budget: the job row (5 D1 rows) is only a log. Keep rendering/growing locally under a
+            # local id; discoveries stay buffered and no job-bound rows (complete/learning) are posted for it.
+            import uuid
+            job = {"id": f"local-{uuid.uuid4().hex[:12]}"}
+            logger.info("POST /api/jobs skipped by write budget (%s); running locally as %s", e, job["id"])
         except APIError as e:
             logger.warning("POST /api/jobs failed (status=%s, path=%s): %s", e.status_code, e.path, e)
             print(f"API error: {e}")
@@ -626,7 +646,11 @@ def run() -> None:
                     logger.warning("Novelty store update failed: %s", e)
 
             # R2 free tier: store the clip only when LOOP_UPLOAD_VIDEOS=1; otherwise just mark the job completed.
-            finish_loop_job(args.api_base, job_id, path, timeout=120, max_retries=5)
+            if not is_local_job_id(job_id):
+                try:
+                    finish_loop_job(args.api_base, job_id, path, timeout=120, max_retries=5)
+                except WriteBudgetSkipped as e:
+                    logger.info("job complete skipped by write budget: %s", e)
             run_succeeded = True
 
             # Prefer the instruction + spec that actually drove the render (avoid re-roll of random registry picks)
@@ -655,15 +679,26 @@ def run() -> None:
             if args.api_base:
                 try:
                     payload = instruction.to_api_dict() if hasattr(instruction, "to_api_dict") else instruction.to_dict()
-                    print("  [interpretation] posting...", flush=True)
-                    api_request_with_retry(
-                        args.api_base, "POST", "/api/interpretations",
-                        data={"prompt": prompt, "instruction": payload, "source": "loop"},
-                        timeout=30,
-                        max_retries=5,
-                        backoff_seconds=2.0,
-                    )
-                    print("  [interpretation] recorded", flush=True)
+                    from src.knowledge.remote_sync import buffers_enabled
+                    if buffers_enabled():
+                        # Only a prompt AND instruction shape that are new locally become a D1 row (4 rows); the
+                        # rest go to a local JSONL. Flushed in batches on INTERPRET_FLUSH_INTERVAL_S.
+                        from src.knowledge.write_buffers import get_interpretation_outbox
+                        outbox = get_interpretation_outbox()
+                        verdict = outbox.record(prompt, payload, source="loop")
+                        if verdict == "queued":
+                            outbox.flush(args.api_base)
+                        print(f"  [interpretation] {verdict}", flush=True)
+                    else:
+                        print("  [interpretation] posting...", flush=True)
+                        api_request_with_retry(
+                            args.api_base, "POST", "/api/interpretations",
+                            data={"prompt": prompt, "instruction": payload, "source": "loop"},
+                            timeout=30,
+                            max_retries=5,
+                            backoff_seconds=2.0,
+                        )
+                        print("  [interpretation] recorded", flush=True)
                 except APIError as e:
                     print(f"  [interpretation] failed status={e.status_code}", flush=True)
                     logger.warning("POST /api/interpretations failed (status=%s): %s", e.status_code, e)
@@ -807,13 +842,16 @@ def run() -> None:
 
             try:
                 # Explicit retries to reduce "missing learning" from transient 5xx/429/connection (audit §1.2)
-                _post_learning_with_retry(
-                    args.api_base,
-                    job_id=job_id,
-                    prompt=prompt,
-                    spec=spec,
-                    analysis_dict=analysis_dict,
-                )
+                if not is_local_job_id(job_id):  # a learning row references a job row; local (budget-skipped) jobs have none
+                    _post_learning_with_retry(
+                        args.api_base,
+                        job_id=job_id,
+                        prompt=prompt,
+                        spec=spec,
+                        analysis_dict=analysis_dict,
+                    )
+            except WriteBudgetSkipped as e:
+                logger.info("learning log skipped by write budget: %s", e)
             except APIError as e:
                 logger.warning("Missing learning (job_id=%s): POST /api/learning failed status=%s — %s", job_id, e.status_code, e)
                 print(f"  (learning log: {e})")
