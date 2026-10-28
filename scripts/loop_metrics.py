@@ -15,6 +15,13 @@ D1 write projection (an ESTIMATE; the Worker does not report rows written back t
     projected / day = sum over containers of (clips per active hour x 24 x rows per clip) + --fixed-overhead
 Reference from docs/EXHAUSTIVE_REGISTRY_PLAN.md: 91-145 rows per creative clip, ~7.3k fixed rows/day.
 Rate uses each container's active span (first to last record), i.e. it assumes 24 h of continuous running.
+
+Write budget (src/knowledge/write_budget.py, docs/D1_FREE_TIER.md): the shared ledger under $WRITE_BUDGET_DIR
+(default knowledge/write_budget) counts rows charged per container for the current UTC day, INCLUDING containers
+that write no loop metrics (interpret, sound, webjobs). The report prints, per container: rows used today, its
+allowance, % of allowance, rows/posts denied, and a projected daily total (observed rate x 24 h, then capped at the
+allowance because the gate stops posting there), plus the total across ALL containers against the budget and the
+100,000/day D1 limit. Use --no-budget to skip it, --budget-dir to point at another ledger.
 """
 from __future__ import annotations
 
@@ -112,6 +119,63 @@ def summarise(records: list[dict], rows_per_item: float, fixed_overhead: float) 
     return {"containers": containers, "total": total}
 
 
+def budget_report(directory: Path | None = None, now: float | None = None) -> dict:
+    """Per-container write-budget usage and projected daily totals from the shared ledger (read-only)."""
+    from src.knowledge.write_budget import WriteBudget, seconds_into_utc_day
+
+    now = time.time() if now is None else now
+    wbud = WriteBudget(name="loop_metrics", directory=directory, clock=lambda: now)
+    snap = wbud.snapshot()
+    elapsed_h = max(MIN_SPAN_HOURS, seconds_into_utc_day(now) / 3600.0)
+    containers: dict[str, dict] = {}
+    for name, e in sorted((snap.get("containers") or {}).items()):
+        used = int(e.get("used") or 0)
+        allowance = wbud.allowance(wbud.bucket_of(name))
+        first_t, last_t = float(e.get("first_t") or 0), float(e.get("last_t") or 0)
+        span_h = max(MIN_SPAN_HOURS, (last_t - first_t) / 3600.0) if first_t else elapsed_h
+        # A container that stopped posting hours ago must not be extrapolated as if it were still running.
+        active = used > 0 and (now - last_t) < 3600.0
+        raw = used / span_h * 24.0 if active else float(used)
+        containers[name] = {
+            "bucket": wbud.bucket_of(name), "used": used, "allowance": allowance,
+            "used_pct_of_allowance": (100.0 * used / allowance) if allowance else None,
+            "posts": int(e.get("posts") or 0),
+            "denied_rows": int(e.get("denied_rows") or 0), "denied_posts": int(e.get("denied_posts") or 0),
+            "projected_rows_per_day_uncapped": raw,
+            "projected_rows_per_day": raw if wbud.bucket_of(name) == "other" else min(raw, float(allowance)),
+        }
+    total_used = sum(c["used"] for c in containers.values())
+    projected = sum(c["projected_rows_per_day"] for c in containers.values())
+    return {
+        "day": snap.get("day"), "daily_budget": wbud.daily_budget, "d1_daily_limit": D1_DAILY_WRITE_LIMIT,
+        "enabled": wbud.enabled, "containers": containers,
+        "total_used": total_used, "total_projected_rows_per_day": min(projected, float(wbud.daily_budget)) if wbud.enabled else projected,
+        "total_projected_uncapped": sum(c["projected_rows_per_day_uncapped"] for c in containers.values()),
+        "backoff_remaining_s": wbud.backoff_remaining(), "backoff_reason": snap.get("backoff_reason") or "",
+        "utc_hours_elapsed": elapsed_h,
+    }
+
+
+def render_budget(b: dict) -> str:
+    if not b["containers"]:
+        return f"Write budget ({b['day']}): no rows charged yet (ledger empty or containers stopped)."
+    lines = ["", f"D1 write budget - UTC day {b['day']} - budget {b['daily_budget']:,}/day of {b['d1_daily_limit']:,} free"
+             + ("" if b["enabled"] else "  (GATE DISABLED: D1_DAILY_WRITE_BUDGET=0)")]
+    head = f"{'container':<18}{'used':>9}{'allowance':>11}{'%':>6}{'posts':>7}{'denied rows':>13}{'rows/day proj':>15}"
+    lines += [head, "-" * len(head)]
+    for name, c in b["containers"].items():
+        pct = "n/a" if c["used_pct_of_allowance"] is None else f"{c['used_pct_of_allowance']:.0f}"
+        lines.append(f"{name:<18}{c['used']:>9,}{c['allowance']:>11,}{pct:>6}{c['posts']:>7}{c['denied_rows']:>13,}"
+                     f"{c['projected_rows_per_day']:>15,.0f}")
+    lines.append(f"Budget used so far: {b['total_used']:,} rows; projected daily total across ALL containers: "
+                 f"{b['total_projected_rows_per_day']:,.0f} (uncapped rate would be {b['total_projected_uncapped']:,.0f})")
+    if b["backoff_remaining_s"] > 0:
+        lines.append(f"  Worker back-off active: {b['backoff_remaining_s']:.0f}s left ({b['backoff_reason'] or 'degraded'})")
+    if b["enabled"] and b["total_projected_rows_per_day"] > b["daily_budget"] * 0.95:
+        lines.append("  NOTE: near the budget - low-priority writes will be deferred until 00:00 UTC.")
+    return "\n".join(lines)
+
+
 def _pct(x: float | None) -> str:
     return "n/a" if x is None else f"{100 * x:.0f}%"
 
@@ -154,13 +218,22 @@ def main(argv: list[str] | None = None) -> int:
                     help="D1 rows written per posted discovery item (estimate, default 3)")
     ap.add_argument("--fixed-overhead", type=float, default=DEFAULT_FIXED_OVERHEAD,
                     help="fixed D1 rows/day (leases, compaction, loop state; default 7300)")
+    ap.add_argument("--budget-dir", default=None, help="write-budget ledger directory (default $WRITE_BUDGET_DIR or knowledge/write_budget)")
+    ap.add_argument("--no-budget", action="store_true", help="skip the write-budget section")
     ap.add_argument("--json", action="store_true", help="print JSON instead of a table")
     args = ap.parse_args(argv)
 
     directory = Path(args.dir or os.environ.get("LOOP_METRICS_DIR") or default_metrics_dir())
     recs = load_records(directory, time.time() - args.hours * 3600.0) if directory.is_dir() else []
     summary = summarise(recs, args.rows_per_item, args.fixed_overhead)
-    print(json.dumps(summary, indent=2) if args.json else render(summary, args.hours, directory))
+    if not args.no_budget:
+        summary["budget"] = budget_report(Path(args.budget_dir) if args.budget_dir else None)
+    if args.json:
+        print(json.dumps(summary, indent=2))
+    else:
+        print(render(summary, args.hours, directory))
+        if "budget" in summary:
+            print(render_budget(summary["budget"]))
     return 0
 
 

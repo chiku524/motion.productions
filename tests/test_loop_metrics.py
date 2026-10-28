@@ -120,3 +120,34 @@ def test_compose_shares_novelty_store_across_loop_services():
         assert "NOVELTY_STORE_DIR: /app/knowledge/novelty" in block, svc
         assert f"LOOP_METRICS_NAME: {svc}" in block, svc
     assert "- ./knowledge:/app/knowledge" in text
+
+def test_budget_report_covers_every_container_and_projects_daily_total(tmp_path, capsys):
+    import calendar
+
+    from src.knowledge import write_budget as wb
+
+    mod = _load("scripts/loop_metrics.py", "loop_metrics_script_budget")
+    now = float(calendar.timegm((2026, 10, 27, 6, 0, 0)))  # 06:00 UTC
+    ledger = tmp_path / "ledger"
+    for name, rows in (("interpret", 1000), ("sound", 300), ("explorer", 5000), ("balanced", 20000)):
+        b = wb.WriteBudget(name=name, directory=ledger, daily_budget=70000, clock=lambda: now - 3600 * 5)
+        assert b.reserve(rows)
+        b.clock = lambda: now - 60  # last post a minute ago, so the container counts as still running
+        b.reserve(0)
+        b._mutate(lambda d, n: d["containers"][name].update(last_t=now - 60))
+    rep = mod.budget_report(ledger, now=now)
+    cs = rep["containers"]
+    assert set(cs) == {"interpret", "sound", "explorer", "balanced"}
+    assert cs["interpret"]["used"] == 1000 and cs["interpret"]["allowance"] == 10500
+    # 5000 rows in ~5 h -> ~24k/day uncapped, capped at the 21k allowance because the gate stops posting there
+    assert cs["explorer"]["projected_rows_per_day"] == 21000 and cs["explorer"]["projected_rows_per_day_uncapped"] > 21000
+    assert cs["interpret"]["projected_rows_per_day"] < 10500
+    assert rep["total_projected_rows_per_day"] <= 70000 and rep["total_used"] == 26300
+    text = mod.render_budget(rep)
+    assert "interpret" in text and "sound" in text and "ALL containers" in text
+
+
+def test_budget_report_empty_ledger(tmp_path):
+    mod = _load("scripts/loop_metrics.py", "loop_metrics_script_budget2")
+    rep = mod.budget_report(tmp_path / "none")
+    assert rep["containers"] == {} and "no rows charged" in mod.render_budget(rep)
