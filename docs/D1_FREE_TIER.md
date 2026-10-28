@@ -144,13 +144,13 @@ Expected rows read per `GET /api/jobs?status=pending` (measured on local Minifla
 | cache hit | 0 | 0 (0 statements) |
 | cache miss, steady state | ~31,000 | <= 200 (one window past the cursor); ~2 with `JOBS_PARTIAL_INDEX=1` |
 | first miss with a cold cursor over N junk rows | ~31,000 | ~N once per colo/isolate per 6 h, <= 2,000 per request, cursor advances |
-| per day, one idle bridge | ~1,440 x ~31 k | ~1,440 polls/day max at 60 s, ~all negative-cache hits: ~24 D1 misses x <= 200 rows ~ **5 k** |
+| per day, one idle bridge | ~1,440 x ~31 k = ~45 M | <= 1,440 misses/day (60 s poll, 60 s negative TTL; 144 once backed off to 600 s) x rows added since the cursor (typically < 20, hard cap 200) = ~3 k typical, 29 k at 20 rows/poll, 288 k only if the loops add >= 100 pending jobs per minute |
 
 ### Fixed-interval poller audit (estimates from code; D1 is quota-blocked so none could be measured)
 Rows = D1 rows read per call that reaches D1 (a Worker cache hit reads 0). Flag = more than 100 k rows/day.
 | poller | endpoint | interval | D1 rows per call (from code) | est. rows/day | flag |
 |---|---|---|---|---|---|
-| webjobs bridge (`generate_bridge.py`) | `GET /api/jobs?status=pending` | 60 -> 600 s back-off | <= 200 (was ~31 k) | ~5 k | no (was **yes**) |
+| webjobs bridge (`generate_bridge.py`) | `GET /api/jobs?status=pending` | 60 -> 600 s back-off | <= 200, typically < 20 (was ~31 k) | ~3-30 k per bridge | no (was **yes**) |
 | interpret loop (`interpret_loop.py`, compose delay 90 s, code default 10 s) | `GET /api/interpret/queue` | 90 s (960/day); 10 s outside compose (8,640/day) | **uncached**; `WHERE status='pending' ORDER BY CASE ... created_at` reads every pending interpretation (~2 per row) and sorts | 960 x 2N: > 100 k once pending N > ~52 (N unknown while D1 is blocked) | **YES, unmeasured** - follow-up: bounded/cached queue read or `INTERPRET_DELAY_SECONDS` >= 300 when the queue was empty |
 | main/explorer/exploiter loops (`automate_loop.py`, 15-30 s) | `GET /api/loop/config` | every run | 0 (KV) | 0 | no |
 | same | `GET /api/registries/coverage` | every run | cached 1800 s (+ KV 6 h), single-flight; a miss runs whole-table aggregates (`missionStats`, ~20 `COUNT(*)`) | misses ~48/day/colo x full scans of the large registries (hundreds of k rows each) | **maybe**: bounded by cache, size of tables unknown; check after quota reset |
