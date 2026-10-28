@@ -63,6 +63,15 @@ interface Planned {
 
 const src = (p?: string) => (p ? JSON.stringify([String(p).slice(0, 80)]) : null);
 const nm = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
+/**
+ * Client-side coalescing: a client may fold N sightings of one key into a single item carrying
+ * `count_delta` = N. Clamped to [1, MAX_COUNT_DELTA] so a bad client cannot inflate counts; absent => 1.
+ */
+export const MAX_COUNT_DELTA = 1000;
+export function deltaOf(item: AnyItem | undefined): number {
+  const n = Math.floor(Number(item?.count_delta));
+  return Number.isFinite(n) && n >= 1 ? Math.min(n, MAX_COUNT_DELTA) : 1;
+}
 const depthOf = (d: unknown): string | null => (d && typeof d === "object" ? JSON.stringify(d) : null);
 const SOUND_V2_TIERS = ["observed", "verified", "declared"];
 /** v2 cell rows keep the first depth blob; a later "verified" observation upgrades it (same single-row upsert). */
@@ -74,7 +83,7 @@ function plan(items: Planned[], seen: Map<string, Planned>, p: Planned): void {
   const id = `${p.table}\u0000${p.keyVals.join("\u0001")}`;
   const prev = seen.get(id);
   if (prev) {
-    prev.delta += 1;
+    prev.delta += p.delta;
     // later depth wins, like the old sequential UPDATE
     if (p.cols.depth_breakdown_json != null) prev.cols.depth_breakdown_json = p.cols.depth_breakdown_json;
     if (p.cols.entity_json != null) prev.cols.entity_json = p.cols.entity_json;
@@ -235,7 +244,7 @@ export async function writeDiscoveries(env: Env, body: DiscoveriesBody): Promise
         cols.family = family;
         cols.shade = classifyColorShade(c.r, c.g, c.b, family);
       }
-      plan(planned, seen, { cat: "static_colors", table: "static_colors", keyCols: ["color_key"], keyVals: [c.key], cols, sources: src(c.source_prompt), providedName: nm(c.name), autoName: "semantic", extraUpdate: [], delta: 1 });
+      plan(planned, seen, { cat: "static_colors", table: "static_colors", keyCols: ["color_key"], keyVals: [c.key], cols, sources: src(c.source_prompt), providedName: nm(c.name), autoName: "semantic", extraUpdate: [], delta: deltaOf(c) });
       done("static_colors");
     }
     for (const s of body.static_sound || []) {
@@ -259,7 +268,7 @@ export async function writeDiscoveries(env: Env, body: DiscoveriesBody): Promise
         cat: "static_sound", table: "static_sound", keyCols: ["sound_key"], keyVals: [key],
         cols: { amplitude: s.amplitude ?? null, weight: s.weight ?? null, tone: s.tone ?? null, timbre: s.timbre ?? null, depth_breakdown_json: depthJson, strength_pct: s.strength_pct ?? s.amplitude ?? s.weight ?? null },
         sources: src(s.source_prompt), providedName: nm(s.name) ?? (v2 ? soundV2CellId(key) : null), autoName: "semantic",
-        extraUpdate: v2 ? [SOUND_V2_TIER_UPGRADE] : [], delta: 1,
+        extraUpdate: v2 ? [SOUND_V2_TIER_UPGRADE] : [], delta: deltaOf(s),
       });
       done("static_sound");
     }
@@ -271,7 +280,7 @@ export async function writeDiscoveries(env: Env, body: DiscoveriesBody): Promise
         const valueStr = String(item.value ?? item.key ?? key).slice(0, 200);
         plan(planned, seen, {
           cat: "narrative", table: "narrative_entries", keyCols: ["aspect", "entry_key"], keyVals: [aspect, key],
-          cols: { value: valueStr }, sources: src(item.source_prompt), providedName: nm(item.name), autoName: "narrative", narrativeLabel: valueStr || key, extraUpdate: [], delta: 1,
+          cols: { value: valueStr }, sources: src(item.source_prompt), providedName: nm(item.name), autoName: "narrative", narrativeLabel: valueStr || key, extraUpdate: [], delta: deltaOf(item),
         });
         done("narrative");
       }
@@ -281,7 +290,7 @@ export async function writeDiscoveries(env: Env, body: DiscoveriesBody): Promise
       plan(planned, seen, {
         cat: "colors", table: "learned_colors", keyCols: ["color_key"], keyVals: [c.key],
         cols: { r: c.r, g: c.g, b: c.b, depth_breakdown_json: depthOf(c.depth_breakdown) },
-        sources: src(c.source_prompt), providedName: nm(c.name), autoName: "semantic", extraUpdate: [COALESCE_DEPTH], delta: 1,
+        sources: src(c.source_prompt), providedName: nm(c.name), autoName: "semantic", extraUpdate: [COALESCE_DEPTH], delta: deltaOf(c),
       });
       done("colors");
     }
@@ -299,7 +308,7 @@ export async function writeDiscoveries(env: Env, body: DiscoveriesBody): Promise
     const simple = (cat: string, table: string, keyCol: string, list: AnyItem[] | undefined, cols: (i: AnyItem) => Record<string, unknown>, extra: string[] = [], meta?: (i: AnyItem) => Planned["meta"]) => {
       for (const i of list || []) {
         if (!take(cat)) return false;
-        plan(planned, seen, { cat, table, keyCols: [keyCol], keyVals: [i.key], cols: cols(i), sources: src(i.source_prompt), providedName: nm(i.name), autoName: "semantic", extraUpdate: extra, meta: meta?.(i), delta: 1 });
+        plan(planned, seen, { cat, table, keyCols: [keyCol], keyVals: [i.key], cols: cols(i), sources: src(i.source_prompt), providedName: nm(i.name), autoName: "semantic", extraUpdate: extra, meta: meta?.(i), delta: deltaOf(i) });
         done(cat);
       }
       return true;
@@ -378,9 +387,11 @@ export async function writeDiscoveries(env: Env, body: DiscoveriesBody): Promise
   let novel: Record<string, number> = { static_colors: 0, static_sound: 0, learned_colors: 0 };
   const reserveNames: string[] = [];
   let out: D1Result[] | undefined;
+  let rowsWritten = 0; // D1 meta.rows_written summed over this request (index writes included); clients settle their write budget on it
   if (stmts.length) {
     const res = await db.batch(stmts);
     out = res;
+    for (const r of res) rowsWritten += Number((r.meta as { rows_written?: number } | undefined)?.rows_written) || 0;
     planned.forEach((p, i) => {
       const row = (res[upsertIdx[i]]?.results || [])[0] as { count?: number } | undefined;
       p.novel = !!row && row.count === p.delta;
@@ -405,7 +416,8 @@ export async function writeDiscoveries(env: Env, body: DiscoveriesBody): Promise
   });
   if (reserveNames.length) {
     try {
-      await db.batch(reserveNames.map((n) => db.prepare("INSERT OR IGNORE INTO name_reserve (name) VALUES (?)").bind(n)));
+      const rres = await db.batch(reserveNames.map((n) => db.prepare("INSERT OR IGNORE INTO name_reserve (name) VALUES (?)").bind(n)));
+      for (const r of rres) rowsWritten += Number((r.meta as { rows_written?: number } | undefined)?.rows_written) || 0;
     } catch {
       /* reserve is best-effort, like before */
     }
@@ -413,7 +425,7 @@ export async function writeDiscoveries(env: Env, body: DiscoveriesBody): Promise
   if (novel.static_colors || novel.static_sound || novel.learned_colors) {
     await bumpRegistryCounts(env, novel);
   }
-  const resp: Record<string, unknown> = { status: "recorded", results, items_processed: itemsProcessed, unique_rows: planned.length + blends.length, deduped_blends: dupBlends, new_blends: newBlends, novel };
+  const resp: Record<string, unknown> = { status: "recorded", results, items_processed: itemsProcessed, unique_rows: planned.length + blends.length, deduped_blends: dupBlends, new_blends: newBlends, novel, rows_written: rowsWritten };
   if (truncated) resp.truncated = true;
   // Opportunistic log retention (no cron available on the free plan); at most once/day/table, tiny write budget, never throws.
   await maybeRunRetention(env);

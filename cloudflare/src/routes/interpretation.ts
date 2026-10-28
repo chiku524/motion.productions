@@ -144,6 +144,7 @@ if (path === "/api/interpretations/batch" && request.method === "POST") {
   const INTERPRET_BATCH_MAX = 50; // Workers Paid: 1000 queries/request; 1 per insert
   const toInsert = items.slice(0, INTERPRET_BATCH_MAX);
   let inserted = 0;
+  let rowsWritten = 0;
   for (const it of toInsert) {
     const prompt = typeof it.prompt === "string" ? it.prompt.trim() : "";
     if (!prompt) continue;
@@ -153,17 +154,18 @@ if (path === "/api/interpretations/batch" && request.method === "POST") {
     const source = typeof it.source === "string" && /^(web|worker|loop|backfill)$/.test(it.source) ? it.source : "backfill";
     const id = uuid();
     try {
-      await db.prepare(
+      const r = await db.prepare(
         "INSERT INTO interpretations (id, prompt, instruction_json, source, status) VALUES (?, ?, ?, ?, 'done')"
       )
         .bind(id, prompt, JSON.stringify(instruction), source)
         .run();
+      rowsWritten += Number((r.meta as { rows_written?: number } | undefined)?.rows_written) || 0;
       inserted++;
     } catch {
       // Skip duplicate or constraint error
     }
   }
-  return json({ inserted }, inserted > 0 ? 201 : 200);
+  return json({ inserted, rows_written: rowsWritten }, inserted > 0 ? 201 : 200);
 }
 
 // GET /api/linguistic-registry — fetch all mappings for interpretation (span -> canonical by domain)
@@ -191,7 +193,7 @@ if (path === "/api/linguistic-registry" && request.method === "GET") {
 // POST /api/linguistic-registry/batch — add mappings from extraction (upsert: increment count if exists)
 // Workers Paid: 1000 queries/request. ~2 queries/item. Cap at 100 for efficiency (~200 queries).
 if (path === "/api/linguistic-registry/batch" && request.method === "POST") {
-  let body: { items: Array<{ span: string; canonical: string; domain: string; variant_type?: string }> };
+  let body: { items: Array<{ span: string; canonical: string; domain: string; variant_type?: string; count?: number }> };
   try {
     body = (await request.json()) as typeof body;
   } catch {
@@ -200,36 +202,49 @@ if (path === "/api/linguistic-registry/batch" && request.method === "POST") {
   const items = Array.isArray(body.items) ? body.items : [];
   if (items.length === 0) return json({ inserted: 0, updated: 0 });
   const LINGUISTIC_BATCH_MAX = 100;
-  let inserted = 0;
-  let updated = 0;
+  // One db.batch of upserts (was: SELECT + UPDATE/INSERT per item). Repeats inside the request are summed, and a client
+  // that coalesced N sightings sends `count: N`. Cost: 1 row written per EXISTING span, 1 + 4 index rows per new span.
+  const merged = new Map<string, { span: string; canonical: string; domain: string; variantType: string; count: number }>();
   for (const it of items.slice(0, LINGUISTIC_BATCH_MAX)) {
     const span = typeof it.span === "string" ? it.span.trim().toLowerCase() : "";
     const canonical = typeof it.canonical === "string" ? it.canonical.trim() : "";
     const domain = typeof it.domain === "string" ? it.domain.trim() : "";
     const variantType = typeof it.variant_type === "string" ? it.variant_type : "synonym";
     if (!span || !canonical || !domain) continue;
-    try {
-      const existing = await db.prepare("SELECT id, count FROM linguistic_registry WHERE span = ? AND domain = ?")
-        .bind(span, domain)
-        .first<{ id: string; count: number }>();
-      if (existing) {
-        await db.prepare("UPDATE linguistic_registry SET count = count + 1, updated_at = datetime('now') WHERE span = ? AND domain = ?")
-          .bind(span, domain)
-          .run();
-        updated++;
-      } else {
-        await db.prepare(
-          "INSERT INTO linguistic_registry (id, span, canonical, domain, variant_type, count) VALUES (?, ?, ?, ?, ?, 1)"
-        )
-          .bind(uuid(), span, canonical, domain, variantType)
-          .run();
-        inserted++;
-      }
-    } catch {
-      // Skip on duplicate or missing table
-    }
+    const n = Math.floor(Number(it.count));
+    const count = Number.isFinite(n) && n >= 1 ? Math.min(n, 1000) : 1;
+    const k = `${domain}\u0000${span}`;
+    const prev = merged.get(k);
+    if (prev) prev.count += count;
+    else merged.set(k, { span, canonical, domain, variantType, count });
   }
-  return json({ inserted, updated }, inserted > 0 || updated > 0 ? 201 : 200);
+  const rows = [...merged.values()];
+  if (rows.length === 0) return json({ inserted: 0, updated: 0, rows_written: 0 });
+  let inserted = 0;
+  let updated = 0;
+  let rowsWritten = 0;
+  try {
+    const res = await db.batch(
+      rows.map((r) =>
+        db
+          .prepare(
+            "INSERT INTO linguistic_registry (id, span, canonical, domain, variant_type, count) VALUES (?, ?, ?, ?, ?, ?) " +
+              "ON CONFLICT(span, domain) DO UPDATE SET count = count + excluded.count, updated_at = datetime('now') RETURNING count",
+          )
+          .bind(uuid(), r.span, r.canonical, r.domain, r.variantType, r.count),
+      ),
+    );
+    res.forEach((x, i) => {
+      const c = ((x.results || [])[0] as { count?: number } | undefined)?.count;
+      if (c === rows[i].count) inserted++;
+      else updated++;
+      rowsWritten += Number((x.meta as { rows_written?: number } | undefined)?.rows_written) || 0;
+    });
+  } catch (e) {
+    if (isFreeTierLimitError(e)) return limitResponse("POST", { inserted: 0, updated: 0, rows_written: 0 });
+    // missing table etc.: same best-effort behaviour as before
+  }
+  return json({ inserted, updated, rows_written: rowsWritten }, inserted > 0 || updated > 0 ? 201 : 200);
 }
 
 // POST /api/interpretations — store completed interpretation directly (e.g. backfill from jobs)
@@ -253,12 +268,13 @@ if (path === "/api/interpretations" && request.method === "POST") {
   const instruction = body.instruction && typeof body.instruction === "object" ? body.instruction : null;
   if (!instruction) return err("instruction is required");
   const id = uuid();
-  await db.prepare(
+  const r = await db.prepare(
     "INSERT INTO interpretations (id, prompt, instruction_json, source, status) VALUES (?, ?, ?, ?, 'done')"
   )
     .bind(id, prompt, JSON.stringify(instruction), source)
     .run();
-  return json({ id, prompt: prompt.slice(0, 200), status: "done" }, 201);
+  const rowsWritten = Number((r.meta as { rows_written?: number } | undefined)?.rows_written) || 0;
+  return json({ id, prompt: prompt.slice(0, 200), status: "done", rows_written: rowsWritten }, 201);
 }
 
 
