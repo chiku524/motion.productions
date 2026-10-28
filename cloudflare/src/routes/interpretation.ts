@@ -15,7 +15,7 @@ import {
 } from "../interpretQueue";
 
 /** /api/linguistic-registry returns the whole table: rebuild rarely, serve stale on D1 errors (see D1_FREE_TIER.md). */
-const LINGUISTIC_SOFT_TTL_SEC = 4 * 3600;
+const LINGUISTIC_SOFT_TTL_SEC = 12 * 3600;
 const LINGUISTIC_HARD_TTL_SEC = 7 * 86400;
 
 export async function handleInterpretationRoutes(

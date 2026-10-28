@@ -1,6 +1,4 @@
 """Interpret-queue poller: idle back-off >= 120 s with jitter, Retry-After / poll_after_sec, rowid cursor, retries."""
-import importlib.util
-import sys
 from pathlib import Path
 
 import pytest
