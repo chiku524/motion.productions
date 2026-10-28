@@ -5,7 +5,8 @@ import type { Env } from "../env";
 import { getDb } from "../db";
 import { json, err, uuid, corsHeaders } from "../http";
 import { aggregateLearningRuns, logEvent } from "../naming";
-import { getSnapshot } from "../snapshotCache";
+import { getSnapshot, invalidateSnapshot } from "../snapshotCache";
+import { PENDING_CACHE_KEY, listPendingWebJobs } from "../jobsClaim";
 import { hitRateLimit } from "../rateLimit";
 import { slimAnalysis, slimSpec } from "../learningSlim";
 import { maybeRunRetention } from "../retention";
@@ -17,7 +18,6 @@ export const hasR2Object = (k: string | null | undefined): k is string => !!k &&
 
 /** GET /api/jobs: per-client cap and snapshot TTLs (free-tier D1 read budget, see docs/D1_FREE_TIER.md). */
 const JOBS_LIST_RATE_PER_MIN = 120;
-const JOBS_PENDING_SOFT_TTL_SEC = 15;
 const JOBS_COMPLETED_SOFT_TTL_SEC = 120;
 
 export async function handleJobsRoutes(
@@ -40,6 +40,19 @@ if (path === "/api/jobs" && request.method === "GET") {
     r.headers.set("Retry-After", String(rl.retryAfterSec));
     return r;
   }
+  if (status === "pending") {
+    // Bounded cursor scan + negative cache (jobsClaim.ts): an empty queue costs 0 D1 reads for 60 s, a backlog of
+    // loop-owned pending rows is walked once, and a D1 quota error serves the last answer (X-Degraded) instead of a 5xx.
+    const listing = await listPendingWebJobs(env, limit);
+    const { source, stale, ...body } = listing;
+    const r = json(body);
+    r.headers.set("X-Cache", source === "built" ? "MISS" : stale ? "STALE" : "HIT");
+    if (listing.degraded) r.headers.set("X-Degraded", "d1-quota");
+    // Retry-After is only a hint on 200s; clients also read poll_after_sec from the body.
+    if (listing.poll_after_sec > 0) r.headers.set("Retry-After", String(listing.poll_after_sec));
+    r.headers.set("Cache-Control", `public, max-age=${listing.poll_after_sec > 0 ? Math.min(listing.poll_after_sec, 60) : 5}`);
+    return r;
+  }
   const maxDur = url.searchParams.get("max_duration");
   const minDur = url.searchParams.get("min_duration");
   const ratingFilter = url.searchParams.get("rating"); // "2" = liked only
@@ -49,27 +62,12 @@ if (path === "/api/jobs" && request.method === "GET") {
   const okMin = minD != null && !Number.isNaN(minD) ? minD : null;
   const okMax = maxD != null && !Number.isNaN(maxD) ? maxD : null;
   // Normalised key: arbitrary query strings (cache-busters like &_=123) must not fan out into distinct D1 reads.
-  const cacheKey =
-    status === "pending"
-      ? `jobs:list:v1:pending:${limit}`
-      : `jobs:list:v1:completed:${limit}:${okMin ?? ""}:${okMax ?? ""}:${likedOnly ? "liked" : "all"}`;
+  const cacheKey = `jobs:list:v1:completed:${limit}:${okMin ?? ""}:${okMax ?? ""}:${likedOnly ? "liked" : "all"}`;
   const snap = await getSnapshot<{ jobs: unknown[] }>(
     env,
     cacheKey,
-    status === "pending"
-      ? { softTtlSec: JOBS_PENDING_SOFT_TTL_SEC, hardTtlSec: 3600 }
-      : { softTtlSec: JOBS_COMPLETED_SOFT_TTL_SEC, hardTtlSec: 86400 },
+    { softTtlSec: JOBS_COMPLETED_SOFT_TTL_SEC, hardTtlSec: 86400 },
     async () => {
-      // ORDER BY rowid walks idx_jobs_status (status, rowid) and stops after LIMIT rows. The previous
-      // ORDER BY updated_at / created_at had no (status, ...) index and sorted every row with that status.
-      if (status === "pending") {
-        const rows = await db.prepare(
-          "SELECT id, prompt, duration_seconds, created_at FROM jobs WHERE status = 'pending' AND (workflow_type IS NULL OR workflow_type = 'web') ORDER BY rowid ASC LIMIT ?"
-        )
-          .bind(limit)
-          .all<{ id: string; prompt: string; duration_seconds: number | null; created_at: string }>();
-        return { jobs: rows.results || [] };
-      }
       let sql = likedOnly
         ? `SELECT j.id, j.prompt, j.duration_seconds, j.created_at, j.updated_at, j.workflow_type
            FROM jobs j
@@ -130,6 +128,8 @@ if (path === "/api/jobs" && request.method === "POST") {
   )
     .bind(id, prompt, duration_seconds ?? null, workflow_type)
     .run();
+  // A new web job must not wait out the 60 s negative cache (this isolate / colo; others age out within the TTL).
+  if (workflow_type === null || workflow_type === "web") await invalidateSnapshot(PENDING_CACHE_KEY);
   return json({ id, prompt, duration_seconds, workflow_type: workflow_type ?? undefined, status: "pending" }, 201);
 }
 
@@ -204,11 +204,13 @@ if (uploadMatch && request.method === "POST") {
   } catch (e) {
     console.error("r2 usage counter update failed (sweep will re-measure):", e);
   }
-  await db.prepare(
-    "UPDATE jobs SET status = 'completed', r2_key = ?, updated_at = datetime('now') WHERE id = ?"
+  // Atomic claim: only one finisher wins; a concurrent worker gets changes = 0.
+  const won = await db.prepare(
+    "UPDATE jobs SET status = 'completed', r2_key = ?, updated_at = datetime('now') WHERE id = ? AND status = 'pending'"
   )
     .bind(r2_key, id)
     .run();
+  if (won.meta?.changes === 0) return err("Job already has video", 400);
   return json({ id, status: "completed", download_url: `/api/jobs/${id}/download` });
 }
 
@@ -220,11 +222,12 @@ if (completeMatch && request.method === "POST") {
   const row = await db.prepare("SELECT id, status FROM jobs WHERE id = ?").bind(id).first();
   if (!row) return err("Job not found", 404);
   if ((row as { status: string }).status !== "pending") return err("Job already completed", 400);
-  await db.prepare(
-    "UPDATE jobs SET status = 'completed', r2_key = ?, updated_at = datetime('now') WHERE id = ?"
+  const won = await db.prepare(
+    "UPDATE jobs SET status = 'completed', r2_key = ?, updated_at = datetime('now') WHERE id = ? AND status = 'pending'"
   )
     .bind(R2_KEY_SKIPPED, id)
     .run();
+  if (won.meta?.changes === 0) return err("Job already completed", 400);
   return json({ id, status: "completed", stored: false });
 }
 

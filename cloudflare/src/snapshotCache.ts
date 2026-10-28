@@ -13,9 +13,12 @@
 import type { Env } from "./env";
 import { isFreeTierLimitError } from "./limits";
 
-export interface SnapshotOptions {
-  /** Serve from cache without rebuilding while younger than this. */
-  softTtlSec: number;
+export interface SnapshotOptions<T = any> {
+  /**
+   * Serve from cache without rebuilding while younger than this. May be a function of the cached value, so an
+   * "empty" result can be kept longer than a populated one (negative caching, see jobsClaim.ts).
+   */
+  softTtlSec: number | ((value: T) => number);
   /** Serve (flagged stale) on rebuild failure while younger than this. Default 24 h. */
   hardTtlSec?: number;
   /** If set, persist a durable copy in KV at most this often (and read it on cold miss). */
@@ -46,6 +49,18 @@ const MEMORY_MAX_KEYS = 200;
 
 const DEFAULT_HARD_TTL_SEC = 86400;
 const CACHE_ORIGIN = "https://snapshot.motion.invalid/";
+
+/** Drop one snapshot (this isolate's memory + this colo's Cache API copy; other isolates/colos age out via their TTL). */
+export async function invalidateSnapshot(key: string): Promise<void> {
+  memory.delete(key);
+  const c = cacheApi();
+  if (!c) return;
+  try {
+    await c.delete(new Request(CACHE_ORIGIN + encodeURIComponent(key)));
+  } catch {
+    /* best effort */
+  }
+}
 
 /** Test hook: forget all in-isolate state. */
 export function __resetSnapshotMemory(): void {
@@ -142,11 +157,11 @@ async function maybePersistKv<T>(
 export async function getSnapshot<T>(
   env: Env,
   key: string,
-  opts: SnapshotOptions,
+  opts: SnapshotOptions<T>,
   build: () => Promise<T>,
 ): Promise<SnapshotResult<T>> {
   const now = Date.now();
-  const softMs = opts.softTtlSec * 1000;
+  const softMsOf = (e: Entry<T>): number => (typeof opts.softTtlSec === "function" ? opts.softTtlSec(e.value) : opts.softTtlSec) * 1000;
   const hardSec = opts.hardTtlSec ?? DEFAULT_HARD_TTL_SEC;
   const hardMs = hardSec * 1000;
   const persist = opts.kvPersistSec ?? null;
@@ -159,14 +174,14 @@ export async function getSnapshot<T>(
   }
 
   const mem = memory.get(key) as Entry<T> | undefined;
-  if (!bypass && mem && now - mem.at < softMs) {
+  if (!bypass && mem && now - mem.at < softMsOf(mem)) {
     return { value: mem.value, stale: false, degraded: false, source: "memory", ageSec: Math.round((now - mem.at) / 1000) };
   }
 
   let cacheEntry: Entry<T> | null = null;
   if (!bypass) {
     cacheEntry = await readCacheApi<T>(key);
-    if (cacheEntry && now - cacheEntry.at < softMs) {
+    if (cacheEntry && now - cacheEntry.at < softMsOf(cacheEntry)) {
       remember(key, cacheEntry);
       return { value: cacheEntry.value, stale: false, degraded: false, source: "cache", ageSec: Math.round((now - cacheEntry.at) / 1000) };
     }
@@ -175,7 +190,7 @@ export async function getSnapshot<T>(
   let kvEntry: Entry<T> | null = null;
   if (persist != null && !bypass) {
     kvEntry = await readKv<T>(env, key);
-    if (kvEntry && now - kvEntry.at < softMs) {
+    if (kvEntry && now - kvEntry.at < softMsOf(kvEntry)) {
       remember(key, kvEntry);
       void writeCacheApi(key, kvEntry, hardSec);
       return { value: kvEntry.value, stale: false, degraded: false, source: "kv", ageSec: Math.round((now - kvEntry.at) / 1000) };

@@ -58,7 +58,7 @@ export const RETENTION_TABLES: Array<{ table: string; sql: string }> = [
     sql: `DELETE FROM jobs WHERE id IN (
       SELECT j.id FROM jobs j
       WHERE j.created_at < datetime('now', ?)
-        AND j.status IN ('completed', 'failed', 'error')
+        AND j.status IN ('completed', 'failed', 'error', 'abandoned')
         AND (j.r2_key IS NULL OR j.r2_key LIKE 'skipped:%' OR j.r2_key LIKE 'expired:%')
         AND NOT EXISTS (SELECT 1 FROM learning_runs x WHERE x.job_id = j.id)
         AND NOT EXISTS (SELECT 1 FROM discovery_runs x WHERE x.job_id = j.id)
