@@ -117,11 +117,21 @@ def pop_write_stats() -> dict:
 
 class APIError(Exception):
     """API call failed with status or invalid response."""
-    def __init__(self, message: str, status_code: int | None = None, path: str = "", body: str | None = None):
+    def __init__(self, message: str, status_code: int | None = None, path: str = "", body: str | None = None, retry_after: float | None = None):
         super().__init__(message)
         self.status_code = status_code
         self.path = path
         self.body = body
+        # Seconds the server asked us to wait (Retry-After header / retry_after_ms body), None when it gave no hint.
+        self.retry_after = retry_after
+
+
+def _server_retry_after(response: object, body: str | None) -> float | None:
+    """The server's Retry-After hint for a failed response, or None (never the 900 s free-tier default)."""
+    if response is None:
+        return None
+    secs = retry_after_seconds(getattr(response, "headers", None), body, default=0.0)
+    return secs if secs > 0 else None
 
 
 def _budget():
@@ -297,7 +307,7 @@ def api_request(
                     "API %s %s hit the Cloudflare free-tier daily limit; no retry, writes paused %.0fs",
                     method, path, secs,
                 )
-                raise APIError(f"API {method} {path} free_tier_limit: {err_body}", status_code=status, path=path, body=err_body) from e
+                raise APIError(f"API {method} {path} free_tier_limit: {err_body}", status_code=status, path=path, body=err_body, retry_after=secs) from e
             # Retry on 5xx and 429 (rate limit, e.g. KV 1 write/sec)
             retryable = status and (500 <= status < 600 or status == 429) and attempt < max_retries
             if retryable:
@@ -343,7 +353,7 @@ def api_request(
             msg = f"API {method} {path} failed: {e}"
             if err_body and status and 500 <= status < 600:
                 msg += f" — response: {err_body[:300]}"
-            raise APIError(msg, status_code=status, path=path, body=err_body) from e
+            raise APIError(msg, status_code=status, path=path, body=err_body, retry_after=_server_retry_after(e.response, err_body)) from e
         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
             last_exc = e
             if method != "GET":
@@ -431,7 +441,7 @@ def api_post_binary(api_base: str, path: str, body: bytes, content_type: str = "
         err_body = e.response.text[:500] if e.response is not None and e.response.text else None
         if e.response is not None and (e.response.headers.get("X-Degraded") or is_free_tier_limit_body(err_body)):
             start_free_tier_cooldown(retry_after_seconds(e.response.headers, err_body), reason=f"http {status}")
-        raise APIError(f"API POST {path} failed: {e}", status_code=status, path=path, body=err_body) from e
+        raise APIError(f"API POST {path} failed: {e}", status_code=status, path=path, body=err_body, retry_after=_server_retry_after(e.response, err_body)) from e
 
 
 def loop_upload_videos_enabled() -> bool:
