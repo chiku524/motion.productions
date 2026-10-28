@@ -3,10 +3,20 @@
  */
 import type { Env } from "../env";
 import { getDb } from "../db";
-import { json, err, uuid } from "../http";
+import { json, err, uuid, corsHeaders } from "../http";
 import { isGibberishPrompt } from "../naming";
 import { getSnapshot } from "../snapshotCache";
 import { isFreeTierLimitError, limitResponse } from "../limits";
+import {
+  INTERPRET_QUEUE_DEGRADED_POLL_SEC,
+  invalidateInterpretQueue,
+  listInterpretQueue,
+  parseQueueParams,
+} from "../interpretQueue";
+
+/** /api/linguistic-registry returns the whole table: rebuild rarely, serve stale on D1 errors (see D1_FREE_TIER.md). */
+const LINGUISTIC_SOFT_TTL_SEC = 4 * 3600;
+const LINGUISTIC_HARD_TTL_SEC = 7 * 86400;
 
 export async function handleInterpretationRoutes(
   request: Request,
@@ -32,25 +42,33 @@ if (path === "/api/interpret/queue" && request.method === "POST") {
   )
     .bind(id, prompt, source)
     .run();
+  // A cached "queue is empty" answer must not hide this prompt (this isolate / colo; other colos age out in <= 60 s).
+  await invalidateInterpretQueue();
   return json({ id, prompt: prompt.slice(0, 200), source, status: "pending" }, 201);
 }
 
 // GET /api/interpret/queue — fetch pending prompts for interpretation worker
 if (path === "/api/interpret/queue" && request.method === "GET") {
-  const limit = Math.min(parseInt(new URL(request.url).searchParams.get("limit") || "20", 10), 50);
-  // Prioritize user-submitted (web) over worker-enqueued
-  const rows = await db.prepare(
-    "SELECT id, prompt, source, created_at FROM interpretations WHERE status = 'pending' ORDER BY CASE WHEN source = 'web' THEN 0 ELSE 1 END, created_at ASC LIMIT ?"
-  )
-    .bind(limit)
-    .all<{ id: string; prompt: string; source: string; created_at: string }>();
-  const items = (rows.results || []).map((r) => ({
-    id: r.id,
-    prompt: r.prompt,
-    source: r.source,
-    created_at: r.created_at,
-  }));
-  return json({ items });
+  // Bounded rowid-cursor window + negative cache + stale-on-error (interpretQueue.ts). `after=<next_cursor>` skips rows
+  // the client already attempted. Was: uncached read + sort of EVERY pending interpretation on every poll.
+  const { limit, after } = parseQueueParams(new URL(request.url));
+  try {
+    const listing = await listInterpretQueue(env, limit, after);
+    const { source, stale, items, ...rest } = listing;
+    const r = json({ items, ...rest });
+    r.headers.set("X-Cache", source === "built" ? "MISS" : stale ? "STALE" : "HIT");
+    if (listing.degraded) r.headers.set("X-Degraded", "d1-quota");
+    if (listing.poll_after_sec > 0) r.headers.set("Retry-After", String(listing.poll_after_sec));
+    return r;
+  } catch (e) {
+    if (isFreeTierLimitError(e)) {
+      return limitResponse("GET", { items: [], next_cursor: after, scan_complete: false, poll_after_sec: INTERPRET_QUEUE_DEGRADED_POLL_SEC });
+    }
+    console.error("GET /api/interpret/queue failed:", e);
+    const r = json({ error: "Failed to load interpretation queue", items: [], next_cursor: after, poll_after_sec: 60 }, 503);
+    r.headers.set("Retry-After", "60");
+    return r;
+  }
 }
 
 // PATCH /api/interpret/:id — store interpretation result (called by interpretation worker)
@@ -65,14 +83,19 @@ if (interpretMatch && request.method === "PATCH") {
   }
   const instruction = body.instruction && typeof body.instruction === "object" ? body.instruction : null;
   if (!instruction) return err("instruction is required");
-  const row = await db.prepare("SELECT id, status FROM interpretations WHERE id = ?").bind(id).first();
-  if (!row) return err("Interpretation job not found", 404);
-  if ((row as { status: string }).status !== "pending") return err("Already interpreted", 400);
-  await db.prepare(
-    "UPDATE interpretations SET instruction_json = ?, status = 'done', updated_at = datetime('now') WHERE id = ?"
+  // Atomic claim-by-completion: only the worker whose UPDATE flips pending -> done wins; a row served twice (cached queue
+  // window, two containers) can never be completed twice. The existence probe only runs on the losing path.
+  const upd = await db.prepare(
+    "UPDATE interpretations SET instruction_json = ?, status = 'done', updated_at = datetime('now') WHERE id = ? AND status = 'pending'"
   )
     .bind(JSON.stringify(instruction), id)
     .run();
+  if (!Number((upd.meta as { changes?: number } | undefined)?.changes)) {
+    const row = await db.prepare("SELECT id FROM interpretations WHERE id = ?").bind(id).first();
+    if (!row) return err("Interpretation job not found", 404);
+    return err("Already interpreted", 400);
+  }
+  await invalidateInterpretQueue();
   return json({ id, status: "done" });
 }
 
@@ -172,19 +195,37 @@ if (path === "/api/interpretations/batch" && request.method === "POST") {
 if (path === "/api/linguistic-registry" && request.method === "GET") {
   try {
     const domain = new URL(request.url).searchParams.get("domain");
-    const q = domain
-      ? "SELECT span, canonical, domain, variant_type, count FROM linguistic_registry WHERE domain = ?"
-      : "SELECT span, canonical, domain, variant_type, count FROM linguistic_registry";
-    const stmt = domain ? db.prepare(q).bind(domain) : db.prepare(q);
-    const rows = await stmt.all<{ span: string; canonical: string; domain: string; variant_type: string; count: number }>();
-    const mappings = (rows.results || []).map((r) => ({
-      span: r.span,
-      canonical: r.canonical,
-      domain: r.domain,
-      variant_type: r.variant_type,
-      count: r.count,
-    }));
-    return json({ mappings });
+    // The whole table is read on a miss (~5 index+table rows per span, growing by hundreds per hour), and every interpret /
+    // automate / bridge cycle used to ask: cache the serialized answer for hours, serve stale on any D1 error.
+    const snap = await getSnapshot<string>(
+      env,
+      `linguistic:registry:v1:${domain ? domain.slice(0, 64) : "*"}`,
+      { softTtlSec: LINGUISTIC_SOFT_TTL_SEC, hardTtlSec: LINGUISTIC_HARD_TTL_SEC, kvPersistSec: 6 * 3600 },
+      async () => {
+        const q = domain
+          ? "SELECT span, canonical, domain, variant_type, count FROM linguistic_registry WHERE domain = ?"
+          : "SELECT span, canonical, domain, variant_type, count FROM linguistic_registry";
+        const stmt = domain ? db.prepare(q).bind(domain) : db.prepare(q);
+        const rows = await stmt.all<{ span: string; canonical: string; domain: string; variant_type: string; count: number }>();
+        const mappings = (rows.results || []).map((r) => ({
+          span: r.span,
+          canonical: r.canonical,
+          domain: r.domain,
+          variant_type: r.variant_type,
+          count: r.count,
+        }));
+        return JSON.stringify({ mappings });
+      },
+    );
+    return new Response(snap.value, {
+      headers: {
+        "Content-Type": "application/json",
+        "X-Cache": snap.source === "built" ? "MISS" : "HIT",
+        "Cache-Control": "public, max-age=300",
+        ...corsHeaders,
+        ...(snap.degraded ? { "X-Degraded": "d1-quota" } : {}),
+      },
+    });
   } catch {
     return json({ mappings: [] });
   }
