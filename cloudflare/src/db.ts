@@ -257,7 +257,9 @@ export async function bumpRegistryCounts(_env: Env, delta: CountDelta): Promise<
  * coverage/health precedent (replica COUNT on large tables can return false zeros or hit CPU limit 7429).
  */
 const TRUE_REGISTRY_TOTALS_KEY = "registries:true_totals:v2";
-export const TRUE_TOTALS_SOFT_TTL_SEC = 3600;
+// ~20 COUNT(*)s incl. learned_blends (~280k rows) cost >300k rows per rebuild: 12 h => at most 2 rebuilds/day per colo
+// (was hourly = up to 24). Display-only numbers; ?fresh=1 (rate limited) still forces a refresh.
+export const TRUE_TOTALS_SOFT_TTL_SEC = 12 * 3600;
 
 export type TrueRegistryTotals = {
   static_colors: number;

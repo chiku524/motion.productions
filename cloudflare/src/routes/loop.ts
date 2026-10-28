@@ -273,12 +273,12 @@ if (path === "/api/loop/status" && request.method === "GET") {
 
 // GET /api/loop/progress — learning precision (runs with growth in last N)
 if (path === "/api/loop/progress" && request.method === "GET") {
-  const last = Math.min(parseInt(new URL(request.url).searchParams.get("last") || "20", 10), 100);
+  const last = Math.min(Math.max(parseInt(new URL(request.url).searchParams.get("last") || "20", 10) || 20, 1), 100);
   const progressCacheKey = `loop:progress:${last}`;
   const progressSnap = await getSnapshot<string>(
     env,
     progressCacheKey,
-    { softTtlSec: 900, hardTtlSec: 86400, bypass: false },
+    { softTtlSec: 1800, hardTtlSec: 7 * 86400, kvPersistSec: 900, bypass: false },
     async () => {
   const completed = await db.prepare(
     "SELECT id FROM jobs WHERE status = 'completed' AND r2_key IS NOT NULL ORDER BY rowid DESC LIMIT ?"
@@ -443,25 +443,44 @@ if (path === "/api/loop/progress" && request.method === "GET") {
 if (path === "/api/metrics" && request.method === "GET") {
   try {
     const last = 20;
-    const completed = await db.prepare(
-      "SELECT id FROM jobs WHERE status = 'completed' AND r2_key IS NOT NULL ORDER BY rowid DESC LIMIT ?"
-    ).bind(last).all<{ id: string }>();
-    const ids = (completed.results || []).map((r) => r.id);
-    let withLearning = 0;
-    let withDiscovery = 0;
-    if (ids.length > 0) {
-      const ph = ids.map(() => "?").join(",");
-      const lr = await db.prepare(`SELECT COUNT(DISTINCT job_id) as c FROM learning_runs WHERE job_id IN (${ph})`).bind(...ids).first<{ c: number }>();
-      withLearning = lr?.c ?? 0;
-      try {
-        const dr = await db.prepare(`SELECT COUNT(DISTINCT job_id) as c FROM discovery_runs WHERE job_id IN (${ph})`).bind(...ids).first<{ c: number }>();
-        withDiscovery = dr?.c ?? 0;
-      } catch { /* discovery_runs may not exist */ }
-    }
-    const totalRuns = ids.length;
+    // Was uncached: a LIMIT-20 id scan + two COUNT(DISTINCT) probes + COUNT(*) over every completed job per scrape.
+    // Now: run stats cached 15 min, the whole-table jobs count cached 6 h (a dashboard gauge), both stale-on-error.
+    const runsSnap = await getSnapshot<{ totalRuns: number; withLearning: number; withDiscovery: number }>(
+      env,
+      `metrics:runs:v1:${last}`,
+      { softTtlSec: 900, hardTtlSec: 7 * 86400, kvPersistSec: 450 },
+      async () => {
+        const completed = await db.prepare(
+          "SELECT id FROM jobs WHERE status = 'completed' AND r2_key IS NOT NULL ORDER BY rowid DESC LIMIT ?"
+        ).bind(last).all<{ id: string }>();
+        const ids = (completed.results || []).map((r) => r.id);
+        let withLearning = 0;
+        let withDiscovery = 0;
+        if (ids.length > 0) {
+          const ph = ids.map(() => "?").join(",");
+          const lr = await db.prepare(`SELECT COUNT(DISTINCT job_id) as c FROM learning_runs WHERE job_id IN (${ph})`).bind(...ids).first<{ c: number }>();
+          withLearning = lr?.c ?? 0;
+          try {
+            const dr = await db.prepare(`SELECT COUNT(DISTINCT job_id) as c FROM discovery_runs WHERE job_id IN (${ph})`).bind(...ids).first<{ c: number }>();
+            withDiscovery = dr?.c ?? 0;
+          } catch { /* discovery_runs may not exist */ }
+        }
+        return { totalRuns: ids.length, withLearning, withDiscovery };
+      },
+    );
+    const jobCountSnap = await getSnapshot<{ c: number }>(
+      env,
+      "metrics:jobs_completed_total:v1",
+      { softTtlSec: 6 * 3600, hardTtlSec: 30 * 86400, kvPersistSec: 3 * 3600 },
+      async () => {
+        const row = await db.prepare("SELECT COUNT(*) as c FROM jobs WHERE status = 'completed'").first<{ c: number }>();
+        return { c: row?.c ?? 0 };
+      },
+    );
+    const { totalRuns, withLearning, withDiscovery } = runsSnap.value;
     const precision = totalRuns > 0 ? (withLearning / totalRuns) * 100 : 0;
     const discoveryRate = totalRuns > 0 ? (withDiscovery / totalRuns) * 100 : 0;
-    const jobCount = await db.prepare("SELECT COUNT(*) as c FROM jobs WHERE status = 'completed'").first<{ c: number }>();
+    const jobCount = jobCountSnap.value;
     const lines = [
       "# HELP motion_productions_total_runs Completed jobs in last N",
       "# TYPE motion_productions_total_runs gauge",
@@ -477,9 +496,15 @@ if (path === "/api/metrics" && request.method === "GET") {
       `motion_productions_jobs_total ${jobCount?.c ?? 0}`,
     ];
     return new Response(lines.join("\n") + "\n", {
-      headers: { "Content-Type": "text/plain; charset=utf-8", ...corsHeaders },
+      headers: {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Cache-Control": "public, max-age=60",
+        ...(runsSnap.degraded || jobCountSnap.degraded ? { "X-Degraded": "d1-quota" } : {}),
+        ...corsHeaders,
+      },
     });
   } catch (e) {
+    if (isFreeTierLimitError(e)) return limitResponse("GET", { error: "Metrics unavailable (D1 free-tier limit)" });
     return json({ error: "Metrics failed", details: String(e) }, 500);
   }
 }
