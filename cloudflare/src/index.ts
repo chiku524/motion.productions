@@ -10,6 +10,7 @@ import { handleVideoAiApi } from "./videoAiApi";
 import { handleInterpretationRoutes } from "./routes/interpretation";
 import { handleJobsRoutes } from "./routes/jobs";
 import { handleKnowledgeRoutes } from "./routes/knowledge";
+import { handleCoverageRoutes } from "./routes/coverage";
 import { handleLoopRoutes } from "./routes/loop";
 import { handleRegistriesRoutes } from "./routes/registries";
 import { handleR2Admin, sweepR2 } from "./r2Budget";
@@ -99,6 +100,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
     handleInterpretationRoutes,
     handleKnowledgeRoutes,
     handleRegistriesRoutes,
+    handleCoverageRoutes,
   ];
   for (const handler of handlers) {
     const res = await handler(request, env, path);

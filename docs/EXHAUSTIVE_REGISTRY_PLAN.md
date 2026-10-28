@@ -1,6 +1,8 @@
 # Exhaustive Registry Plan: discovering and recording every combination
 
 Status: DESIGN ONLY. No code is changed by this document. Branch `exhaustive-registry-plan`.
+
+> **Implementation status (stage 3, branch improve-stage3, 2026-10-27):** Phase 1 colour work is implemented locally: exact-cell bitset store, seeded Feistel stride queue, tile extractor, lossless survey clips (measured round-trip error 0; production profile max 4), budgeted sync client (at most 32 rows per sync), additive Worker endpoints, local lookup/snapshot. The D1 table (migrations_pending/0101) is NOT applied and nothing is deployed. See docs/COLOR_SURVEY.md.
 Revision 2 (2026-10-26, evening): **Nico decided "every colour" means EXACT 8-bit colour from the start** (`color.L2`, 16,777,216 RGB cells; the 25-step and 5-step grids become derived roll-up levels). Tile extraction (many colours per frame) is a core requirement, not an option. Cost tables now carry KV writes and an explicit free-tier budget (sections 1 and 4.7). R2 is enabled on the account (the earlier error-10136 blocker is gone).
 Date: 2026-10-26. Author: Grok Bot for Nico Chikuji.
 Mission (Nico, 2026-10-26): "for both colors and sound and motion (etc), every combination in the long run

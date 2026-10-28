@@ -386,6 +386,26 @@ def duration_for_run(run_count: int, base: float) -> float:
     return min(base + 8, 30)
 
 
+def run_color_survey_step(api_base: str) -> dict | None:
+    """One exact-colour survey burst (LOOP_COLOR_SURVEY=1). Lossless local clips that skip the novelty gate, create no
+    /api/jobs row, are never published and write nothing to D1 here (a bounded colour_coverage sync is separate).
+    Returns the summary, or None when disabled. Never raises: the creative loop must not depend on it."""
+    try:
+        from src.knowledge.color_survey import run_survey_iteration, survey_enabled
+
+        if not survey_enabled():
+            return None
+        summary = run_survey_iteration(api_base)
+        logger.info(
+            "Colour survey: clips=%s targets=%s verified=%s covered=%s (%s%%) stride=%s sync=%s",
+            summary.get("clips"), summary.get("targets"), summary.get("verified"), summary.get("covered"),
+            summary.get("pct_covered"), summary.get("stride"), (summary.get("sync") or {}).get("status"),
+        )
+        return summary
+    except Exception as e:
+        logger.warning("Colour survey step skipped: %s", e)
+        return None
+
 def run() -> None:
     import argparse
     import os
@@ -477,6 +497,7 @@ def run() -> None:
 
         raw_delay = loop_config.get("delay_seconds") or (args.delay if args.delay is not None else float(os.environ.get("LOOP_DELAY_SECONDS", "0")) or 0)
         delay_seconds = max(8, float(raw_delay))  # min 8s to reduce D1 overload with concurrent workers
+        run_color_survey_step(args.api_base)  # exact-colour cells; opt-in, local, never published
         coverage = _load_coverage(args.api_base) if args.api_base else None
         workflow_type = (os.environ.get("LOOP_WORKFLOW_TYPE") or "main").strip().lower() or "main"
         # extraction_focus: frame (per-frame / pure static only) | window (per-window blends only) | unset = all

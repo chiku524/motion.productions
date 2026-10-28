@@ -9,7 +9,7 @@ The Worker code works without any of it.
 | `0100_drop_redundant_indexes.sql` | drops 19 indexes that duplicate a UNIQUE constraint's auto-index (or are a prefix of another index) | saves 1 index write + its storage per insert/delete on those tables (e.g. 2 -> 1 index rows per registry insert) | none for correctness: SQLite already uses the UNIQUE auto-index for the same lookups; `DROP INDEX` is cheap but is still a schema write, run it when D1 writes are available |
 | `0101_optional_read_indexes.sql` | optional `learned_blends(name)` and `interpretations(status, updated_at)` indexes | only useful if code goes back to name / updated_at lookups; the Worker now uses `name_reserve` (PK) and `ORDER BY rowid` | writes + storage on a DB that is over its cap: **do not apply** until space is reclaimed |
 
-To apply (only after Nico approves): `cd cloudflare; npx wrangler d1 execute motion-productions-db --remote --file migrations_pending/0100_drop_redundant_indexes.sql`
+To apply (only after Nico approves): `cd cloudflare; npx wrangler d1 execute motion-productions-db --remote --file migrations_pending/0100_drop_redundant_indexes.sql` (same for `0101_color_coverage_chunks.sql`)
 and move the file into `migrations/` with the next free number (so migration history stays consistent).
 
 ## Not included on purpose
