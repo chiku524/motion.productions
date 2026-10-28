@@ -122,3 +122,42 @@ Trade-offs: legacy names that never reached `name_reserve` can be generated agai
 single word is taken the generator widens to 2-3 words). `rowid` order = insertion order, a close proxy for "recent".
 Optional indexes are written but **not applied**: `cloudflare/migrations_pending/0101_optional_read_indexes.sql` (the DB is over its
 500 MB cap, indexes are writes). Tests: `cloudflare/test/readScans.test.mjs`.
+
+## Jobs-claim read burner (`GET /api/jobs?status=pending`) and poller audit
+Incident (6 h window): `SELECT ... FROM jobs WHERE status='pending' AND (workflow_type IS NULL OR workflow_type='web') ORDER BY rowid LIMIT ?`
+ran 135 times at ~31 k rows each = **4.19 M of ~4.4 M rows read**. Cause: loop-created jobs (`main`/`explorer`/`exploiter`/`cartoon`)
+are never claimed, so they stay `pending` at the lowest rowids; retention only deleted completed/failed/error jobs. The `OR` filter
+runs *after* the `idx_jobs_status` walk, so every cache miss read every pending loop job (index entry + table row).
+
+### What changed (code only, no schema change, no write)
+| layer | change |
+|---|---|
+| Worker `src/jobsClaim.ts` | `status='pending' AND rowid > ?` windows (100 rows, <= 20 per request) = a range seek on `idx_jobs_status`; the highest rowid proven to hold no claimable job is persisted as a **cursor** (isolate memory + Cache API, 6 h) and each junk row is read about once. Safe because status only moves pending -> completed/abandoned, `workflow_type` never changes and new rows get larger rowids |
+| Worker caching | negative cache 60 s (proven empty), positive 5 s, incomplete scan 3 s; single-flight; **stale served on D1 error** with `degraded:true` and `poll_after_sec >= 300`; cache invalidated by `POST /api/jobs` for web/NULL jobs. Response adds `poll_after_sec` (+ `scan_complete`) |
+| no double claim / starvation | `/upload` and `/complete` use `UPDATE ... WHERE id=? AND status='pending'` and check `meta.changes`; the scan is rowid-ordered (oldest web job first) and the cursor never passes an unseen claimable job |
+| Client `src/poll_backoff.py`, `scripts/generate_bridge.py` | idle wait starts at **60 s** (was 20-30 s), doubles to 600 s with 0-25 % jitter, never shorter than `poll_after_sec` / `Retry-After` / the free-tier cooldown, resets when a job arrives; errors back off the same way; `APIError.retry_after` carries the header |
+| `migrations_pending/0102`, `0103` | optional partial index and one-time batched retirement of stale loop jobs. **Not applied**, both cost writes; see that README |
+
+Expected rows read per `GET /api/jobs?status=pending` (measured on local Miniflare, `cloudflare/test/jobsClaim.test.mjs`):
+| case | before | after |
+|---|---|---|
+| cache hit | 0 | 0 (0 statements) |
+| cache miss, steady state | ~31,000 | <= 200 (one window past the cursor); ~2 with `JOBS_PARTIAL_INDEX=1` |
+| first miss with a cold cursor over N junk rows | ~31,000 | ~N once per colo/isolate per 6 h, <= 2,000 per request, cursor advances |
+| per day, one idle bridge | ~1,440 x ~31 k | ~1,440 polls/day max at 60 s, ~all negative-cache hits: ~24 D1 misses x <= 200 rows ~ **5 k** |
+
+### Fixed-interval poller audit (estimates from code; D1 is quota-blocked so none could be measured)
+Rows = D1 rows read per call that reaches D1 (a Worker cache hit reads 0). Flag = more than 100 k rows/day.
+| poller | endpoint | interval | D1 rows per call (from code) | est. rows/day | flag |
+|---|---|---|---|---|---|
+| webjobs bridge (`generate_bridge.py`) | `GET /api/jobs?status=pending` | 60 -> 600 s back-off | <= 200 (was ~31 k) | ~5 k | no (was **yes**) |
+| interpret loop (`interpret_loop.py`, compose delay 90 s, code default 10 s) | `GET /api/interpret/queue` | 90 s (960/day); 10 s outside compose (8,640/day) | **uncached**; `WHERE status='pending' ORDER BY CASE ... created_at` reads every pending interpretation (~2 per row) and sorts | 960 x 2N: > 100 k once pending N > ~52 (N unknown while D1 is blocked) | **YES, unmeasured** - follow-up: bounded/cached queue read or `INTERPRET_DELAY_SECONDS` >= 300 when the queue was empty |
+| main/explorer/exploiter loops (`automate_loop.py`, 15-30 s) | `GET /api/loop/config` | every run | 0 (KV) | 0 | no |
+| same | `GET /api/registries/coverage` | every run | cached 1800 s (+ KV 6 h), single-flight; a miss runs whole-table aggregates (`missionStats`, ~20 `COUNT(*)`) | misses ~48/day/colo x full scans of the large registries (hundreds of k rows each) | **maybe**: bounded by cache, size of tables unknown; check after quota reset |
+| sound loop (`sound_loop.py`, 75 s) | `GET /api/registries/coverage` | per cycle | same cache | same | maybe (shared with above) |
+| mission targets (`mission_targets.py`) | `GET /api/registries/mission` | per run | `MISSION_STATS_SOFT_TTL_SEC` 2 h, stale on error | ~12 misses/day/colo of full scans | maybe |
+| web app / dashboards | `GET /api/jobs?status=completed` | user driven | cached 120 s, `ORDER BY rowid DESC LIMIT n` | <= 720 misses x ~LIMIT | no |
+| web app | `GET /api/loop/status` | user driven | uncached; a few `LIMIT 10` queries + coverage snapshot | ~30 rows/call | no |
+| Prometheus scrape (none in repo) | `GET /api/metrics` | external | **uncached** `SELECT COUNT(*) FROM jobs WHERE status='completed'` (+ `LIMIT` lookups) = one row per completed job per scrape | scales with scrape rate x completed jobs | flag only if something scrapes it |
+
+Nothing else in `src/` or `scripts/` polls on a fixed interval; the rest are per-run calls driven by job generation.
