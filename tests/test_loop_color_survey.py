@@ -57,4 +57,4 @@ def test_compose_enables_survey_for_explorer_and_balanced_only():
     assert on == {"explorer", "balanced"}
     idx = {n: services[n]["environment"]["CONTAINER_INDEX"] for n in on}
     assert sorted(idx.values()) == ["0", "1"]  # disjoint strides
-    assert all(services[n]["environment"]["COLOR_SYNC"].endswith(":-0}") for n in on)  # D1 sync off until 0101 applied
+    assert all(services[n]["environment"]["COLOR_SYNC"].endswith(":-1}") for n in on)  # 0101 applied 2026-10-27, sync on
