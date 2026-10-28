@@ -439,12 +439,13 @@ if (path === "/api/registries/sanitize-sound-keys" && request.method === "POST")
 if (path === "/api/registries/coverage" && request.method === "GET") {
   const coverageCacheKey = "registries:coverage:v2";
   const bypassCache = new URL(request.url).searchParams.get("fresh") === "1";
-  // Snapshot (memory -> Cache API -> rarely-written KV). Rebuild reads every narrative_entries row, so keep it rare.
+  // Snapshot (memory -> Cache API -> rarely-written KV). Rebuild reads every narrative_entries row, so keep it rare:
+  // 4 h soft TTL, KV copy refreshed every 2 h so cold colos reuse it. Callers (automate/sound loops) poll this per cycle.
   try {
   const coverageSnap = await getSnapshot<string>(
     env,
     coverageCacheKey,
-    { softTtlSec: 1800, hardTtlSec: 7 * 86400, kvPersistSec: 6 * 3600, bypass: bypassCache, bypassMinIntervalSec: 300 },
+    { softTtlSec: 4 * 3600, hardTtlSec: 7 * 86400, kvPersistSec: 2 * 3600, bypass: bypassCache, bypassMinIntervalSec: 300 },
     async () => {
   // Sizes from registryConstants.generated.ts (full NARRATIVE_ORIGINS / cell space).
   const narrativeAspects = Object.keys(NARRATIVE_ORIGIN_SIZES);

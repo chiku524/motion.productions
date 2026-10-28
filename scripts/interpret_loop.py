@@ -17,9 +17,10 @@ import time
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_DELAY_SECONDS = 10
+DEFAULT_DELAY_SECONDS = 90  # queue polling has its own idle back-off (>= 120 s); this paces the other phases
 DEFAULT_QUEUE_LIMIT = 20
-CACHE_TTL_SECONDS = 90  # Cache knowledge and linguistic registry for 90s
+# Knowledge + linguistic registry change slowly (the Worker caches them for hours): refetch at most every 10 min.
+CACHE_TTL_SECONDS = 600
 
 
 def _cached_fetch(cache_key: str, cache: dict, ttl: float, fetch_fn, *args, **kwargs):
@@ -66,7 +67,8 @@ def run() -> None:
     args = parser.parse_args()
     delay = args.delay if args.delay is not None else float(os.environ.get("INTERPRET_DELAY_SECONDS", DEFAULT_DELAY_SECONDS))
 
-    from src.api_client import APIError, api_request_with_retry
+    from src.api_client import APIError, api_request_with_retry, free_tier_cooldown_remaining
+    from src.interpret_queue_poller import InterpretQueuePoller
     from src.interpretation import interpret_user_prompt, filter_gibberish_prompts
     from src.interpretation.prompt_gen import generate_interpretation_prompt_batch
     from src.interpretation.linguistic import extract_linguistic_mappings
@@ -86,6 +88,14 @@ def run() -> None:
 
     api_base = args.api_base.rstrip("/")
     cache: dict = {}  # TTL cache for knowledge and linguistic registry
+    # Queue polling is gated + backed off (>= 120 s idle, jitter, Retry-After / poll_after_sec, rowid cursor); the other
+    # phases below still run every cycle.
+    queue_poller = InterpretQueuePoller(
+        lambda path: api_request_with_retry(api_base, "GET", path, timeout=15),
+        limit=args.queue_limit,
+        cooldown_remaining=free_tier_cooldown_remaining,
+        error_types=(APIError,),
+    )
     print("Interpretation worker started (no create/render)")
     print(f"API: {api_base}")
     print(f"Delay: {delay}s between cycles. Backfill: {'off' if args.no_backfill else 'on'}. Generate: {'off' if args.no_generate else 'on'}\n")
@@ -106,18 +116,7 @@ def run() -> None:
                 time.sleep(idle)
         try:
             # 1) Process queue: GET pending → interpret → PATCH result
-            try:
-                queue_path = f"/api/interpret/queue?limit={args.queue_limit}"
-                data = api_request_with_retry(
-                    api_base, "GET", queue_path,
-                    timeout=15,
-                )
-            except APIError as e:
-                logger.warning("GET /api/interpret/queue failed (status=%s): %s", e.status_code, e)
-                time.sleep(delay)
-                continue
-
-            items = data.get("items", [])
+            items = queue_poller.poll()
             linguistic_registry = (
                 _cached_fetch("linguistic", cache, CACHE_TTL_SECONDS, fetch_linguistic_registry, api_base)
                 if api_base else {}

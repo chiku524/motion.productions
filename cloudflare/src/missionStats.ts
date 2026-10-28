@@ -28,8 +28,13 @@ import {
 } from "./missionAggregate";
 
 export const MISSION_STATS_CACHE_KEY = MISSION_STATS_KEY;
-/** Rebuild at most this often (each rebuild scans ~4-5k D1 rows; 12/day = ~60k rows). */
-const MISSION_STATS_SOFT_TTL_SEC = 2 * 3600;
+/**
+ * Rebuild at most this often. Each rebuild scans ~4-5k D1 rows (full static_colors family/shade GROUP BYs + sound scans);
+ * the origin set barely changes hour to hour, so 6 h = 4 rebuilds/day per colo (~20k rows) instead of 12 (~60k).
+ * The KV copy is refreshed every half TTL so a cold colo/isolate reads it (1 KV read) instead of rebuilding.
+ */
+const MISSION_STATS_SOFT_TTL_SEC = 6 * 3600;
+const MISSION_STATS_KV_PERSIST_SEC = 3 * 3600;
 /** KV hard expiry: keep the last good snapshot to serve if D1 is failing / rate-limited. */
 const MISSION_STATS_HARD_TTL_SEC = 60 * 60 * 24 * 7;
 /** Max NULL-family rows classified in JS to attribute never-backfilled rows. */
@@ -219,7 +224,7 @@ export async function loadMissionStats(env: Env, fresh = false): Promise<Mission
     {
       softTtlSec: MISSION_STATS_SOFT_TTL_SEC,
       hardTtlSec: MISSION_STATS_HARD_TTL_SEC,
-      kvPersistSec: 6 * 3600,
+      kvPersistSec: MISSION_STATS_KV_PERSIST_SEC,
       bypass: fresh,
       bypassMinIntervalSec: 300,
     },

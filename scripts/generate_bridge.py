@@ -17,15 +17,24 @@ import os
 import time
 from pathlib import Path
 
-from src.api_client import api_post, api_post_binary, api_request_with_retry
+from src.api_client import api_post, api_post_binary, api_request_with_retry, free_tier_cooldown_remaining
 from src.config import load_config
 from src.pipeline import generate_full_video
+from src.poll_backoff import PollBackoff, queue_hint
 from src.procedural import ProceduralVideoGenerator
 
 
+def fetch_pending_queue(api_base: str) -> tuple[list[dict], float | None]:
+    """(jobs, server back-off hint in seconds). The Worker answers an empty/degraded queue with ``poll_after_sec``
+    (60 s when it proved the queue empty, 300 s when D1 is quota-blocked and a stale answer was served). Few retries:
+    the caller backs off for much longer than any in-request retry would."""
+    out = api_request_with_retry(api_base, "GET", "/api/jobs?status=pending&limit=5", max_retries=1)
+    jobs = out.get("jobs", [])
+    return jobs, queue_hint(out) if not jobs else None
+
+
 def fetch_pending_jobs(api_base: str) -> list[dict]:
-    out = api_request_with_retry(api_base, "GET", "/api/jobs?status=pending&limit=5", max_retries=4)
-    return out.get("jobs", [])
+    return fetch_pending_queue(api_base)[0]
 
 
 def _learning_spec_payload(spec) -> dict:
@@ -281,7 +290,7 @@ def main() -> None:
     parser.add_argument("--api-base", default=os.environ.get("API_BASE", "https://motion.productions"), help="API base URL")
     parser.add_argument("--once", action="store_true", help="Process one job and exit")
     parser.add_argument("--learn", action="store_true", help="Log runs for learning")
-    parser.add_argument("--interval", type=int, default=int(os.environ.get("BRIDGE_INTERVAL_SECONDS", "30")), help="Poll interval (seconds)")
+    parser.add_argument("--interval", type=int, default=int(os.environ.get("BRIDGE_INTERVAL_SECONDS", "60")), help="Minimum idle poll interval (seconds); doubles with jitter while the queue stays empty, capped by POLL_IDLE_MAX_SECONDS (600)")
     parser.add_argument("--config", type=Path, default=None, help="Config YAML path")
     parser.add_argument("--health-port", type=int, default=None, help="Health HTTP port; env HEALTH_PORT")
     args = parser.parse_args()
@@ -295,27 +304,34 @@ def main() -> None:
 
     config = load_config(args.config)
 
+    # Empty queue / 429 / degraded Worker -> exponential back-off with jitter, never shorter than Retry-After.
+    backoff = PollBackoff(min_seconds=args.interval)
+
     while True:
         if request_shutdown():
             print("Shutdown requested. Exiting.")
             return
         try:
-            jobs = fetch_pending_jobs(args.api_base)
+            jobs, hint = fetch_pending_queue(args.api_base)
         except Exception as e:
             # Survive D1 503 storms without crashing the container into a restart poll loop.
             print(f"WARNING: fetch pending jobs failed: {e}")
             if args.once:
                 raise
-            time.sleep(max(args.interval, 20))
+            delay = backoff.error_delay(e, free_tier_cooldown_remaining())
+            print(f"Retrying in {delay:.0f}s (attempt {backoff.misses})...")
+            time.sleep(delay)
             continue
         if not jobs:
             if args.once:
                 print("No pending jobs. Exiting.")
                 return
-            print(f"No pending jobs. Polling again in {args.interval}s...")
-            time.sleep(args.interval)
+            delay = backoff.next_delay(hint)
+            print(f"No pending jobs. Polling again in {delay:.0f}s...")
+            time.sleep(delay)
             continue
 
+        backoff.reset()
         job = jobs[0]
         process_job(job, args.api_base, config, args.learn)
 

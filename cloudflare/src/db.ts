@@ -257,7 +257,9 @@ export async function bumpRegistryCounts(_env: Env, delta: CountDelta): Promise<
  * coverage/health precedent (replica COUNT on large tables can return false zeros or hit CPU limit 7429).
  */
 const TRUE_REGISTRY_TOTALS_KEY = "registries:true_totals:v2";
-export const TRUE_TOTALS_SOFT_TTL_SEC = 3600;
+// ~20 COUNT(*)s incl. learned_blends (~280k rows) cost >300k rows per rebuild: 12 h => at most 2 rebuilds/day per colo
+// (was hourly = up to 24). Display-only numbers; ?fresh=1 (rate limited) still forces a refresh.
+export const TRUE_TOTALS_SOFT_TTL_SEC = 12 * 3600;
 
 export type TrueRegistryTotals = {
   static_colors: number;
@@ -288,7 +290,11 @@ const DYNAMIC_TOTAL_TABLES: Record<string, string> = {
 
 const NARRATIVE_TOTAL_ASPECTS = ["genre", "mood", "themes", "plots", "settings", "style", "scene_type"];
 
-async function computeTrueTotals(primaryDb: D1Database): Promise<TrueRegistryTotals> {
+/** Tables whose COUNT(*) alone costs >100k rows: cached on their own so a totals rebuild (and ?fresh=1) never rescans them. */
+const LARGE_TABLE_COUNT_SOFT_TTL_SEC = 7 * 86400;
+const LARGE_TABLE_COUNTS: Record<string, string> = { learned_blends: "registries:true_totals:count:learned_blends:v1" };
+
+async function computeTrueTotals(env: Env, primaryDb: D1Database): Promise<TrueRegistryTotals> {
   const count = async (sql: string, bind?: string): Promise<number> => {
     try {
       const stmt = bind !== undefined ? primaryDb.prepare(sql).bind(bind) : primaryDb.prepare(sql);
@@ -308,7 +314,19 @@ async function computeTrueTotals(primaryDb: D1Database): Promise<TrueRegistryTot
   ]);
   const dynamicEntries = await Promise.all(
     Object.entries(DYNAMIC_TOTAL_TABLES).map(
-      async ([key, table]) => [key, await count(`SELECT COUNT(*) as c FROM ${table}`)] as const,
+      async ([key, table]) => {
+        const sql = `SELECT COUNT(*) as c FROM ${table}`;
+        const cacheKey = LARGE_TABLE_COUNTS[table];
+        if (!cacheKey) return [key, await count(sql)] as const;
+        // ~280k rows per scan: once a week per colo (KV-shared), stale-on-error; display-only number
+        const snap = await getSnapshot<{ c: number }>(
+          env,
+          cacheKey,
+          { softTtlSec: LARGE_TABLE_COUNT_SOFT_TTL_SEC, hardTtlSec: 60 * 86400, kvPersistSec: 3 * 86400 },
+          async () => ({ c: await count(sql) }),
+        );
+        return [key, snap.value.c] as const;
+      },
     ),
   );
   const narrativeEntries = await Promise.all(
@@ -343,7 +361,7 @@ export async function getTrueRegistryTotals(
         bypass: opts.fresh,
         bypassMinIntervalSec: 300,
       },
-      () => computeTrueTotals(primaryDb),
+      () => computeTrueTotals(env, primaryDb),
     );
     return snap.degraded ? { ...snap.value, degraded: true } : snap.value;
   } catch {

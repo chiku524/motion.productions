@@ -682,10 +682,20 @@ async function browseMission(env: Env, fresh = false): Promise<Response> {
   let narrativeAspects = 0;
   let narrativeTotal = 7;
   try {
-    const rows = await db
-      .prepare("SELECT DISTINCT aspect FROM narrative_entries")
-      .all<{ aspect: string }>();
-    narrativeAspects = (rows.results || []).length;
+    // Was an uncached DISTINCT over the whole (aspect, entry_key) index on EVERY /mission call (index entries read =
+    // narrative row count). The aspect count only changes when a brand-new aspect appears: cache it for hours.
+    const aspectSnap = await getSnapshot<number>(
+      env,
+      "registries:mission:narrative_aspects:v1",
+      { softTtlSec: 6 * 3600, hardTtlSec: 7 * 86400, kvPersistSec: 3 * 3600, bypass: fresh, bypassMinIntervalSec: 300 },
+      async () => {
+        const rows = await db
+          .prepare("SELECT DISTINCT aspect FROM narrative_entries")
+          .all<{ aspect: string }>();
+        return (rows.results || []).length;
+      },
+    );
+    narrativeAspects = aspectSnap.value;
   } catch {
     narrativeAspects = 0;
   }
