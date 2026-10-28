@@ -6,7 +6,7 @@ Prompt-driven **recipe JSON** → **MP4** pipeline, kept separate from the main 
 
 | `meta.engine` | Path | Notes |
 |---------------|------|--------|
-| `recipe` (default) | Worker → `VIDEO_AI_RENDER_URL` (Node + FFmpeg) | Solid-color scenes, captions, optional TTS/music |
+| `recipe` (default) | Worker → `VIDEO_AI_RENDER_URL` (Node + FFmpeg) | Solid-color scenes, captions, optional music |
 | `procedural` | Worker → `PROCEDURAL_RENDER_URL` (Python `generate_full_video`) | Full procedural engine; set `meta.prompt`; sync `/video-ai/api/render` only |
 
 Long-term consolidation: keep one recipe schema; route `engine` to the appropriate render host. The procedural path reuses the main learning-loop renderer rather than embedding Python in Node.
@@ -16,8 +16,8 @@ Long-term consolidation: keep one recipe schema; route `engine` to the appropria
 | Piece | Role |
 |--------|------|
 | **Cloudflare Worker** (`src/worker` + main `cloudflare/src/videoAiApi.ts`) | HTTP API: `POST /video-ai/api/plan`, `POST /video-ai/api/render` (recipe or procedural proxy), optional async jobs for recipe engine |
-| **Shared schema + planner** (`src/schema`, `src/planner`) | Zod-validated `VideoRecipe` (`meta.engine`, `meta.prompt`), OpenAI JSON planner, offline fallback |
-| **Node render service** (`src/render`) | FFmpeg: solid-color scenes, optional captions, optional **OpenAI TTS narration** + **HTTPS background music** URL |
+| **Shared schema + planner** (`src/schema`, `src/planner`) | Zod-validated `VideoRecipe` (`meta.engine`, `meta.prompt`), deterministic offline planner (no paid APIs) |
+| **Node render service** (`src/render`) | FFmpeg: solid-color scenes, optional captions, optional **HTTPS background music** URL |
 | **Procedural render** (`scripts/procedural_render_server.py`, `procedural-render` Compose service) | `POST /render` -> MP4 via Python procedural pipeline |
 
 **Why split Worker vs Node/Python?** Workers are the right place for auth, planning, and orchestration. FFmpeg and procedural generation need long CPU-bound processes in Docker containers.
@@ -42,22 +42,10 @@ npm run dev:worker
 
 Open the URL Wrangler prints (often `http://127.0.0.1:8787`). Use **Plan** then **Render MP4**.
 
-- Without `OPENAI_API_KEY`, planning uses the deterministic **fallback** (still produces a valid recipe).
+- Planning uses the deterministic **fallback** planner (always a valid recipe; no paid API is involved).
 - If the Worker is not given `VIDEO_AI_RENDER_URL`, the UI falls back to `http://127.0.0.1:8788/render` (same machine).
 
-### OpenAI (optional)
-
-```bash
-npx wrangler secret put OPENAI_API_KEY
-```
-
-Or for local dev only, use a `.dev.vars` file (gitignored) in `video-ai/`:
-
-```
-OPENAI_API_KEY=sk-...
-```
-
-Optional vars: `OPENAI_MODEL` (default `gpt-4o-mini`), `VIDEO_AI_RENDER_URL`, `VIDEO_AI_RENDER_SECRET` (must match render server env).
+Optional vars: `VIDEO_AI_RENDER_URL`, `VIDEO_AI_RENDER_SECRET` (must match render server env).
 
 ### Render service security (optional)
 
@@ -85,14 +73,12 @@ The **render** app is the Docker image in this folder (`Dockerfile`): Node + FFm
 | Variable | Required | Notes |
 |----------|----------|--------|
 | `VIDEO_AI_RENDER_SECRET` | Recommended | Same value as Worker secret `VIDEO_AI_RENDER_SECRET`; Worker sends it as header `X-Video-AI-Key`. |
-| `OPENAI_API_KEY` | For TTS only | Set on the **render** host if recipes use `meta.audio.narration` (OpenAI `tts-1`). Never commit keys. |
 | `PORT` | Auto | Defaults to 8080 in the image; hosts may inject `PORT`. The server reads `PORT` first. |
 | `VIDEO_AI_FONT` | Optional | Path to a `.ttf` inside the container if `drawtext` cannot find a font. |
 
 ### Audio in the recipe (`meta.audio`)
 
-- **`narration`**: `{ "text": "...", "voice": "alloy" }` (optional voice from OpenAI TTS set). Requires **`OPENAI_API_KEY`** on the render host (or local `npm run render`).
-- **`backgroundMusicUrl`**: public **`https://`** URL to an audio file (mp3/aac/wav). Looped and mixed under narration if both are set (`backgroundMusicVolume` 0–1, default ~0.22).
+- **`backgroundMusicUrl`**: public **`https://`** URL to an audio file (mp3/aac/wav). Looped under the video (`backgroundMusicVolume` 0–1, default ~0.22).
 - Omit `meta.audio` for a silent AAC bed (previous behavior).
 
 **After deploy**
@@ -106,7 +92,7 @@ Use **HTTPS** URL with **no trailing slash**.
 
 ### Other Docker hosts (monorepo root)
 
-To build from the repository root (same image as `video-ai/Dockerfile`), use **`Dockerfile.video-ai`** at the repo root as the Dockerfile path and set **`VIDEO_AI_RENDER_SECRET`** (and optional **`OPENAI_API_KEY`**) on the service. Verify: `curl -sS https://YOUR-HOST/health`.
+To build from the repository root (same image as `video-ai/Dockerfile`), use **`Dockerfile.video-ai`** at the repo root as the Dockerfile path and set **`VIDEO_AI_RENDER_SECRET`** on the service. Verify: `curl -sS https://YOUR-HOST/health`.
 
 ### Docker Compose (local)
 
@@ -116,7 +102,7 @@ From the repository root, the `video-ai-render` service builds `Dockerfile.video
 docker compose -f docker-compose.local.yml --profile video-ai up -d --build
 ```
 
-Set `VIDEO_AI_RENDER_SECRET` (and optional `OPENAI_API_KEY`) in `.env` first. The Worker cannot reach `localhost`, so expose the service over a public HTTPS tunnel (see [../docs/LOCAL_COMPUTE.md](../docs/LOCAL_COMPUTE.md)) and set Worker `VIDEO_AI_RENDER_URL` to that HTTPS origin (no trailing slash).
+Set `VIDEO_AI_RENDER_SECRET` in `.env` first. The Worker cannot reach `localhost`, so expose the service over a public HTTPS tunnel (see [../docs/LOCAL_COMPUTE.md](../docs/LOCAL_COMPUTE.md)) and set Worker `VIDEO_AI_RENDER_URL` to that HTTPS origin (no trailing slash).
 
 **Health check:** `GET https://YOUR-HOST/health` should return `{ "ok": true, "service": "video-ai-render" }`.
 
@@ -128,7 +114,7 @@ Set `VIDEO_AI_RENDER_SECRET` (and optional `OPENAI_API_KEY`) in `.env` first. Th
 
 ## On motion.productions
 
-The main site exposes this lab at **[https://motion.productions/video-ai/](https://motion.productions/video-ai/)** (header link: “Video AI lab”). APIs live at `POST /video-ai/api/plan` and `POST /video-ai/api/render` on the same Worker. Configure `OPENAI_API_KEY` and optional `VIDEO_AI_RENDER_URL` / `VIDEO_AI_RENDER_SECRET` on that deployment for full behavior.
+The main site exposes this lab at **[https://motion.productions/video-ai/](https://motion.productions/video-ai/)** (header link: “Video AI lab”). APIs live at `POST /video-ai/api/plan` and `POST /video-ai/api/render` on the same Worker. Configure optional `VIDEO_AI_RENDER_URL` / `VIDEO_AI_RENDER_SECRET` on that deployment for full behavior.
 
 ## Merge path into `motion.productions`
 

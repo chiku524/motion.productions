@@ -86,9 +86,9 @@ Default **`CMD`** is `python scripts/worker_start.py` (**`WORKER_START_SCRIPT`**
 
 **Video AI** (FFmpeg render for the Worker): the `video-ai-render` Compose service (`--profile video-ai`) - see **`video-ai/README.md`**.
 
-### Local / Procfile
+### Local development
 
-`Procfile` lists example processes; use `foreman` or run scripts directly for development.
+Run the scripts directly (for example `python scripts/automate_loop.py`) or use `docker-compose.local.yml`.
 
 ### Environment variables
 

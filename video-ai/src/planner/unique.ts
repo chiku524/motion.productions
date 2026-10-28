@@ -1,7 +1,7 @@
 import type { VideoRecipe } from "../schema/recipe";
 
 function randomUint32(): number {
-  const c = globalThis.crypto;
+  const c = (globalThis as { crypto?: Crypto }).crypto;
   if (c?.getRandomValues) {
     const buf = new Uint32Array(1);
     c.getRandomValues(buf);

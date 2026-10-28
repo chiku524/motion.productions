@@ -35,6 +35,15 @@ jobs:
         working-directory: video-ai
         run: npm ci || npm install
 
+      # Gate the deploy on the same checks as CI: a failing typecheck/test stops before migrations + deploy.
+      - name: Typecheck Worker (tsc --noEmit)
+        working-directory: cloudflare
+        run: npx tsc --noEmit
+
+      - name: Worker tests (node --test)
+        working-directory: cloudflare
+        run: npm test
+
       # Remote batch apply often hits D1 CPU 7429 on large production DB. To apply pending migrations when
       # the DB is quiet, run workflow "D1 migrations (remote)" (workflow_dispatch) — do not set SKIP there.
       - name: Run D1 migrations

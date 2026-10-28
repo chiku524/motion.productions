@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { randomBytes } from "node:crypto";
 import { totalDurationSec, type VideoRecipe } from "../schema/recipe";
 import { downloadAudioUrlToFile } from "./fetch-audio";
-import { openAiSpeechToMp3 } from "./tts";
 
 function hexToLavfiColor(hex: string): string {
   return `0x${hex.slice(1)}`;
@@ -69,12 +68,9 @@ async function muxFinalOutput(
   const totalSec = totalDurationSec(recipe);
   const t = String(totalSec);
   const audio = recipe.meta.audio;
-  const narrText = audio?.narration?.text?.trim();
-  const hasNarr = Boolean(narrText);
   const hasMusic = Boolean(audio?.backgroundMusicUrl);
-  const musicVol = audio?.backgroundMusicVolume ?? 0.22;
 
-  if (!hasNarr && !hasMusic) {
+  if (!hasMusic) {
     await runFfmpeg([
       "-y",
       "-i",
@@ -95,97 +91,33 @@ async function muxFinalOutput(
     return finalOut;
   }
 
-  const narrPath = join(workDir, "narration.mp3");
   const musicPath = join(workDir, "background-audio");
+  await downloadAudioUrlToFile(audio!.backgroundMusicUrl!, musicPath);
 
-  if (hasNarr) {
-    const key = process.env.OPENAI_API_KEY?.trim();
-    if (!key) {
-      throw new Error(
-        "Recipe includes narration but OPENAI_API_KEY is not set on the render service.",
-      );
-    }
-    await openAiSpeechToMp3(key, narrText!, audio?.narration?.voice, narrPath);
-  }
-
-  if (hasMusic) {
-    await downloadAudioUrlToFile(audio!.backgroundMusicUrl!, musicPath);
-  }
-
-  if (hasNarr && hasMusic) {
-    await runFfmpeg([
-      "-y",
-      "-i",
-      mergedVideoPath,
-      "-i",
-      narrPath,
-      "-stream_loop",
-      "-1",
-      "-i",
-      musicPath,
-      "-filter_complex",
-      `[1:a]apad=whole_dur=${totalSec}[n];[2:a]volume=${musicVol},atrim=duration=${totalSec}[m];[n][m]amix=inputs=2:duration=shortest:normalize=0[aout]`,
-      "-map",
-      "0:v",
-      "-map",
-      "[aout]",
-      "-c:v",
-      "copy",
-      "-c:a",
-      "aac",
-      "-b:a",
-      "192k",
-      "-t",
-      t,
-      finalOut,
-    ]);
-  } else if (hasNarr) {
-    await runFfmpeg([
-      "-y",
-      "-i",
-      mergedVideoPath,
-      "-i",
-      narrPath,
-      "-filter_complex",
-      `[1:a]apad=whole_dur=${totalSec}[aout]`,
-      "-map",
-      "0:v",
-      "-map",
-      "[aout]",
-      "-c:v",
-      "copy",
-      "-c:a",
-      "aac",
-      "-b:a",
-      "192k",
-      "-t",
-      t,
-      finalOut,
-    ]);
-  } else {
-    await runFfmpeg([
-      "-y",
-      "-i",
-      mergedVideoPath,
-      "-stream_loop",
-      "-1",
-      "-i",
-      musicPath,
-      "-map",
-      "0:v",
-      "-map",
-      "1:a",
-      "-c:v",
-      "copy",
-      "-c:a",
-      "aac",
-      "-b:a",
-      "192k",
-      "-t",
-      t,
-      finalOut,
-    ]);
-  }
+  await runFfmpeg([
+    "-y",
+    "-i",
+    mergedVideoPath,
+    "-stream_loop",
+    "-1",
+    "-i",
+    musicPath,
+    "-filter_complex",
+    `[1:a]volume=${audio?.backgroundMusicVolume ?? 0.22},atrim=duration=${totalSec}[aout]`,
+    "-map",
+    "0:v",
+    "-map",
+    "[aout]",
+    "-c:v",
+    "copy",
+    "-c:a",
+    "aac",
+    "-b:a",
+    "192k",
+    "-t",
+    t,
+    finalOut,
+  ]);
 
   return finalOut;
 }

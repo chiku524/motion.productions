@@ -93,6 +93,19 @@ def _note_degraded_success(method: str, path: str, result: object) -> None:
         logger.warning("API %s %s degraded (%s); writes paused %.0fs", method, path, result.get("error"), limit_cooldown_seconds())
 
 
+# Per-process counters of non-GET API call attempts (each is a potential D1 write); read and reset per loop
+# iteration by scripts/automate_loop.py for the local metrics log.
+_write_stats = {"requests": 0, "failed": 0}
+
+
+def pop_write_stats() -> dict:
+    """Return {requests, failed} non-GET attempts since the last call and reset them."""
+    out = dict(_write_stats)
+    _write_stats["requests"] = 0
+    _write_stats["failed"] = 0
+    return out
+
+
 def free_tier_cooldown_remaining() -> float:
     return max(0.0, _limit_cooldown_until - time.monotonic())
 
@@ -178,6 +191,8 @@ def api_request(
 
     last_exc: Exception | None = None
     for attempt in range(max(1, max_retries + 1)):
+        if method != "GET":
+            _write_stats["requests"] += 1
         try:
             resp = requests.request(method, url, data=body, headers=headers, timeout=timeout)
             resp.raise_for_status()
@@ -186,6 +201,8 @@ def api_request(
             return parsed
         except requests.exceptions.HTTPError as e:
             last_exc = e
+            if method != "GET":
+                _write_stats["failed"] += 1
             status = e.response.status_code if e.response is not None else None
             # `is not None`: a requests.Response is falsy for 4xx/5xx, so a plain truthiness test dropped every error body
             err_body = e.response.text[:500] if e.response is not None and e.response.text else None
@@ -244,6 +261,8 @@ def api_request(
             raise APIError(msg, status_code=status, path=path, body=err_body) from e
         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
             last_exc = e
+            if method != "GET":
+                _write_stats["failed"] += 1
             if attempt < max_retries:
                 delay = backoff_seconds
                 # Discoveries timeouts usually mean D1/Worker overload — back off like D1 errors
