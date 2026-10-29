@@ -3,6 +3,7 @@
  */
 import type { Env } from "../env";
 import { getDb } from "../db";
+import { rowsWrittenOf } from "../d1Meta";
 import { json, err, uuid, corsHeaders } from "../http";
 import { isGibberishPrompt } from "../naming";
 import { getSnapshot } from "../snapshotCache";
@@ -37,14 +38,14 @@ if (path === "/api/interpret/queue" && request.method === "POST") {
   if (!prompt) return err("prompt is required");
   const source = typeof body.source === "string" && /^(web|worker|loop)$/.test(body.source) ? body.source : "worker";
   const id = uuid();
-  await db.prepare(
+  const ins = await db.prepare(
     "INSERT INTO interpretations (id, prompt, source, status) VALUES (?, ?, ?, 'pending')"
   )
     .bind(id, prompt, source)
     .run();
   // A cached "queue is empty" answer must not hide this prompt (this isolate / colo; other colos age out in <= 60 s).
   await invalidateInterpretQueue();
-  return json({ id, prompt: prompt.slice(0, 200), source, status: "pending" }, 201);
+  return json({ id, prompt: prompt.slice(0, 200), source, status: "pending", rows_written: rowsWrittenOf(ins) }, 201);
 }
 
 // GET /api/interpret/queue — fetch pending prompts for interpretation worker
@@ -96,7 +97,7 @@ if (interpretMatch && request.method === "PATCH") {
     return err("Already interpreted", 400);
   }
   await invalidateInterpretQueue();
-  return json({ id, status: "done" });
+  return json({ id, status: "done", rows_written: rowsWrittenOf(upd) });
 }
 
 // GET /api/interpret/backfill-prompts — prompts from jobs not yet in interpretations (for interpretation worker)

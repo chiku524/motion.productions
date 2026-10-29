@@ -121,7 +121,8 @@ def test_compose_shares_novelty_store_across_loop_services():
         assert f"LOOP_METRICS_NAME: {svc}" in block, svc
     assert "- ./knowledge:/app/knowledge" in text
 
-def test_budget_report_covers_every_container_and_projects_daily_total(tmp_path, capsys):
+def test_budget_report_covers_every_container_and_projects_daily_total(tmp_path, capsys, monkeypatch):
+    monkeypatch.setenv("D1_DAILY_WRITE_BUDGET", "70000")  # explicit: the shipped default is 50,000
     import calendar
 
     from src.knowledge import write_budget as wb
@@ -151,3 +152,22 @@ def test_budget_report_empty_ledger(tmp_path):
     mod = _load("scripts/loop_metrics.py", "loop_metrics_script_budget2")
     rep = mod.budget_report(tmp_path / "none")
     assert rep["containers"] == {} and "no rows charged" in mod.render_budget(rep)
+
+
+def test_budget_report_shows_calibration_and_untrusted_ledger(tmp_path):
+    from src.knowledge import write_budget as wb
+
+    mod = _load("scripts/loop_metrics.py", "loop_metrics_script_budget3")
+    ledger = tmp_path / "ledger"
+    b = wb.WriteBudget(name="explorer", directory=ledger, daily_budget=50000)
+    assert b.reserve(40)
+    b.record_response(40, 20)
+    text = mod.render_budget(mod.budget_report(ledger))
+    assert "Ledger calibration: 1 posts booked at the Worker's real rows_written" in text and "2.00" in text
+    assert "LEDGER UNTRUSTED" not in text
+    for _ in range(wb.UNREPORTED_TRIP):
+        b.reserve(10)
+        b.record_response(10, None)
+    rep = mod.budget_report(ledger)
+    assert rep["calibration"]["trusted"] is False
+    assert "LEDGER UNTRUSTED" in mod.render_budget(rep)

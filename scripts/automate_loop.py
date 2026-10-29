@@ -399,8 +399,8 @@ def run_color_survey_step(api_base: str) -> dict | None:
             return None
         summary = run_survey_iteration(api_base)
         logger.info(
-            "Colour survey: clips=%s targets=%s verified=%s covered=%s (%s%%) stride=%s sync=%s",
-            summary.get("clips"), summary.get("targets"), summary.get("verified"), summary.get("covered"),
+            "Colour survey: clips=%s (this run; %s ever) targets=%s verified=%s covered=%s (%s%% cumulative) stride=%s sync=%s",
+            summary.get("clips"), summary.get("total_clips"), summary.get("targets"), summary.get("verified"), summary.get("covered"),
             summary.get("pct_covered"), summary.get("stride"), (summary.get("sync") or {}).get("status"),
         )
         return summary

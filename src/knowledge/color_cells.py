@@ -353,7 +353,34 @@ class ColorCellStore:
             "declared_only": declared_only,
             "pct_covered": round(100.0 * covered / SPACE_SIZE, 6),
             "quarantined": len(self._quarantined()),
+            **self._totals(),
         }
+
+    # -- cumulative survey totals (so a log line can show "clips this iteration" next to "clips ever") --------------
+    def _totals_path(self) -> Path:
+        return self.dir / "totals.json"
+
+    def _totals(self) -> dict:
+        """{'survey_clips', 'survey_cells'}: cumulative, kept in totals.json; bootstrapped once from the ledger."""
+        try:
+            d = json.loads(self._totals_path().read_text(encoding="utf-8"))
+            return {"survey_clips": int(d["clips"]), "survey_cells": int(d["cells"])}
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+        clips = cells = 0
+        for name in ("ledger.jsonl.1", "ledger.jsonl"):
+            try:
+                for line in (self.dir / name).read_text(encoding="utf-8").splitlines():
+                    try:
+                        rec = json.loads(line)
+                    except ValueError:
+                        continue
+                    if rec.get("k") == "survey":
+                        clips += 1
+                        cells += int(rec.get("ok") or 0)
+            except OSError:
+                pass
+        return {"survey_clips": clips, "survey_cells": cells}
 
     def chunk_counts(self) -> list[dict]:
         out = []
@@ -456,6 +483,14 @@ class ColorCellStore:
                     att.pop(k, None)
             atomic_write_bytes(self._attempts_path(), json.dumps(att).encode("utf-8"))
             if ledger is not None:
+                if ledger.get("k") == "survey":
+                    tot = self._totals()
+                    try:
+                        atomic_write_bytes(self._totals_path(), json.dumps(
+                            {"clips": tot["survey_clips"] + 1, "cells": tot["survey_cells"] + int(ledger.get("ok") or 0)}
+                        ).encode("utf-8"))
+                    except OSError as e:
+                        logger.debug("color totals write failed: %s", e)
                 self._append_ledger(ledger)
         return self.counts()
 

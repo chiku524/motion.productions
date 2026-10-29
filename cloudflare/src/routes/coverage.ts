@@ -10,6 +10,7 @@
  */
 import type { Env } from "../env";
 import { getDb } from "../db";
+import { rowsWrittenOf } from "../d1Meta";
 import { json, err } from "../http";
 import { getSnapshot } from "../snapshotCache";
 import { dbFullResponse, isDbFullError, isFreeTierLimitError, limitResponse } from "../limits";
@@ -190,7 +191,7 @@ async function handlePush(request: Request, env: Env): Promise<Response> {
           ),
       );
     }
-    if (stmts.length) await db.batch(stmts);
+    const written = stmts.length ? await db.batch(stmts) : [];
     return json({
       recorded: true,
       space: COLOR_SPACE_ID,
@@ -198,7 +199,7 @@ async function handlePush(request: Request, env: Env): Promise<Response> {
       chunks_received: decoded.length,
       chunks_changed: changedIdx.length,
       changed: changedIdx,
-      rows_written: stmts.length,
+      rows_written: rowsWrittenOf(written), // real D1 meta (index entries included), not the statement count
       new_bits: newBits,
     });
   } catch (e) {

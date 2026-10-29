@@ -44,9 +44,13 @@ Consequences: through the production profile a decoded colour is only within +/-
 claim is impossible. Survey clips use the lossless profile (tolerance 0). If `libx264rgb` is unavailable they fall
 back to the production profile with tolerance 4. Tier semantics:
 
-- target decodes within tolerance: `verified`,
-- decoded colour differs from the target: the decoded colour is marked `observed`, the target gets an attempt,
-- a target that fails 3 times is quarantined (declared, skipped by the queue).
+- the flat tile's decoded median is **exactly** the target: `verified` (the tolerance of a profile only decides
+  whether a tile counts as flat; it is never accepted as "exact". Before 2026-10-28 a lossy fallback marked every target
+  within +/-4 as verified, which claimed colours that were never decoded),
+- decoded colour differs from the target: the decoded colour is marked `observed` (it really appeared), the target is not
+  covered. On the lossless profile the target gets an attempt; on a lossy profile it does not (the codec, not the cell, is
+  the reason, so nothing is quarantined),
+- a target that fails 3 times on the lossless profile is quarantined (declared, skipped by the queue).
 
 Only `verified` and `observed` count as coverage; `declared` never does.
 
@@ -60,6 +64,18 @@ re-partitions positions; already-covered cells are simply skipped).
 
 The colour axis of creative prompts uses the same queue when `LOOP_COLOR_QUEUE=1` (the family of the next
 unseen cell in the stride). Without it, or if the queue fails, the previous weighted-random sampling is used.
+
+## Audit of the "44 % after 74 clips" report (2026-10-28)
+The 7.40 M / 16.78 M (44.1 %) figure is **correct**: the 74 clips of the live run are only that iteration's counter
+(`summary["clips"]`). The store is cumulative: `knowledge/color_cells/ledger.jsonl` holds 1,208 survey clips from 2026-10-27
+20:28 onwards (80 + 1,036 + 48 in the first three hours, then 44 on 10-28), each 6,144 distinct targets, 1,208 x 6,144 =
+7,421,952 = the verified popcount (44.24 %), observed = 0, every clip lossless with max error 0. A clip takes ~0.22 s (24 frames of
+512 x 512 libx264rgb), so a worker finishes ~1,000 clips an hour and the whole space needs ~2,731 clips (~10 CPU-minutes).
+Checked: bits are set only by `record_outcome` from decoded tile medians (no neighbour/tolerance marking, no whole-batch marking,
+`bits_set` uniques ids before OR; planes load zero-initialised; OR-merge and Worker counts are popcounts of the merged
+planes, not summed deltas). What *was* wrong: (1) the lossy fallback verified colours that were not decoded exactly
+(fixed, tests in `tests/test_color_survey.py`), (2) the loop log printed this iteration's clip count next to the cumulative
+percentage, which read as "74 clips = 44 %" (the log now also prints `total_clips`, read from `totals.json`).
 
 ## Free-tier sync budget
 Never one row per colour. The whole space is 32 chunks of 64 KiB per plane, so the table has at most 32 rows.

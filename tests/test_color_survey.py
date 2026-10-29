@@ -55,15 +55,73 @@ def test_survey_clip_marks_verified_and_cleans_up(tmp_path):
     assert not store.covered_mask(nxt).any()  # the queue moved on to unseen cells
 
 
-def test_production_profile_verifies_within_tolerance(tmp_path):
+def test_production_profile_never_verifies_a_colour_it_did_not_decode_exactly(tmp_path):
+    """Regression: a lossy profile used to mark every target within +/-tol "verified" (exact claim without evidence)."""
     st = cs.SurveySettings(tile=16, rows=4, cols=4, fps=4, profile="production")
     store = ColorCellStore(tmp_path)
-    res = cs.run_survey_clip(store, ColorWorkQueue(store, 0, 1), st)
+    q = ColorWorkQueue(store, 0, 1)
+    targets = q.next_cells(64, consume=False)
+    res = cs.run_survey_clip(store, q, st)
     assert res.profile == "production" and res.targets == 64
     assert res.max_err <= cs.PROFILES["production"].tol
-    assert res.verified + res.failed == 64
-    # anything off-target by >0 was still recorded as the decoded (observed) colour
-    assert store.counts()["covered"] >= res.verified
+    c = store.counts()
+    assert res.verified == c["verified"]
+    # every verified id really was decoded exactly; inexact tiles are observed (their decoded colour), never verified
+    assert res.verified + res.inexact == 64
+    assert res.inexact > 0, "yuv420p cannot round-trip 64 random colours exactly"
+    assert res.failed == 0 and c["quarantined"] == 0  # a lossy miss says nothing about the cell
+    assert int(store.covered_mask(targets).sum()) <= c["covered"]
+
+
+def _shift_decoder(monkeypatch, delta):
+    real = cs.decode_frames
+
+    def shifted(path):
+        return (real(path).astype(int) + delta).clip(0, 255).astype(np.uint8)
+
+    monkeypatch.setattr(cs, "decode_frames", shifted)
+
+
+def test_lossless_clip_whose_decode_is_off_by_two_verifies_nothing(tmp_path, monkeypatch):
+    store = ColorCellStore(tmp_path)
+    q = ColorWorkQueue(store, 0, 1)
+    targets = q.next_cells(64, consume=False)
+    _shift_decoder(monkeypatch, 2)
+    res = cs.run_survey_clip(store, q, SMALL)
+    c = store.counts()
+    assert res.verified == 0 and c["verified"] == 0 and res.failed == 64
+    assert c["observed"] > 0  # the shifted colours WERE decoded
+    # coverage never contains a target that was not decoded
+    shifted_ids = cs.rgb_array_to_ids(np.clip(ids_to_rgb_array(targets).astype(int) + 2, 0, 255).astype(np.uint8))
+    assert not store.covered_mask(np.setdiff1d(targets, shifted_ids)).any()
+
+
+def test_lossy_decode_is_observed_not_verified_and_does_not_quarantine(tmp_path, monkeypatch):
+    monkeypatch.setitem(cs.PROFILES, "lossless", cs.PROFILES["production"])  # force the lossy profile
+    store = ColorCellStore(tmp_path)
+    q = ColorWorkQueue(store, 0, 1)
+    _shift_decoder(monkeypatch, 3)
+    for _ in range(4):
+        cs.run_survey_clip(store, q, SMALL, cells=q.next_cells(64, consume=False))
+    c = store.counts()
+    assert c["verified"] == 0 and c["quarantined"] == 0 and c["declared"] == 0
+
+
+def test_coverage_never_exceeds_cells_actually_surveyed(tmp_path):
+    store = ColorCellStore(tmp_path)
+    q = ColorWorkQueue(store, 0, 2)
+    for i in range(1, 6):
+        cs.run_survey_clip(store, q, SMALL)
+        c = store.counts()
+        assert c["survey_clips"] == i and c["covered"] <= i * SMALL.slots and c["survey_cells"] == c["verified"]
+
+
+def test_survey_totals_bootstrap_from_an_existing_ledger(tmp_path):
+    store = ColorCellStore(tmp_path)
+    q = ColorWorkQueue(store, 0, 1)
+    cs.run_survey_clip(store, q, SMALL)
+    (tmp_path / "totals.json").unlink()  # a store written before totals.json existed
+    assert ColorCellStore(tmp_path).counts()["survey_clips"] == 1
 
 
 def test_codec_damage_marks_observed_and_failed(tmp_path, monkeypatch):

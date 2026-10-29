@@ -411,7 +411,7 @@ class Sim:
         return out
 
 
-def simulate(mode: str, start: float, seconds: float, seed: int = 7, reports_rows: bool = True, budget: int = 70000) -> dict:
+def simulate(mode: str, start: float, seconds: float, seed: int = 7, reports_rows: bool = True, budget: int = 50000) -> dict:
     logging.disable(logging.CRITICAL)  # loops print/log per POST; thousands of lines over a simulated day
     try:
         with contextlib.redirect_stdout(io.StringIO()):
@@ -452,7 +452,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--minutes", type=float, default=10.0, help="short run length in simulated minutes (default 10)")
     ap.add_argument("--no-day", action="store_true", help="skip the simulated 24 h run")
-    ap.add_argument("--budget", type=int, default=int(os.environ.get("D1_DAILY_WRITE_BUDGET") or 70000))
+    ap.add_argument("--budget", type=int, default=int(os.environ.get("D1_DAILY_WRITE_BUDGET") or 50000))
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--no-reports-rows", action="store_true", help="mock Worker does not report rows_written (pre-deploy)")
     ap.add_argument("--json", action="store_true")

@@ -13,6 +13,7 @@
  */
 import type { Env } from "./env";
 import { getDb } from "./db";
+import { rowsWrittenOf } from "./d1Meta";
 
 export const DAY_SEC = 86400;
 const ABSOLUTE_MAX_BATCH_ROWS = 500;
@@ -98,11 +99,13 @@ export interface RetentionReport {
   skipped?: string;
   tables: Record<string, { deleted: number; batches: number; rowsWritten: number }>;
   rowsWritten: number;
+  /** Every D1 row this run wrote: marker claims + deletes (index entries included) + marker bookkeeping. */
+  totalRowsWritten: number;
 }
 
 /** Never throws. `nowSec` is injectable for tests. */
 export async function maybeRunRetention(env: Env, opts: { nowSec?: number; force?: boolean } = {}): Promise<RetentionReport> {
-  const report: RetentionReport = { ran: false, tables: {}, rowsWritten: 0 };
+  const report: RetentionReport = { ran: false, tables: {}, rowsWritten: 0, totalRowsWritten: 0 };
   try {
     const cfg = retentionConfig(env);
     if (cfg.disabled) return { ...report, skipped: "disabled" };
@@ -113,6 +116,7 @@ export async function maybeRunRetention(env: Env, opts: { nowSec?: number; force
     const nowSec = opts.nowSec ?? Math.floor(nowMs / 1000);
 
     const claims = await claimDue(db, nowSec);
+    report.totalRowsWritten += rowsWrittenOf(claims);
     const due = RETENTION_TABLES.filter((_, i) => ((claims[i]?.results || []) as unknown[]).length > 0);
     if (!due.length) return { ...report, skipped: "nothing due" };
 
@@ -135,15 +139,17 @@ export async function maybeRunRetention(env: Env, opts: { nowSec?: number; force
         stat.deleted += changes;
         stat.rowsWritten += written;
         report.rowsWritten += written;
+        report.totalRowsWritten += written;
         if (changes < limit) break; // caught up
       }
     }
     try {
-      await db.batch(
+      const marked = await db.batch(
         due.map((t) =>
           db.prepare("UPDATE retention_marker SET rows_deleted = rows_deleted + ? WHERE table_name = ?").bind(report.tables[t.table].deleted, t.table),
         ),
       );
+      report.totalRowsWritten += rowsWrittenOf(marked);
     } catch {
       /* bookkeeping only */
     }

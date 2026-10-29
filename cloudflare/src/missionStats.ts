@@ -35,6 +35,12 @@ export const MISSION_STATS_CACHE_KEY = MISSION_STATS_KEY;
  */
 const MISSION_STATS_SOFT_TTL_SEC = 6 * 3600;
 const MISSION_STATS_KV_PERSIST_SEC = 3 * 3600;
+/**
+ * Stale-while-revalidate window after the soft TTL (6 h fresh + 24 h SWR). Inside it every caller is served the
+ * cached copy and a single refresher per colo rebuilds (snapshotCache refresh lock), so a TTL boundary or a cold
+ * colo can no longer make every isolate run the whole-table GROUP BYs at once.
+ */
+export const MISSION_STATS_SWR_SEC = 24 * 3600;
 /** KV hard expiry: keep the last good snapshot to serve if D1 is failing / rate-limited. */
 const MISSION_STATS_HARD_TTL_SEC = 60 * 60 * 24 * 7;
 /** Max NULL-family rows classified in JS to attribute never-backfilled rows. */
@@ -217,7 +223,7 @@ async function loadSoundStats(env: Env): Promise<MissionStats["sound"]> {
  * to bypass). If a rebuild fails (e.g. D1 free-tier row-read limit) the last good snapshot is served
  * instead of failing the request.
  */
-export async function loadMissionStats(env: Env, fresh = false): Promise<MissionStats> {
+export async function loadMissionStats(env: Env, fresh = false, opts: { peek?: boolean } = {}): Promise<MissionStats> {
   const snap = await getSnapshot<MissionStats>(
     env,
     MISSION_STATS_CACHE_KEY,
@@ -225,6 +231,8 @@ export async function loadMissionStats(env: Env, fresh = false): Promise<Mission
       softTtlSec: MISSION_STATS_SOFT_TTL_SEC,
       hardTtlSec: MISSION_STATS_HARD_TTL_SEC,
       kvPersistSec: MISSION_STATS_KV_PERSIST_SEC,
+      swrSec: MISSION_STATS_SWR_SEC,
+      peek: opts.peek,
       bypass: fresh,
       bypassMinIntervalSec: 300,
     },

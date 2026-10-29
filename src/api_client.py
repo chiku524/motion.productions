@@ -242,6 +242,8 @@ def api_request(
             status_code=503, path=path, body='{"error":"free_tier_limit","skipped":true}',
         )
     reserved = 0
+    reserved_est = 0
+    prio = "high"
     budget = _budget() if method != "GET" else None
     if budget is not None:
         from .knowledge.write_budget import estimate_rows
@@ -253,7 +255,7 @@ def api_request(
                     f"({budget.used()}/{budget.allowance()} rows used; resets 00:00 UTC)",
                     status_code=503, path=path, body='{"error":"write_budget","skipped":true}',
                 )
-            reserved = est
+            reserved = reserved_est = est
     # Jitter for heavy D1 endpoints: spread concurrent requests from multiple workers
     needs_jitter = (
         (method == "GET" and (
@@ -281,6 +283,15 @@ def api_request(
     for attempt in range(max(1, max_retries + 1)):
         if method != "GET":
             _write_stats["requests"] += 1
+        if attempt > 0 and budget is not None and reserved_est > 0:
+            # A retry after a 5xx/timeout may follow an attempt that DID write rows (the Worker can fail after the INSERT):
+            # that earlier reservation stays charged and the retry is charged again, instead of re-using one reservation.
+            if not budget.reserve(reserved_est, prio):
+                raise WriteBudgetSkipped(
+                    f"API {method} {path} retry skipped: {budget.name} is out of its daily D1 write budget",
+                    status_code=503, path=path, body='{"error":"write_budget","skipped":true}',
+                )
+            reserved = reserved_est
         try:
             resp = requests.request(method, url, data=body, headers=headers, timeout=timeout)
             resp.raise_for_status()
@@ -288,6 +299,7 @@ def api_request(
             _note_degraded_success(method, path, parsed, resp.headers)
             if budget is not None and reserved:
                 _settle_reservation(budget, reserved, parsed)
+                reserved = 0
             return parsed
         except requests.exceptions.HTTPError as e:
             last_exc = e
@@ -310,6 +322,10 @@ def api_request(
                 raise APIError(f"API {method} {path} free_tier_limit: {err_body}", status_code=status, path=path, body=err_body, retry_after=secs) from e
             # Retry on 5xx and 429 (rate limit, e.g. KV 1 write/sec)
             retryable = status and (500 <= status < 600 or status == 429) and attempt < max_retries
+            if retryable and status == 429 and budget is not None and reserved:
+                # 429 = the Worker refused (lease / KV rate limit) before writing: give the reservation back, the retry re-charges it
+                budget.refund(reserved)
+                reserved = 0
             if retryable:
                 delay = backoff_seconds
                 is_d1_error = err_body and (
@@ -376,11 +392,13 @@ def api_request(
 
 
 def _settle_reservation(budget, reserved: int, parsed: object) -> None:
-    """Replace the worst-case charge by the rows the Worker says it wrote (``rows_written``), when it reports them."""
+    """Book the rows the Worker says it wrote (``rows_written``); no report = estimate + surcharge, counted as unreported."""
     try:
         actual = parsed.get("rows_written") if isinstance(parsed, dict) else None
         if isinstance(actual, (int, float)) and not isinstance(actual, bool) and actual >= 0:
-            budget.settle(reserved, int(actual))
+            budget.record_response(reserved, int(actual))
+        else:
+            budget.record_response(reserved, None)
     except Exception as e:
         logger.debug("write budget settle skipped: %s", e)
 
@@ -422,6 +440,7 @@ def api_post_binary(api_base: str, path: str, body: bytes, content_type: str = "
             status_code=503, path=path, body='{"error":"free_tier_limit","skipped":true}',
         )
     budget = _budget()
+    reserved = 0
     if budget is not None:
         from .knowledge.write_budget import estimate_rows
         est, prio = estimate_rows("POST", path)
@@ -430,12 +449,17 @@ def api_post_binary(api_base: str, path: str, body: bytes, content_type: str = "
                 f"API POST {path} skipped: {budget.name} is out of its daily D1 write budget",
                 status_code=503, path=path, body='{"error":"write_budget","skipped":true}',
             )
+        reserved = est
     try:
         resp = requests.post(url, data=body, headers=headers, timeout=timeout)
         resp.raise_for_status()
         # Some endpoints return empty body; avoid .json() on empty
+        parsed: object = None
         if resp.content:
-            _note_degraded_success("POST", path, _parse_json_response(resp), resp.headers)
+            parsed = _parse_json_response(resp)
+            _note_degraded_success("POST", path, parsed, resp.headers)
+        if budget is not None and reserved:
+            _settle_reservation(budget, reserved, parsed)  # previously never settled: the worst-case estimate stood
     except requests.exceptions.HTTPError as e:
         status = e.response.status_code if e.response is not None else None
         err_body = e.response.text[:500] if e.response is not None and e.response.text else None

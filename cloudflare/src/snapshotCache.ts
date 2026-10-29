@@ -12,6 +12,7 @@
  */
 import type { Env } from "./env";
 import { isFreeTierLimitError } from "./limits";
+import { markWritten, shouldWrite } from "./kvGate";
 
 export interface SnapshotOptions<T = any> {
   /**
@@ -23,6 +24,15 @@ export interface SnapshotOptions<T = any> {
   hardTtlSec?: number;
   /** If set, persist a durable copy in KV at most this often (and read it on cold miss). */
   kvPersistSec?: number | null;
+  /**
+   * Stale-while-revalidate window AFTER softTtlSec. Inside it a cached copy (memory / Cache API / KV) is served
+   * immediately and at most ONE isolate per colo (a Cache API lock marker) rebuilds; every other caller, in this
+   * isolate or another, serves the stale copy instead of also rebuilding. Without it N cold isolates that see an
+   * expired copy at the same moment each run the full D1 aggregate (the observed "36 rebuilds/hour").
+   */
+  swrSec?: number;
+  /** With `swrSec`: inside the SWR window never rebuild on this call (cheap request paths); another caller refreshes. */
+  peek?: boolean;
   /** Force a rebuild (still rate limited). */
   bypass?: boolean;
   /** Minimum seconds between honored bypasses for one key. Default 60. */
@@ -45,9 +55,13 @@ interface Entry<T> {
 const memory = new Map<string, Entry<unknown>>();
 const inflight = new Map<string, Promise<Entry<unknown>>>();
 const lastBypass = new Map<string, number>();
+/** Keys whose caller is between "stale copy found" and "rebuild started" (closes the check-then-lock race). */
+const refreshing = new Set<string>();
 const MEMORY_MAX_KEYS = 200;
 
 const DEFAULT_HARD_TTL_SEC = 86400;
+/** One refresher per key per colo; long enough to cover a slow whole-table rebuild. */
+const REFRESH_LOCK_SEC = 120;
 const CACHE_ORIGIN = "https://snapshot.motion.invalid/";
 
 /** Drop one snapshot (this isolate's memory + this colo's Cache API copy; other isolates/colos age out via their TTL). */
@@ -67,6 +81,7 @@ export function __resetSnapshotMemory(): void {
   memory.clear();
   inflight.clear();
   lastBypass.clear();
+  refreshing.clear();
 }
 
 function cacheApi(): Cache | null {
@@ -197,9 +212,48 @@ export async function getSnapshot<T>(
     }
   }
 
+  // Stale-while-revalidate: serve the freshest copy we have and let exactly one caller refresh it.
+  const swrMs = (opts.swrSec ?? 0) * 1000;
+  let rebuildReason = bypass ? "bypass" : "cold";
+  if (!bypass && swrMs > 0) {
+    const cands: Array<{ entry: Entry<T>; source: SnapshotResult<T>["source"] }> = [];
+    if (mem) cands.push({ entry: mem, source: "memory" });
+    if (cacheEntry) cands.push({ entry: cacheEntry, source: "cache" });
+    if (kvEntry) cands.push({ entry: kvEntry, source: "kv" });
+    cands.sort((a, b) => b.entry.at - a.entry.at);
+    const best = cands[0];
+    if (best && now - best.entry.at < softMsOf(best.entry) + swrMs) {
+      remember(key, best.entry);
+      const serveStale = (): SnapshotResult<T> => ({
+        value: best.entry.value,
+        stale: true,
+        degraded: false,
+        source: best.source,
+        ageSec: Math.round((now - best.entry.at) / 1000),
+      });
+      if (opts.peek || inflight.has(key) || refreshing.has(key)) return serveStale();
+      // Claim synchronously: concurrent callers see `refreshing` and serve stale. The finally runs before the
+      // rebuild below registers `inflight`, with no await in between, so there is no window for a second rebuild.
+      refreshing.add(key);
+      try {
+        const lockKey = `snaprefresh:${key}`;
+        if (!(await shouldWrite(lockKey, REFRESH_LOCK_SEC))) return serveStale();
+        await markWritten(lockKey, REFRESH_LOCK_SEC);
+      } finally {
+        refreshing.delete(key);
+      }
+      rebuildReason = "swr-refresh";
+    } else if (best) {
+      rebuildReason = "expired";
+    }
+  } else if (!bypass && (mem || cacheEntry || kvEntry)) {
+    rebuildReason = "expired";
+  }
+
   // Rebuild (single-flight per isolate).
   let pending = inflight.get(key) as Promise<Entry<T>> | undefined;
   if (!pending) {
+    console.log(`snapshot rebuild ${key} reason=${rebuildReason}`);
     pending = (async () => {
       const value = await build();
       const entry: Entry<T> = { at: Date.now(), value };

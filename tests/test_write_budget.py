@@ -142,7 +142,7 @@ def test_settle_replaces_estimate_with_reported_rows(tmp_path):
     assert b.reserve(100)
     b.settle(100, 31)
     assert b.used() == 31
-    b.settle(100, None)  # Worker did not report: estimate stands
+    b.settle(100, None)  # settle() without a figure is a no-op (record_response() is the path that handles "unreported")
     assert b.used() == 31
     b.refund(31)
     assert b.used() == 0
@@ -226,7 +226,7 @@ def test_concurrent_containers_on_one_ledger_file(tmp_path):
 def test_cost_model_known_endpoints():
     assert wb.estimate_rows("GET", "/api/jobs/abc") == (0, wb.HIGH)
     assert wb.estimate_rows("POST", "/api/jobs") == (5, wb.LOW)
-    assert wb.estimate_rows("POST", "/api/jobs/ab-12/complete") == (3, wb.LOW)
+    assert wb.estimate_rows("POST", "/api/jobs/ab-12/complete") == (2, wb.LOW)
     assert wb.estimate_rows("POST", "/api/learning") == (4, wb.LOW)
     assert wb.estimate_rows("POST", "/api/interpretations") == (4, wb.LOW)
     assert wb.estimate_rows("POST", "/api/loop/state") == (0, wb.LOW)
@@ -237,7 +237,7 @@ def test_cost_model_discoveries_dedupes_and_prices_by_table():
     body = {"static_colors": [{"key": "a"}, {"key": "a"}, {"key": "b"}], "static_sound": [{"key": "s"}], "motion": [{"key": "m1"}, {"key": "m2"}], "narrative": {"mood": [{"key": "x"}]}, "job_id": "j"}
     rows, prio = wb.estimate_rows("POST", "/api/knowledge/discoveries", body)
     assert prio == wb.HIGH
-    assert rows == 8 * 2 + 5 + 4 * 2 + 5 + 3
+    assert rows == wb.INSERT_ROWS['static_colors'] * 2 + 5 + 4 * 2 + 5 + 3
 
 
 # ---- api_client gate ----------------------------------------------------------------------------------------
@@ -276,7 +276,8 @@ def net(monkeypatch):
 
 
 def test_api_request_stops_posting_when_allowance_is_exhausted(net, monkeypatch):
-    calls, _ = net
+    calls, state = net
+    state["resp"] = FakeResp(200, {"ok": True, "rows_written": 15})  # a reporting Worker: booked at the real 15 rows
     monkeypatch.setenv("D1_BUDGET_NAME", "sound")
     monkeypatch.setenv("D1_DAILY_WRITE_BUDGET", "100")
     monkeypatch.setenv("D1_BUDGET_WEIGHTS", "sound=100")
@@ -289,7 +290,7 @@ def test_api_request_stops_posting_when_allowance_is_exhausted(net, monkeypatch)
             sent += 1
     assert sent == 6 and len(calls) == 6  # 6 x 15 = 90 of 100, 7th does not fit
     assert "write_budget" in ei.value.body and isinstance(ei.value, api_client.APIError)
-    assert api_client.api_get("http://api", "/api/jobs/x") == {"ok": True}  # reads are never gated
+    assert api_client.api_get("http://api", "/api/jobs/x") ["ok"] is True  # reads are never gated
     assert len(calls) == 7
 
 

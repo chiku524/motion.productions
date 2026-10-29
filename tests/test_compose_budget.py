@@ -17,7 +17,7 @@ def test_every_python_container_shares_one_budget_and_ledger_volume(services):
     for name in PY_SERVICES:
         env = services[name]["environment"]
         assert env["D1_BUDGET_NAME"] == name
-        assert env["D1_DAILY_WRITE_BUDGET"] == "${D1_DAILY_WRITE_BUDGET:-70000}"
+        assert env["D1_DAILY_WRITE_BUDGET"] == "${D1_DAILY_WRITE_BUDGET:-50000}"
         assert env["WRITE_BUDGET_DIR"] == "/app/knowledge/write_budget"  # on the shared ./knowledge bind mount
         assert env["WRITE_BUFFER_DIR"] == "/app/knowledge/write_buffer"
         assert "./knowledge:/app/knowledge" in services[name]["volumes"]
