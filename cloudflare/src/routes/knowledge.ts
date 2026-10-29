@@ -3,6 +3,7 @@
  */
 import type { Env } from "../env";
 import { getDb } from "../db";
+import { rowsWrittenOf } from "../d1Meta";
 import { json, err, corsHeaders } from "../http";
 import { generateUniqueName } from "../naming";
 import { acquireDiscoveryLease, releaseDiscoveryLease, type LeaseResult } from "../discoveryLease";
@@ -43,8 +44,8 @@ if (path === "/api/knowledge/prompts" && request.method === "GET") {
 // POST /api/knowledge/name/take — reserve a unique name for a discovery
 if (path === "/api/knowledge/name/take" && request.method === "POST") {
   const name = await generateUniqueName(env);
-  await db.prepare("INSERT OR IGNORE INTO name_reserve (name) VALUES (?)").bind(name).run();
-  return json({ name }, 201);
+  const res = await db.prepare("INSERT OR IGNORE INTO name_reserve (name) VALUES (?)").bind(name).run();
+  return json({ name, rows_written: rowsWrittenOf(res) }, 201);
 }
 
 // POST /api/knowledge/discoveries — batch record discoveries (D1)

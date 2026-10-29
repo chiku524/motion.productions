@@ -3,6 +3,7 @@
  */
 import type { Env } from "./env";
 import { getDb } from "./db";
+import { rowsWrittenOf } from "./d1Meta";
 import { SOUND_ORIGIN_PRIMARIES as GENERATED_SOUND_ORIGIN_PRIMARIES } from "./registryConstants.generated";
 
 /** Everyday pure-sound origin primitives (sync with src/knowledge/blend_depth.py via gen_registry_constants_ts.py). */
@@ -333,12 +334,14 @@ export async function generateUniqueName(env: Env): Promise<string> {
   return [word(), word(), word()].join(" ");
 }
 
-export async function logEvent(env: Env, eventType: string, jobId: string | null, payload: Record<string, unknown> | null): Promise<void> {
+/** Returns D1 rows written (index entries included) so callers can report them. */
+export async function logEvent(env: Env, eventType: string, jobId: string | null, payload: Record<string, unknown> | null): Promise<number> {
   const db = getDb(env);
   const id = crypto.randomUUID();
-  await db.prepare("INSERT INTO events (id, event_type, job_id, payload_json) VALUES (?, ?, ?, ?)")
+  const res = await db.prepare("INSERT INTO events (id, event_type, job_id, payload_json) VALUES (?, ?, ?, ?)")
     .bind(id, eventType, jobId, payload ? JSON.stringify(payload) : null)
     .run();
+  return rowsWrittenOf(res);
 }
 
 export function aggregateLearningRuns(

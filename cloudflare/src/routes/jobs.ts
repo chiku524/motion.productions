@@ -10,6 +10,7 @@ import { PENDING_CACHE_KEY, listPendingWebJobs } from "../jobsClaim";
 import { hitRateLimit } from "../rateLimit";
 import { slimAnalysis, slimSpec } from "../learningSlim";
 import { maybeRunRetention } from "../retention";
+import { rowsWrittenOf } from "../d1Meta";
 import { checkDeclaredSize, recordPut, reserveUpload } from "../r2Budget";
 
 /** jobs.r2_key sentinels: no R2 object exists (loops delete renders after discovery; retention may expire others). */
@@ -123,14 +124,14 @@ if (path === "/api/jobs" && request.method === "POST") {
   const id = uuid();
   const duration_seconds = typeof body.duration_seconds === "number" ? body.duration_seconds : null;
   const workflow_type = typeof body.workflow_type === "string" && /^(explorer|exploiter|main|web|cartoon)$/.test(body.workflow_type) ? body.workflow_type : null;
-  await db.prepare(
+  const created = await db.prepare(
     "INSERT INTO jobs (id, prompt, duration_seconds, status, workflow_type) VALUES (?, ?, ?, 'pending', ?)"
   )
     .bind(id, prompt, duration_seconds ?? null, workflow_type)
     .run();
   // A new web job must not wait out the 60 s negative cache (this isolate / colo; others age out within the TTL).
   if (workflow_type === null || workflow_type === "web") await invalidateSnapshot(PENDING_CACHE_KEY);
-  return json({ id, prompt, duration_seconds, workflow_type: workflow_type ?? undefined, status: "pending" }, 201);
+  return json({ id, prompt, duration_seconds, workflow_type: workflow_type ?? undefined, status: "pending", rows_written: rowsWrittenOf(created) }, 201);
 }
 
 // GET /api/jobs/:id — get job (and download URL if completed)
@@ -211,7 +212,7 @@ if (uploadMatch && request.method === "POST") {
     .bind(r2_key, id)
     .run();
   if (won.meta?.changes === 0) return err("Job already has video", 400);
-  return json({ id, status: "completed", download_url: `/api/jobs/${id}/download` });
+  return json({ id, status: "completed", download_url: `/api/jobs/${id}/download`, rows_written: rowsWrittenOf(won) });
 }
 
 // POST /api/jobs/:id/complete — mark a job completed WITHOUT storing a video (loops delete renders after discovery;
@@ -228,7 +229,7 @@ if (completeMatch && request.method === "POST") {
     .bind(R2_KEY_SKIPPED, id)
     .run();
   if (won.meta?.changes === 0) return err("Job already completed", 400);
-  return json({ id, status: "completed", stored: false });
+  return json({ id, status: "completed", stored: false, rows_written: rowsWrittenOf(won) });
 }
 
 // GET /api/jobs/:id/download — stream video from R2
@@ -267,14 +268,14 @@ if (path === "/api/learning" && request.method === "POST") {
   const id = uuid();
   // Loop clips only need the few fields aggregateLearningRuns reads; the full documents were ~22% of the D1 file.
   const full = body.store_full === true;
-  await db.prepare(
+  const logged = await db.prepare(
     "INSERT INTO learning_runs (id, job_id, prompt, spec_json, analysis_json) VALUES (?, ?, ?, ?, ?)"
   )
     .bind(id, jobId, prompt, JSON.stringify(full ? spec : slimSpec(spec)), JSON.stringify(full ? analysis : slimAnalysis(analysis)))
     .run();
-  await maybeRunRetention(env);
+  const ret = await maybeRunRetention(env);
   // Do not use KV delete (free tier limit). Stats cache expires via TTL; GET recomputes when stale.
-  return json({ id, job_id: jobId, status: "logged" }, 201);
+  return json({ id, job_id: jobId, status: "logged", rows_written: rowsWrittenOf(logged) + ret.totalRowsWritten }, 201);
 }
 
 // GET /api/learning/runs — list learning runs (for aggregation/reports)
@@ -311,12 +312,12 @@ if (path === "/api/events" && request.method === "POST") {
   const jobId = typeof body.job_id === "string" ? body.job_id : null;
   const payload = body.payload && typeof body.payload === "object" ? body.payload : null;
   const id = uuid();
-  await db.prepare(
+  const evt = await db.prepare(
     "INSERT INTO events (id, event_type, job_id, payload_json) VALUES (?, ?, ?, ?)"
   )
     .bind(id, eventType, jobId, payload ? JSON.stringify(payload) : null)
     .run();
-  return json({ id, status: "logged" }, 201);
+  return json({ id, status: "logged", rows_written: rowsWrittenOf(evt) }, 201);
 }
 
 // GET /api/events — list events (for learning pipeline)

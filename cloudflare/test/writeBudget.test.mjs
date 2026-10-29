@@ -75,3 +75,20 @@ test("interpretation POSTs report rows_written", async () => {
   assert.equal(b.result.data.inserted, 1);
   assert.equal(b.result.data.rows_written, b.rowsWritten);
 });
+
+test("every Worker write route reports the D1 meta.rows_written it was charged (client ledger calibration)", async () => {
+  const routes = [
+    ["POST /api/jobs", () => h.call("POST", "/api/jobs", { prompt: "rw route job", workflow_type: "web" })],
+    ["POST /api/events", () => h.call("POST", "/api/events", { event_type: "video_played", payload: { a: 1 } })],
+    ["POST /api/learning", () => h.call("POST", "/api/learning", { prompt: "rw learn", spec: {}, analysis: {} })],
+    ["POST /api/knowledge/name/take", () => h.call("POST", "/api/knowledge/name/take", {})],
+  ];
+  for (const [label, run] of routes) {
+    const m = await h.measure(run);
+    assert.ok([200, 201].includes(m.result.status), `${label}: ${JSON.stringify(m.result.data)}`);
+    assert.equal(typeof m.result.data.rows_written, "number", `${label} must report rows_written`);
+    assert.ok(m.result.data.rows_written >= 1, `${label}: at least the row itself`);
+    assert.ok(m.result.data.rows_written <= m.rowsWritten, `${label}: never over-reports`);
+    assert.ok(m.result.data.rows_written >= m.rowsWritten - 1, `${label}: within 1 row of D1 (${m.result.data.rows_written} vs ${m.rowsWritten})`);
+  }
+});

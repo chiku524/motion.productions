@@ -428,6 +428,7 @@ export async function writeDiscoveries(env: Env, body: DiscoveriesBody): Promise
   const resp: Record<string, unknown> = { status: "recorded", results, items_processed: itemsProcessed, unique_rows: planned.length + blends.length, deduped_blends: dupBlends, new_blends: newBlends, novel, rows_written: rowsWritten };
   if (truncated) resp.truncated = true;
   // Opportunistic log retention (no cron available on the free plan); at most once/day/table, tiny write budget, never throws.
-  await maybeRunRetention(env);
+  const ret = await maybeRunRetention(env);
+  resp.rows_written = rowsWritten + ret.totalRowsWritten; // retention piggybacks on this request: it is D1 spend too
   return { status: 201, body: resp };
 }
