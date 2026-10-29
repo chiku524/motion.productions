@@ -353,6 +353,10 @@ class Sim:
         from src import api_client
         from src.knowledge import write_buffers as wbuf, write_budget as wb
 
+        # Never touch the REAL shared ledger (knowledge/write_budget): point every ledger access at this run's temp dir
+        # BEFORE anything reads or clears it, and give the caller's environment back untouched afterwards.
+        saved_env = {k: os.environ.get(k) for k in ENV_KEYS}
+        os.environ["WRITE_BUDGET_DIR"] = str(self.ledger_dir)
         wbuf.reset_buffers()
         wb.reset_budget()
         api_client.reset_free_tier_cooldown()
@@ -378,7 +382,10 @@ class Sim:
             wbuf.reset_buffers()
             wb.reset_budget()
             for k in ENV_KEYS:
-                os.environ.pop(k, None)
+                if saved_env.get(k) is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = saved_env[k]
             self.tmp.cleanup()
 
     def report(self) -> dict:
