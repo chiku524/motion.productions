@@ -1,4 +1,4 @@
-﻿"""
+"""
 Shared hard daily D1 write budget for every motion.productions container.
 
 Cloudflare's free D1 plan allows 100k *rows written* per UTC day (index entries count). The Worker is
@@ -6,13 +6,18 @@ the only thing that can measure that exactly, but a Worker-side counter would it
 so the budget is enforced on the client: every container shares one small JSON ledger on the mounted
 ``knowledge/`` volume and asks it before each non-GET API call.
 
-* ``D1_DAILY_WRITE_BUDGET`` (default 70000, <= 0 disables the gate) is the total rows/day for ALL containers;
-  the rest of the 100k is headroom for retention, web users and estimate error.
+* ``D1_DAILY_WRITE_BUDGET`` (default 50000 REAL rows/day = a hard cap of 50% of the 100k free limit, <= 0 disables
+  the gate) is the total for ALL containers; the other 50% is headroom for Worker-side retention, web users and
+  estimate error.  Real means index entries included: the Worker reports D1's own ``meta.rows_written`` on every
+  write route, and that number (not an estimate) is what the ledger books.
 * It is split by weight (``D1_BUDGET_WEIGHTS``): explorer 30, balanced 30, interpret 15, sound 10, other 5.
   Any container not listed (webjobs, procedural-render, exploiter, ...) shares the ``other`` pool.
 * A container's name is ``D1_BUDGET_NAME`` (else ``LOOP_METRICS_NAME``, else derived from the start script).
-* ``reserve()`` charges a worst-case estimate before a POST; ``settle()`` replaces it with the Worker's
-  reported ``rows_written`` afterwards (older Workers do not report it: the estimate stands).
+* ``reserve()`` charges a worst-case estimate before a POST; ``record_response()`` replaces it with the Worker's
+  reported ``rows_written`` afterwards.  A response WITHOUT ``rows_written`` (old Worker, new unreported route)
+  keeps the estimate plus a 25% surcharge and counts as *unreported*; ``UNREPORTED_TRIP`` unreported answers in a
+  row mean the estimates cannot be trusted, so the ledger fails closed: it refuses every post except one probe per
+  ``PROBE_SECONDS`` until a response reports ``rows_written`` again.
 * Two priorities: ``high`` (novel discoveries) may use the whole allowance; ``low`` (job/learning/interpretation
   logs, count bumps) only the first ``D1_BUDGET_LOW_FRACTION`` (0.5) of it, paced across the day, so logs can
   never starve discoveries.
@@ -26,6 +31,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import re
 import threading
@@ -39,7 +45,10 @@ logger = logging.getLogger(__name__)
 def _now() -> float:
     return time.time()  # looked up at call time so a simulated clock (dry-run harness) can replace time.time
 
-DEFAULT_DAILY_BUDGET = 70000
+DEFAULT_DAILY_BUDGET = 50000  # real D1 rows/day: a hard 50% cap of the 100k free limit
+UNREPORTED_SURCHARGE = 0.25  # extra charge on an estimate nobody confirmed (index writes / retries we cannot see)
+UNREPORTED_TRIP = 10  # consecutive unreported answers after which the ledger stops trusting its estimates
+PROBE_SECONDS = 300.0  # while untrusted, one probe post is let through this often to detect a fixed Worker
 DEFAULT_WEIGHTS: dict[str, float] = {"explorer": 30, "balanced": 30, "interpret": 15, "sound": 10, "other": 5}
 OTHER = "other"
 DEFAULT_LOW_FRACTION = 0.5
@@ -52,25 +61,33 @@ LOW = "low"
 HIGH_ALWAYS = {"webjobs", "procedural-render"}
 
 # ---------------------------------------------------------------------------------------------------------
-# Row-cost model, from reading the Worker routes and migrations. D1 counts one row per table row written plus
-# one per index entry written, so an INSERT costs 1 + (#indexes incl. PK/UNIQUE autoindexes); an UPDATE of a
-# non-indexed column costs 1. Estimates are deliberately worst case (every item is new); settle() corrects them.
+# Row-cost model. D1 counts one row per table row written plus one per index entry written, so an INSERT costs
+# 1 + (#indexes incl. PK/UNIQUE autoindexes); an UPDATE of an indexed column rewrites that index entry (old + new).
+# The per-table index counts are DERIVED FROM THE MIGRATIONS and pinned by tests/test_write_budget_calibration.py
+# (PRAGMA index_list over every migrations/*.sql), then checked against D1 itself with the Worker harness
+# (cloudflare/test/writeBudget.test.mjs). Estimates are worst case (every item is new); the Worker's reported
+# ``rows_written`` replaces them in record_response().
 # ---------------------------------------------------------------------------------------------------------
+NAME_RESERVE_ROWS = 3  # name_reserve: row + PK autoindex, ~1.3 reserved per named item, rounded up
 INSERT_ROWS: dict[str, int] = {
     "jobs": 5,                 # row + PK + idx_status + idx_created_at + idx_workflow_type
     "learning_runs": 4,        # row + PK + job_id + created_at
     "interpretations": 4,      # row + PK + idx_status + idx_updated_at
     "linguistic_registry": 5,  # row + PK + UNIQUE(span,domain) + domain + canonical
-    "static_colors": 8,        # row + PK + UNIQUE(color_key) + created_at + family/shade/name indexes
+    "static_colors": 7 + NAME_RESERVE_ROWS,   # row + 6 indexes (7), + the reserved display name
     "static_sound": 5,
-    "learned_blends": 6,       # row + PK + domain + created_at + name_reserve (2)
-    "learned_colors": 5,
+    "learned_blends": 4 + 2 * NAME_RESERVE_ROWS,  # row + 3 indexes; measured 1.7 names reserved per blend
+    "learned_colors": 4 + NAME_RESERVE_ROWS,
     "learned_profile": 4,      # learned_motion/lighting/... : row + PK + UNIQUE(profile_key) + created_at
     "narrative": 5,            # row + PK + UNIQUE(aspect, entry_key) + aspect + created_at
     "discovery_runs": 3,
-    "color_coverage": 4,
+    "color_coverage": 2,       # one row per changed 64 KiB chunk, no secondary index (worst case +1)
+    "events": 5,               # row + 4 indexes (the old estimate of 4 under-counted every event)
+    "interpret_queue": 4,      # POST /api/interpret/queue: an interpretations insert
 }
-UPDATE_ROWS = {"jobs_complete": 3, "interpretation_patch": 5, "count_bump": 1}
+# UPDATEs: only the touched columns' indexes count. jobs complete: status + completed_at; interpret PATCH: status.
+UPDATE_ROWS = {"jobs_complete": 2, "jobs_upload": 3, "interpretation_patch": 3, "count_bump": 1}
+UNKNOWN_WRITE_ROWS = 5  # any other non-GET: a typical 1 + 4 indexes insert
 
 _DISCOVERY_CATEGORY_TABLE = {
     "static_colors": "static_colors", "static_sound": "static_sound", "colors": "learned_colors", "blends": "learned_blends",
@@ -124,8 +141,14 @@ def estimate_rows(method: str, path: str, data: Mapping[str, Any] | None = None)
         return 0, LOW  # KV only
     if path == "/api/jobs":
         return INSERT_ROWS["jobs"], LOW
-    if re.fullmatch(rf"/api/jobs/{_ID}/(complete|upload)", path):
+    if re.fullmatch(rf"/api/jobs/{_ID}/complete", path):
         return UPDATE_ROWS["jobs_complete"], LOW
+    if re.fullmatch(rf"/api/jobs/{_ID}/upload", path):
+        return UPDATE_ROWS["jobs_upload"], LOW
+    if path == "/api/interpret/queue":
+        return INSERT_ROWS["interpret_queue"], LOW
+    if re.fullmatch(rf"/api/interpret/{_ID}", path):
+        return UPDATE_ROWS["interpretation_patch"], LOW
     if path == "/api/learning":
         return INSERT_ROWS["learning_runs"], LOW
     if path == "/api/interpretations/batch" or path == "/api/interpretations/backfill":
@@ -140,8 +163,8 @@ def estimate_rows(method: str, path: str, data: Mapping[str, Any] | None = None)
         n = len(items) if isinstance(items, list) else 1
         return INSERT_ROWS["linguistic_registry"] * max(1, n), LOW
     if path == "/api/events":
-        return 4, LOW
-    return 3, LOW
+        return INSERT_ROWS["events"], LOW
+    return UNKNOWN_WRITE_ROWS, LOW
 
 
 # ---------------------------------------------------------------------------------------------------------
@@ -262,7 +285,11 @@ class _FileLock:
 
 
 def _empty_ledger(day: str) -> dict[str, Any]:
-    return {"version": 1, "day": day, "containers": {}, "backoff_until": 0.0, "backoff_reason": ""}
+    return {
+        "version": 1, "day": day, "containers": {}, "backoff_until": 0.0, "backoff_reason": "",
+        "calib": {"reported": 0, "unreported": 0, "est_reported": 0, "act_reported": 0, "surcharge": 0},
+        "consec_unreported": 0, "probe_after": 0.0,
+    }
 
 
 class WriteBudget:
@@ -321,6 +348,8 @@ class WriteBudget:
             old = json.loads(self.path.read_text(encoding="utf-8"))
             fresh["backoff_until"] = float(old.get("backoff_until") or 0.0)
             fresh["backoff_reason"] = str(old.get("backoff_reason") or "")
+            fresh["consec_unreported"] = int(old.get("consec_unreported") or 0)  # trust is not reset by the clock
+            fresh["probe_after"] = float(old.get("probe_after") or 0.0)
         except (OSError, ValueError, TypeError):
             pass
         return fresh
@@ -371,6 +400,12 @@ class WriteBudget:
             used_bucket = self._bucket_used(data, bucket)
             cap = allowance if priority == HIGH else min(allowance, self.low_cap(now))
             ok = used_bucket + rows <= cap and self._total_used(data) + rows <= self.daily_budget
+            if ok and int(data.get("consec_unreported") or 0) >= UNREPORTED_TRIP:
+                # Untrusted estimates: fail closed, let one probe through per PROBE_SECONDS to see if the Worker reports again.
+                if now >= float(data.get("probe_after") or 0.0):
+                    data["probe_after"] = now + PROBE_SECONDS
+                else:
+                    ok = False
             if ok:
                 e["used"] = int(e["used"]) + rows
                 e["posts"] = int(e["posts"]) + 1
@@ -403,6 +438,49 @@ class WriteBudget:
             self._mutate(op)
         except Exception as exc:
             logger.debug("write budget settle skipped: %s", exc)
+
+    def record_response(self, reserved: int, actual: int | None) -> None:
+        """Book the outcome of a post that reached D1: the Worker's real ``rows_written`` if it sent one, else
+        the estimate plus a surcharge, counted as *unreported* (UNREPORTED_TRIP in a row => fail closed)."""
+        if not self.enabled or reserved <= 0:
+            return
+
+        def op(data: dict[str, Any], now: float) -> None:
+            e = self._entry(data)
+            calib = data.setdefault("calib", {})
+            if actual is not None:
+                e["used"] = max(0, int(e["used"]) + int(actual) - int(reserved))
+                calib["reported"] = int(calib.get("reported", 0)) + 1
+                calib["est_reported"] = int(calib.get("est_reported", 0)) + int(reserved)
+                calib["act_reported"] = int(calib.get("act_reported", 0)) + int(actual)
+                data["consec_unreported"] = 0
+            else:
+                extra = int(math.ceil(reserved * UNREPORTED_SURCHARGE))
+                e["used"] = int(e["used"]) + extra
+                calib["unreported"] = int(calib.get("unreported", 0)) + 1
+                calib["surcharge"] = int(calib.get("surcharge", 0)) + extra
+                data["consec_unreported"] = int(data.get("consec_unreported") or 0) + 1
+                if data["consec_unreported"] == UNREPORTED_TRIP:
+                    logger.warning("write budget: %d answers in a row without rows_written; estimates untrusted, posting paused (1 probe / %.0fs)", UNREPORTED_TRIP, PROBE_SECONDS)
+
+        try:
+            self._mutate(op)
+        except Exception as exc:
+            logger.debug("write budget record skipped: %s", exc)
+
+    def trust(self) -> dict[str, Any]:
+        """Calibration summary for metrics: how well the estimates matched the Worker's real rows today."""
+        data = self.snapshot()
+        c = dict(data.get("calib") or {})
+        est, act = int(c.get("est_reported", 0)), int(c.get("act_reported", 0))
+        return {
+            "trusted": int(data.get("consec_unreported") or 0) < UNREPORTED_TRIP,
+            "consec_unreported": int(data.get("consec_unreported") or 0),
+            "reported_posts": int(c.get("reported", 0)), "unreported_posts": int(c.get("unreported", 0)),
+            "estimated_rows_of_reported": est, "actual_rows_of_reported": act,
+            "estimate_over_actual": round(est / act, 3) if act else None,
+            "surcharge_rows": int(c.get("surcharge", 0)),
+        }
 
     def refund(self, rows: int) -> None:
         """Give back a reservation for a call that never reached D1 (connection error, skipped)."""

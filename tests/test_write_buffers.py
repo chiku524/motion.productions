@@ -154,7 +154,7 @@ def test_spool_job_id_rides_only_on_the_last_chunk_of_a_full_drain():
 @pytest.fixture
 def net(monkeypatch):
     calls = []
-    state = {"resp": FakeResp(200, {"results": {}})}
+    state = {"resp": FakeResp(200, {"results": {}, "rows_written": 15})}  # a Worker that reports its real rows
 
     def fake_request(method, url, data=None, headers=None, timeout=None):
         calls.append((method, url, json.loads(data) if data else None))
@@ -203,7 +203,7 @@ def test_post_discoveries_backs_off_for_900s_on_x_degraded(net, monkeypatch):
     r1 = remote_sync.post_discoveries("http://api", {"static_sound": [{"key": "a"}]})
     assert r1["deferred"] == 1 and len(calls) == 1
     assert wb.get_budget().backoff_remaining() == pytest.approx(900, abs=2)
-    state["resp"] = FakeResp(200, {"results": {}})
+    state["resp"] = FakeResp(200, {"results": {}, "rows_written": 15})
     remote_sync.post_discoveries("http://api", {"static_sound": [{"key": "b"}]})
     assert len(calls) == 1  # nothing is sent during the back-off
     clock.t += 901

@@ -153,6 +153,7 @@ def budget_report(directory: Path | None = None, now: float | None = None) -> di
         "total_projected_uncapped": sum(c["projected_rows_per_day_uncapped"] for c in containers.values()),
         "backoff_remaining_s": wbud.backoff_remaining(), "backoff_reason": snap.get("backoff_reason") or "",
         "utc_hours_elapsed": elapsed_h,
+        "calibration": wbud.trust(),
     }
 
 
@@ -169,6 +170,15 @@ def render_budget(b: dict) -> str:
                      f"{c['projected_rows_per_day']:>15,.0f}")
     lines.append(f"Budget used so far: {b['total_used']:,} rows; projected daily total across ALL containers: "
                  f"{b['total_projected_rows_per_day']:,.0f} (uncapped rate would be {b['total_projected_uncapped']:,.0f})")
+    cal = b.get("calibration") or {}
+    if cal.get("reported_posts") or cal.get("unreported_posts"):
+        ratio = cal.get("estimate_over_actual")
+        lines.append(f"  Ledger calibration: {cal['reported_posts']} posts booked at the Worker's real rows_written, "
+                     f"{cal['unreported_posts']} without (estimate + {cal['surcharge_rows']} surcharge rows); "
+                     f"estimate/actual on reported posts = {'n/a' if ratio is None else f'{ratio:.2f}'}")
+    if cal and not cal.get("trusted", True):
+        lines.append(f"  LEDGER UNTRUSTED: {cal['consec_unreported']} answers in a row had no rows_written (old Worker?). "
+                     "Posting is paused except one probe per 5 min - deploy the Worker that reports rows_written.")
     if b["backoff_remaining_s"] > 0:
         lines.append(f"  Worker back-off active: {b['backoff_remaining_s']:.0f}s left ({b['backoff_reason'] or 'degraded'})")
     if b["enabled"] and b["total_projected_rows_per_day"] > b["daily_budget"] * 0.95:

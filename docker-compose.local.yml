@@ -21,10 +21,11 @@
 name: motion-local
 
 x-d1-budget: &d1-budget
-  # Shared hard cap on D1 rows written per UTC day across ALL containers (Cloudflare Free = 100,000/day incl. index writes).
+  # Shared hard cap on REAL D1 rows written per UTC day across ALL containers (index writes included; Cloudflare Free =
+  # 100,000/day). 50,000 = 50% of the limit, leaving 50% for Worker-side retention, web users and estimate error.
   # Ledger lives on the shared ./knowledge volume and resets at 00:00 UTC. Weights (percent): interpret 15, sound 10,
   # explorer 30, balanced 30, everything else 5 (10% is unallotted reserve). 0 disables the gate. See docs/D1_FREE_TIER.md.
-  D1_DAILY_WRITE_BUDGET: ${D1_DAILY_WRITE_BUDGET:-70000}
+  D1_DAILY_WRITE_BUDGET: ${D1_DAILY_WRITE_BUDGET:-50000}
   WRITE_BUDGET_DIR: /app/knowledge/write_budget
   WRITE_BUFFER_DIR: /app/knowledge/write_buffer
   WRITE_BUFFERS: ${WRITE_BUFFERS:-1}

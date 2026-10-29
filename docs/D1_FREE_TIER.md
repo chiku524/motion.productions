@@ -29,26 +29,51 @@ originate, plus buffers that make each write carry more information.
 
 ### Rows written per call (audit, from the Worker routes and migrations)
 D1 counts a row per table row written **plus one per index entry** (PK/UNIQUE autoindexes included). INSERT = 1 + #indexes;
-UPDATE of a non-indexed column = 1. `src/knowledge/write_budget.py` (`INSERT_ROWS`, `UPDATE_ROWS`, `estimate_rows`) encodes this.
+UPDATE of a non-indexed column = 1; an UPDATE of an indexed column rewrites that index entry. `src/knowledge/write_budget.py`
+(`INSERT_ROWS`, `UPDATE_ROWS`, `estimate_rows`) encodes this; `tests/test_write_budget_calibration.py` derives the index
+counts from `migrations/*.sql` (sqlite `PRAGMA index_list`) and fails if the table drifts. Measured against D1 (miniflare,
+`cloudflare/test/writeBudget.test.mjs`): jobs 5, job complete 2, learning 4, **event 5** (was 4), interpretation 4, interpret
+queue 4, interpret PATCH 3, linguistic new 5 / bump 1, coverage chunk 1, static_colors 7, blend 4 (+ ~1.7 reserved names x 2).
 
 | endpoint (client writer) | rows written per call | notes |
 |---|---|---|
-| `POST /api/knowledge/discoveries` (explorer, balanced, sound, webjobs, ...) | per **new** item: `static_colors` 8, `static_sound` 5, `learned_colors` 5, `learned_blends` 6 (row + 2 idx + `name_reserve` 2... blend repeat = 0), motion/lighting/profile 4, narrative 5; repeat key = 1 (`count = count + delta`); `+3` for `discovery_runs` when `job_id` is sent | batch dedupes by key; chunk <= `DISCOVERIES_MAX_ITEMS` (36) |
+| `POST /api/knowledge/discoveries` (explorer, balanced, sound, webjobs, ...) | per **new** item: `static_colors` 7 (+3 reserved name), `static_sound` 5, `learned_colors` 4 (+3), `learned_blends` 4 (+6: ~1.7 names reserved, 2 rows each), motion/lighting/profile 4, narrative 5; repeat key = 1 (`count = count + delta`); `+3` for `discovery_runs` when `job_id` is sent | batch dedupes by key; chunk <= `DISCOVERIES_MAX_ITEMS` (36) |
 | `POST /api/linguistic-registry/batch` (interpret, loops) | new span 5, existing span **1** (single `db.batch` upsert, no SELECT) | `count` field sums coalesced bumps |
 | `POST /api/linguistic-registry` (single) | new 5 / existing 1 + a SELECT | superseded by the batch route |
 | `POST /api/interpretations/batch` (interpret) | 4 per new row (row + PK + `idx_status` + `idx_updated_at`) | |
-| `POST /api/interpretations` , `PATCH /api/interpretations/:id` | 4 / 5 (status + `updated_at` indexed) | |
+| `POST /api/interpretations`, `POST /api/interpret/queue` | 4 | |
+| `PATCH /api/interpret/:id` (interpret container, one per prompt) | 3 (measured; **was estimated as the unknown-path default and returned no `rows_written`**) | |
 | `POST /api/jobs` | 5 (row + PK + 3 indexes) | |
-| `POST /api/jobs/:id/complete`, `/upload` | 3 (status index delete+insert) | |
+| `POST /api/jobs/:id/complete` / `/upload` | 2 (measured) / 3 | |
 | `POST /api/learning` | 4 | |
-| `POST /api/coverage/color` (survey `COLOR_SYNC=1`) | 4 per chunk, <= 32 chunks | |
-| `POST /api/events` | 4 | |
+| `POST /api/coverage/color/chunks` (survey `COLOR_SYNC=1`) | 1 per **changed** chunk (0 for an unchanged merge); est. 2 | |
+| `POST /api/events` | 5 (row + 4 indexes) | |
+| any other write | 5 (`UNKNOWN_WRITE_ROWS`) | |
 | `POST /api/loop/state`, GET anything | **0** D1 rows (KV / reads) | a cold GET may write 1 row (retention marker), existing behaviour |
 
 `name_reserve` (PK + 1 unique index = 2 rows) is added for every novel generated name; the estimate folds it into the per-table
-numbers. Estimates are worst case (all items new). A Worker that reports `rows_written` in its JSON response (added in this
-branch, additive) lets the client `settle()` the charge to the true figure; **until the Worker is deployed the worst-case
-estimate stands**, which only makes the client more conservative.
+numbers. Estimates are worst case (all items new). **The real number comes from the Worker:** every write route
+(`jobs`, `complete`, `upload`, `learning`, `events`, `feedback`, `interpret/queue`, `PATCH interpret/:id`, interpretations,
+linguistic, discoveries, `name/take`, coverage chunks) returns D1's own `meta.rows_written` (`cloudflare/src/d1Meta.ts`), and the
+discoveries / learning responses also include the **retention** rows they triggered (daily prune deletes cost index rows too:
+up to 3 x 500 rows per table, `RETENTION_WRITE_BUDGET` 6000). `record_response()` books that figure instead of the estimate.
+
+#### Why the ledger used to undercount (live run: D1 1,905 rows / 5 min vs ledger ~570)
+1. Routes that wrote but returned no `rows_written` (`PATCH /api/interpret/:id` - the interpret container's main write -,
+   `interpret/queue`, `learning`, `events`, `jobs`, ...) kept the client estimate; the unknown-path default (3) and `events` (4)
+   were below the real 3-5.
+2. `/api/coverage/color/chunks` reported the statement count, not D1's rows.
+3. Worker-side retention (claims, deletes, marker updates) is written by the Worker inside someone else's request and was never
+   reported; a due run can write ~1,000+ rows in one burst.
+4. A retried POST (5xx / timeout) re-used its single reservation although the first attempt may have written rows; `api_post_binary`
+   never settled.
+5. `settle()` was a no-op without `actual`, so a Worker that did not report anything was silently trusted.
+
+#### Fail-closed
+A response without `rows_written` books the estimate **+25 %** and counts as *unreported*. `UNREPORTED_TRIP` (10) unreported answers
+in a row mean the estimates are not trustworthy (old Worker, new unreported route): the ledger then **refuses every post except one
+probe per 5 min** until a response reports `rows_written` again. `scripts/loop_metrics.py` prints the calibration line
+(reported vs unreported posts, estimate/actual ratio) and a `LEDGER UNTRUSTED` warning.
 
 ### What the client does now
 1. **Gate** (`src/api_client.py::api_request`, the single choke point for every container and endpoint): before any non-GET it
@@ -56,9 +81,9 @@ estimate stands**, which only makes the client more conservative.
    no network call). The loop keeps working locally.
 2. **Ledger**: `ledger.json` + O_EXCL `ledger.lock` in `WRITE_BUDGET_DIR` (compose: `/app/knowledge/write_budget`, the shared bind
    mount). Per-container `used/posts/denied`, resets at 00:00 **UTC**. Fails closed if it cannot be read or locked.
-3. **Split** of `D1_DAILY_WRITE_BUDGET` (default **70,000**; `0` disables): interpret 15 %, sound 10 %, explorer 30 %,
-   balanced 30 %, everything else (webjobs, procedural-render, exploiter) a shared 5 % pool = 63,000 allotted, 10 % unallotted
-   reserve, and the 30 k between 70 k and 100 k absorbs estimate error, web users and retention. Override with
+3. **Split** of `D1_DAILY_WRITE_BUDGET` (default **50,000 real rows/day**, 50 % of the free limit; `0` disables): interpret 15 %,
+   sound 10 %, explorer 30 %, balanced 30 %, everything else (webjobs, procedural-render, exploiter) a shared 5 % pool = 45,000
+   allotted, 10 % unallotted reserve, and the 50 k between 50 k and 100 k absorbs retention, web users and any residual error. Override with
    `D1_BUDGET_WEIGHTS="explorer=30,balanced=30,..."` (percent).
 4. **Priorities**: `high` = novel discoveries (may use the whole allowance); `low` = jobs, learning logs, interpretations,
    linguistic, events: capped at 50 % of the allowance and paced across the UTC day (15 % burst), so logs cannot starve
