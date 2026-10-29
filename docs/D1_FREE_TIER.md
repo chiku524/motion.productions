@@ -202,14 +202,14 @@ Supersedes the "interpret loop" row above (**now fixed**) and the "maybe" rows f
 | true totals (registry browse) | soft 12 h (was 1 h). `COUNT(*)` of `learned_blends` (~280 k rows, >300 k rows per rebuild) is its own 7-day snapshot, so a totals rebuild or `?fresh=1` no longer rescans it |
 | `/api/loop/progress` | 30 min, `last` clamped |
 
-**Mission stats / `static_colors GROUP BY family` (1,331 rows) ran 36 times in an hour.** Memory -> Cache API -> KV already used a
+**Mission stats / `static_colors GROUP BY family` ran 36 times in an hour.** Memory -> Cache API -> KV already used a
 stable key, but nothing stopped many isolates/colos missing at once and `GET /api/loop/progress` rebuilt on a miss. Now
 (`cloudflare/src/snapshotCache.ts`): **fresh 6 h, stale-while-revalidate 24 h** (`MISSION_STATS_SWR_SEC`); inside the SWR window a
 request is answered from the stale copy and ONE rebuild is started in the background (per-isolate `refreshing` set plus a
-cross-isolate refresh lock `snaprefresh:<key>`, 120 s); the loop progress endpoint only *peeks* (never rebuilds inside SWR); every
+per-colo Cache API refresh lock `snaprefresh:<key>`, 120 s; at most one rebuild per colo per 2 min); the loop progress endpoint only *peeks* (never rebuilds inside SWR); every
 rebuild logs `snapshot rebuild <key> reason=<miss|stale|force|...>` so the trigger of any future repeat is visible in
 `wrangler tail`. No D1 scan runs on a loop request path while a copy younger than 30 h exists. `GROUP BY status, workflow_type` on
-`jobs` (the 1.2 M-read query seen in insights) is **not in this repo** (git grep over src, cloudflare, scripts, .github, docs):
+`jobs` (seen in D1 insights) is **not in this repo** (git grep over src, cloudflare, scripts, .github, docs):
 it comes from the D1 console/an external client and should be stopped there.
 
 Measured on local Miniflare (`cloudflare/test/interpretQueue.test.mjs`, `pollerReads.test.mjs`): a queue miss over 1,200 pending rows reads <= ~60 rows (was ~2,400); 25 polls of an empty queue read 0 rows; 20 repeat calls of linguistic-registry, metrics, coverage, mission and progress run 0 statements; a metrics miss is <= 5 statements.
