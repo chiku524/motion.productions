@@ -199,6 +199,7 @@ class SurveyResult:
     observed_new: int = 0
     failed: int = 0
     mismatches: int = 0     # qualifying tiles whose decoded colour differs from the target by more than tol
+    inexact: int = 0        # qualifying tiles whose decoded colour is not exactly the target (observed, never verified)
     max_err: int = 0        # max per-channel |decoded - target| over qualifying tiles
     profile: str = ""
     fallback: bool = False
@@ -206,6 +207,7 @@ class SurveyResult:
     elapsed_s: float = 0.0
     covered: int = 0
     pct_covered: float = 0.0
+    total_clips: int = 0    # clips ever recorded in this store (``clips`` of a loop summary is only this iteration's)
 
     def as_dict(self) -> dict[str, Any]:
         return dict(self.__dict__)
@@ -252,14 +254,20 @@ def run_survey_clip(
 
     sc = score_frames(decoded, target_ids, valid, st, profile)
     q, v, err = sc["qualifies"], sc["valid"], sc["err"]
-    ok_target = q & (err <= profile.tol)
-    seen_off = q & (err > 0)                       # decoded colour differs from target: still a real observation
+    # "verified" means the target colour itself was decoded from the clip: the flat tile's median is EXACTLY the target.
+    # ``profile.tol`` is only the flatness tolerance of the tile and never a licence to call a +/-4 colour exact
+    # (a lossy fallback used to mark such targets verified, inflating coverage with colours that were never seen).
+    ok_target = q & (err == 0)
+    seen_off = q & (err > 0)                       # decoded colour differs from target: a real observation of ITS colour
+    # A lossy codec cannot reproduce targets, so its misses say nothing about the cell: do not count attempts/quarantine.
+    failed_mask = (v & ~ok_target) if profile.tol == 0 else np.zeros_like(v)
     dec_ids = rgb_array_to_ids(sc["median"])
     res = SurveyResult(
         targets=int(v.sum()),
         verified=int(ok_target.sum()),
         observed_new=int(len(np.unique(dec_ids[seen_off]))) if seen_off.any() else 0,
-        failed=int((v & ~ok_target).sum()),
+        failed=int(failed_mask.sum()),
+        inexact=int(seen_off.sum()),
         mismatches=int((q & (err > profile.tol)).sum()),
         max_err=int(err[q].max()) if q.any() else 0,
         profile=profile.name,
@@ -269,12 +277,13 @@ def run_survey_clip(
     counts = store.record_outcome(
         verified=target_ids[ok_target],
         observed=dec_ids[seen_off],
-        failed=target_ids[v & ~ok_target],
+        failed=target_ids[failed_mask],
         ledger={"k": "survey", "n": res.targets, "ok": res.verified, "obs": res.observed_new,
                 "fail": res.failed, "p": profile.name, "me": res.max_err,
                 "w": [queue.index, queue.count]},
     )
     res.covered, res.pct_covered = counts["covered"], counts["pct_covered"]
+    res.total_clips = counts.get("survey_clips", 0)
     res.elapsed_s = round(time.monotonic() - t0, 2)
     return res
 
@@ -349,6 +358,7 @@ def run_survey_iteration(api_base: str = "", clips: int | None = None, sync: boo
                 logger.warning("survey: %d tiles off by > tol (max err %d, profile %s)", res.mismatches, res.max_err, res.profile)
         if last is not None:
             summary.update(covered=last.covered, pct_covered=last.pct_covered, profile=last.profile,
+                           total_clips=last.total_clips,
                            stride=[queue.index, queue.count], elapsed_s=round(last.elapsed_s * summary["clips"], 1))
         if sync and summary["clips"] and api_base:
             from .color_sync import maybe_sync
