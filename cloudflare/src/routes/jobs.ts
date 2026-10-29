@@ -368,14 +368,14 @@ if (feedbackMatch && request.method === "POST") {
   const row = await db.prepare("SELECT id FROM jobs WHERE id = ? AND status = 'completed'").bind(id).first();
   if (!row) return err("Job not found or not completed", 404);
   const fid = uuid();
-  await db.prepare(
+  const fb = await db.prepare(
     "INSERT INTO feedback (id, job_id, rating) VALUES (?, ?, ?) ON CONFLICT(job_id) DO UPDATE SET rating = excluded.rating"
   )
     .bind(fid, id, rating)
     .run();
-  await logEvent(env, "feedback", id, { rating });
+  const evRows = await logEvent(env, "feedback", id, { rating });
 
-  return json({ id: fid, rating, status: "saved" }, 201);
+  return json({ id: fid, rating, status: "saved", rows_written: rowsWrittenOf(fb) + (Number(evRows) || 0) }, 201);
 }
 
 // GET /api/learning/stats — aggregated stats (KV cache; fallback to D1-only on KV failure)

@@ -92,3 +92,14 @@ test("every Worker write route reports the D1 meta.rows_written it was charged (
     assert.ok(m.result.data.rows_written >= m.rowsWritten - 1, `${label}: within 1 row of D1 (${m.result.data.rows_written} vs ${m.rowsWritten})`);
   }
 });
+
+test("interpret queue enqueue + PATCH report rows_written (the interpret container's main write path)", async () => {
+  const q = await h.measure(() => h.call("POST", "/api/interpret/queue", { prompt: "rw queue a warm amber field", source: "loop" }));
+  assert.equal(q.result.status, 201, JSON.stringify(q.result.data));
+  assert.equal(q.result.data.rows_written, q.rowsWritten);
+  const p = await h.measure(() => h.call("PATCH", `/api/interpret/${q.result.data.id}`, { instruction: { duration: 5 } }));
+  assert.equal(p.result.status, 200, JSON.stringify(p.result.data));
+  // status + updated_at are both indexed, so the completing UPDATE costs the row plus two index rewrites (x2 for old+new entry)
+  assert.equal(p.result.data.rows_written, p.rowsWritten);
+  assert.ok(p.rowsWritten >= 3, `PATCH cost ${p.rowsWritten}`);
+});
