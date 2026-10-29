@@ -500,6 +500,15 @@ def run() -> None:
         raw_delay = loop_config.get("delay_seconds") or (args.delay if args.delay is not None else float(os.environ.get("LOOP_DELAY_SECONDS", "0")) or 0)
         delay_seconds = max(8, float(raw_delay))  # min 8s to reduce D1 overload with concurrent workers
         if args.api_base:
+            # Pacing: spread this container's daily D1 write allowance over the 24 h UTC day. While ahead of the pace
+            # line the loop sleeps (short interruptible chunks) BEFORE flushing/posting; WRITE_PACING=0 disables it.
+            try:
+                from src.knowledge.write_budget import wait_for_pace
+                if wait_for_pace(request_shutdown) > 0 and request_shutdown():
+                    log_structured("info", msg="Shutdown requested, exiting")
+                    break
+            except Exception as e:
+                logger.debug("write pacing skipped: %s", e)
             # Send whatever the local buffers hold (discoveries / linguistic / interpretations) if it is due and
             # the shared daily D1 write budget allows; otherwise it stays buffered and we keep working locally.
             try:

@@ -159,6 +159,12 @@ def run() -> None:
             break
         cycle += 1
         if api_base:
+            # Pacing: stay on this container's share of the daily D1 write allowance (sleeps in short chunks; WRITE_PACING=0 disables)
+            from src.knowledge.write_budget import wait_for_pace
+            if wait_for_pace(request_shutdown) > 0 and request_shutdown():
+                print("Shutdown requested, exiting")
+                break
+        if api_base:
             # Novel cells are buffered locally and posted in small capped batches on SOUND/DISCOVERY_FLUSH_INTERVAL_S,
             # only while the shared daily D1 write budget allows; synthesis + the local registry never stop.
             try:

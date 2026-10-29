@@ -229,3 +229,26 @@ Measured on local Miniflare (`cloudflare/test/interpretQueue.test.mjs`, `pollerR
 | **Total** | | | **~350 k/day (< 500 k target, 7 % of the 5 M free tier)** |
 
 Rows marked "assumed" are the main uncertainty; re-measure after the quota resets (8 PM ET) via the D1 analytics dashboard. If the real linguistic or coverage tables are 5x larger the total is still < 1 M/day.
+## Pacing: the daily allowance is spread over 24 hours
+
+The hard allowances above only stop a container once it has spent its share; on their own the loops burn it in a few
+hours (a 14-minute run wrote ~2.3k real rows, ~230k/day extrapolated) and then idle until 00:00 UTC. **Pacing** keeps
+each loop on its share of the *clock* instead (`explorer`, `balanced`, `interpret`, `sound`, and the other loops via
+`WritePacer` in `src/knowledge/write_budget.py`):
+
+* Before every iteration (before the buffer flush and any post) a loop calls `wait_for_pace()`. With
+  `limit = allowance x (fraction of the UTC day elapsed + WRITE_PACING_SLACK)`, if the container's rows used today
+  (from the shared ledger) exceed `limit` it sleeps until the clock catches up: in chunks of `WRITE_PACING_CHUNK_S`
+  (30 s), re-reading the ledger and checking for shutdown after each chunk, and logging at most every 5 minutes.
+* A process also anchors at its own start (rows used, time): it may not exceed `anchor_used + allowance x (time since
+  start + slack)`, so restarting after hours of downtime does not release the missed clock time as one burst.
+* Rollover: at 00:00 UTC the ledger resets and the wait ends; a spent allowance or a spent global budget waits for the
+  reset; a zero allowance waits for the reset too (and nothing can be posted).
+* Fail-closed is unchanged: pacing is *in addition to* `reserve()` (hard allowance, unreported-rows trip, back-off). If the
+  ledger cannot be read the loop does not pace (it keeps working locally) but posts are still held.
+* Knobs: `WRITE_PACING=1` (default; `0`/`off` disables) and `WRITE_PACING_SLACK=0.03` (burst slack as a fraction of the
+  allowance). `docker-compose.local.yml` passes both to every container.
+* `python scripts/loop_metrics.py` shows per container the pace line, whether it is `on pace` / `ahead` / `exhausted`,
+  and how many minutes it has spent waiting (`paced min`, from the ledger).
+
+At the default 50,000/day budget this is about 2,100 rows/hour for the whole project (explorer and balanced ~625/hour each).
