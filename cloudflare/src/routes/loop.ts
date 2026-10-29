@@ -384,7 +384,8 @@ if (path === "/api/loop/progress" && request.method === "GET") {
     let staticSoundPct: number | undefined;
     try {
       // Match /api/registries/coverage: % of SOUND_ORIGIN_PRIMARIES touched in depth_breakdown.
-      const ms = await loadMissionStats(env);
+      // peek: /api/loop/progress is polled by every loop; it must never start a whole-table rebuild itself.
+      const ms = await loadMissionStats(env, false, { peek: true });
       const present = new Set<string>(ms.sound.origins_present);
       const hit = SOUND_ORIGIN_PRIMARIES.filter((p) => present.has(p)).length;
       staticSoundPct = SOUND_ORIGIN_PRIMARIES.length

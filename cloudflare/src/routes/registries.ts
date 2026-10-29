@@ -445,7 +445,7 @@ if (path === "/api/registries/coverage" && request.method === "GET") {
   const coverageSnap = await getSnapshot<string>(
     env,
     coverageCacheKey,
-    { softTtlSec: 4 * 3600, hardTtlSec: 7 * 86400, kvPersistSec: 2 * 3600, bypass: bypassCache, bypassMinIntervalSec: 300 },
+    { softTtlSec: 4 * 3600, swrSec: 24 * 3600, hardTtlSec: 7 * 86400, kvPersistSec: 2 * 3600, bypass: bypassCache, bypassMinIntervalSec: 300 },
     async () => {
   // Sizes from registryConstants.generated.ts (full NARRATIVE_ORIGINS / cell space).
   const narrativeAspects = Object.keys(NARRATIVE_ORIGIN_SIZES);
