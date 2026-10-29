@@ -121,7 +121,7 @@ def summarise(records: list[dict], rows_per_item: float, fixed_overhead: float) 
 
 def budget_report(directory: Path | None = None, now: float | None = None) -> dict:
     """Per-container write-budget usage and projected daily totals from the shared ledger (read-only)."""
-    from src.knowledge.write_budget import WriteBudget, seconds_into_utc_day
+    from src.knowledge.write_budget import WriteBudget, pace_snapshot, pacing_enabled, pacing_slack_from_env, seconds_into_utc_day
 
     now = time.time() if now is None else now
     wbud = WriteBudget(name="loop_metrics", directory=directory, clock=lambda: now)
@@ -136,7 +136,10 @@ def budget_report(directory: Path | None = None, now: float | None = None) -> di
         # A container that stopped posting hours ago must not be extrapolated as if it were still running.
         active = used > 0 and (now - last_t) < 3600.0
         raw = used / span_h * 24.0 if active else float(used)
+        pace = pace_snapshot(allowance, used, now, pacing_slack_from_env())
         containers[name] = {
+            "pace": pace, "pace_state": pace["state"], "pace_limit": pace["pace_limit"], "pace_ahead_rows": pace["ahead_rows"],
+            "paced_seconds": float(e.get("paced_s") or 0.0), "paced_waits": int(e.get("paced_waits") or 0),
             "bucket": wbud.bucket_of(name), "used": used, "allowance": allowance,
             "used_pct_of_allowance": (100.0 * used / allowance) if allowance else None,
             "posts": int(e.get("posts") or 0),
@@ -149,6 +152,7 @@ def budget_report(directory: Path | None = None, now: float | None = None) -> di
     return {
         "day": snap.get("day"), "daily_budget": wbud.daily_budget, "d1_daily_limit": D1_DAILY_WRITE_LIMIT,
         "enabled": wbud.enabled, "containers": containers,
+        "pacing_enabled": pacing_enabled(), "pacing_slack": pacing_slack_from_env(),
         "total_used": total_used, "total_projected_rows_per_day": min(projected, float(wbud.daily_budget)) if wbud.enabled else projected,
         "total_projected_uncapped": sum(c["projected_rows_per_day_uncapped"] for c in containers.values()),
         "backoff_remaining_s": wbud.backoff_remaining(), "backoff_reason": snap.get("backoff_reason") or "",
@@ -162,14 +166,16 @@ def render_budget(b: dict) -> str:
         return f"Write budget ({b['day']}): no rows charged yet (ledger empty or containers stopped)."
     lines = ["", f"D1 write budget - UTC day {b['day']} - budget {b['daily_budget']:,}/day of {b['d1_daily_limit']:,} free"
              + ("" if b["enabled"] else "  (GATE DISABLED: D1_DAILY_WRITE_BUDGET=0)")]
-    head = f"{'container':<18}{'used':>9}{'allowance':>11}{'%':>6}{'posts':>7}{'denied rows':>13}{'rows/day proj':>15}"
+    head = f"{'container':<18}{'used':>9}{'allowance':>11}{'%':>6}{'posts':>7}{'denied rows':>13}{'rows/day proj':>15}{'pace line':>11}{'pace':>10}{'paced min':>11}"
     lines += [head, "-" * len(head)]
     for name, c in b["containers"].items():
         pct = "n/a" if c["used_pct_of_allowance"] is None else f"{c['used_pct_of_allowance']:.0f}"
         lines.append(f"{name:<18}{c['used']:>9,}{c['allowance']:>11,}{pct:>6}{c['posts']:>7}{c['denied_rows']:>13,}"
-                     f"{c['projected_rows_per_day']:>15,.0f}")
+                     f"{c['projected_rows_per_day']:>15,.0f}{c['pace_limit']:>11,.0f}{c['pace_state']:>10}{c['paced_seconds'] / 60:>11.1f}")
     lines.append(f"Budget used so far: {b['total_used']:,} rows; projected daily total across ALL containers: "
                  f"{b['total_projected_rows_per_day']:,.0f} (uncapped rate would be {b['total_projected_uncapped']:,.0f})")
+    lines.append(f"  Pacing {'ON' if b.get('pacing_enabled', True) else 'OFF (WRITE_PACING=0)'}: pace line = allowance x (fraction of the UTC day elapsed + "
+                 f"{100 * b.get('pacing_slack', 0.03):.0f}% slack); 'ahead' = the loop sleeps until the clock catches up.")
     cal = b.get("calibration") or {}
     if cal.get("reported_posts") or cal.get("unreported_posts"):
         ratio = cal.get("estimate_over_actual")

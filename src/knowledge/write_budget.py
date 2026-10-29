@@ -542,6 +542,164 @@ class WriteBudget:
 
 
 # ---------------------------------------------------------------------------------------------------------
+# Pacing: spread each container's allowance across the 24 h UTC day instead of burning it in the first hours.
+# ---------------------------------------------------------------------------------------------------------
+DEFAULT_PACING_SLACK = 0.03  # burst slack: a container may be this fraction of its allowance ahead of the clock
+DEFAULT_PACING_CHUNK_S = 30.0  # longest single sleep; the loop re-checks pace + shutdown after every chunk
+PACING_LOG_EVERY_S = 300.0
+
+
+def pacing_enabled() -> bool:
+    """``WRITE_PACING`` (default on): 0/off/false/no disables loop pacing (the hard allowance still applies)."""
+    return (os.environ.get("WRITE_PACING") or "1").strip().lower() not in ("0", "off", "false", "no")
+
+
+def pacing_slack_from_env() -> float:
+    return max(0.0, min(1.0, _float_env("WRITE_PACING_SLACK", DEFAULT_PACING_SLACK)))
+
+
+def pace_wait_seconds(
+    allowance: float, used: float, sod: float, slack: float,
+    anchor_sod: float = 0.0, anchor_used: float = 0.0, total_used: float | None = None, daily_budget: float | None = None,
+) -> float:
+    """Seconds a container must wait (``sod`` = seconds into the UTC day) until ``used`` fits under its pace line.
+
+    The pace line is ``allowance * (sod/86400 + slack)``.  ``anchor_*`` is where this process started (or the UTC
+    midnight): the line is ALSO ``anchor_used + allowance * ((sod - anchor_sod)/86400 + slack)`` and the lower of the
+    two applies, so a restart after hours of downtime cannot "catch up" the unused clock time in one burst.  No
+    allowance, an exhausted allowance or an exhausted global budget waits for the UTC reset.
+    """
+    until_reset = max(0.0, 86400.0 - sod)
+    if allowance <= 0 or used >= allowance or (daily_budget is not None and total_used is not None and total_used >= daily_budget):
+        return until_reset
+    cum_t = (used / allowance - slack) * 86400.0
+    anch_t = anchor_sod + ((used - anchor_used) / allowance - slack) * 86400.0
+    return min(until_reset, max(0.0, max(cum_t, anch_t) - sod))
+
+
+def pace_snapshot(allowance: float, used: float, now: float, slack: float = DEFAULT_PACING_SLACK) -> dict[str, Any]:
+    """Stateless pace status for metrics (cumulative line only)."""
+    sod = seconds_into_utc_day(now)
+    elapsed = sod / 86400.0
+    limit = allowance * min(1.0, elapsed + slack)
+    wait = pace_wait_seconds(allowance, used, sod, slack)
+    return {
+        "elapsed_fraction": elapsed, "pace_limit": limit, "used": used, "allowance": allowance,
+        "ahead_rows": used - limit, "wait_seconds": wait,
+        "state": "exhausted" if allowance <= 0 or used >= allowance else ("ahead" if wait > 0 else "on pace"),
+    }
+
+
+class WritePacer:
+    """Makes a loop sleep (in short, interruptible chunks) while its container is ahead of its daily pace line."""
+
+    def __init__(self, budget: "WriteBudget | None" = None, slack: float | None = None, chunk_s: float | None = None, enabled: bool | None = None):
+        self._budget = budget
+        self.slack = pacing_slack_from_env() if slack is None else max(0.0, float(slack))
+        self.chunk_s = max(1.0, _float_env("WRITE_PACING_CHUNK_S", DEFAULT_PACING_CHUNK_S) if chunk_s is None else float(chunk_s))
+        self.enabled = pacing_enabled() if enabled is None else bool(enabled)
+        self._anchor: tuple[str, float, float] | None = None  # (utc day, seconds into day, bucket rows used)
+        self._last_log: float | None = None
+        self.total_waited_s = 0.0
+
+    @property
+    def budget(self) -> "WriteBudget":
+        return self._budget if self._budget is not None else get_budget()
+
+    def status(self) -> dict[str, Any]:
+        """Current pace position. Raises if the ledger cannot be read (wait_for_pace then does not pace)."""
+        b = self.budget
+        now = b.clock()
+        bucket = b.bucket_of(b.name)
+        allowance = b.allowance(bucket)
+        data = b._read(now)
+        used = b._bucket_used(data, bucket)
+        total = b._total_used(data)
+        day, sod = utc_day(now), seconds_into_utc_day(now)
+        if self._anchor is None:
+            self._anchor = (day, sod, float(used))
+        elif self._anchor[0] != day:
+            self._anchor = (day, 0.0, 0.0)  # UTC rollover: counters restarted, the clock line starts over at midnight
+        _, a_sod, a_used = self._anchor
+        wait = pace_wait_seconds(allowance, used, sod, self.slack, a_sod, a_used, total, b.daily_budget)
+        snap = pace_snapshot(allowance, used, now, self.slack)
+        snap.update({"wait_seconds": wait, "bucket": bucket, "day": day, "total_used": total,
+                     "state": "exhausted" if (allowance <= 0 or used >= allowance) else ("ahead" if wait > 0 else "on pace")})
+        return snap
+
+    def wait_for_pace(self, should_stop: Callable[[], bool] | None = None, sleep: Callable[[float], None] = time.sleep) -> float:
+        """Block until the container is back under its pace line; returns the seconds slept (0 = on pace / disabled).
+
+        Sleeps in chunks of ``chunk_s``, re-reading the ledger and calling ``should_stop`` after each, so a shutdown
+        request, another container's progress or the UTC reset ends the wait promptly. If the ledger cannot be read
+        it does NOT pace (posting itself still fails closed in ``reserve``; the loop keeps working locally).
+        """
+        b = self.budget
+        if not (self.enabled and b.enabled):
+            return 0.0
+        slept = 0.0
+        while True:
+            if should_stop is not None and should_stop():
+                break
+            try:
+                st = self.status()
+            except Exception as exc:
+                logger.debug("write pacing: ledger unreadable (%s); not pacing", exc)
+                break
+            wait = float(st["wait_seconds"])
+            if wait <= 0:
+                break
+            now = b.clock()
+            if self._last_log is None or now - self._last_log >= PACING_LOG_EVERY_S:
+                logger.info(
+                    "write pacing [%s]: %s - used %d of %d rows, pace line %.0f (%.1f%% of UTC day + %.0f%% slack); waiting ~%.0fs",
+                    b.name, st["state"], st["used"], st["allowance"], st["pace_limit"], 100 * st["elapsed_fraction"], 100 * self.slack, wait,
+                )
+                self._last_log = now
+            chunk = min(self.chunk_s, max(1.0, wait))
+            sleep(chunk)
+            slept += chunk
+        if slept > 0:
+            self.total_waited_s += slept
+
+            def op(data: dict[str, Any], now: float) -> None:
+                e = b._entry(data)
+                e["paced_s"] = float(e.get("paced_s") or 0.0) + slept
+                e["paced_waits"] = int(e.get("paced_waits") or 0) + 1
+
+            try:
+                b._mutate(op)
+            except Exception as exc:
+                logger.debug("write pacing stats not saved: %s", exc)
+        return slept
+
+
+_pacer: WritePacer | None = None
+
+
+def get_pacer() -> WritePacer:
+    global _pacer
+    with _instance_lock:
+        if _pacer is None:
+            _pacer = WritePacer()
+        return _pacer
+
+
+def reset_pacer(instance: WritePacer | None = None) -> None:
+    global _pacer
+    with _instance_lock:
+        _pacer = instance
+
+
+def wait_for_pace(should_stop: Callable[[], bool] | None = None) -> float:
+    """Loop hook: sleep while this container is ahead of its share of the UTC day. Never raises."""
+    try:
+        return get_pacer().wait_for_pace(should_stop)
+    except Exception as exc:
+        logger.debug("write pacing skipped: %s", exc)
+        return 0.0
+
+# ---------------------------------------------------------------------------------------------------------
 # Process-wide instance (env-configured). Tests call reset_budget().
 # ---------------------------------------------------------------------------------------------------------
 _instance: WriteBudget | None = None

@@ -31,6 +31,10 @@ x-d1-budget: &d1-budget
   WRITE_BUFFERS: ${WRITE_BUFFERS:-1}
   # Idle this many seconds when the allowance is spent (0 = keep working locally, just stop posting)
   WRITE_BUDGET_SLEEP_WHEN_EXHAUSTED_S: ${WRITE_BUDGET_SLEEP_WHEN_EXHAUSTED_S:-0}
+  # Pacing: each loop sleeps while it is ahead of (its allowance x fraction of the UTC day elapsed + slack), so the day's
+  # budget is spread over 24 h instead of being burnt in a few hours. 0 turns it off (the hard allowance still applies).
+  WRITE_PACING: ${WRITE_PACING:-1}
+  WRITE_PACING_SLACK: ${WRITE_PACING_SLACK:-0.03}
 
 x-python-worker: &python-worker
   build:

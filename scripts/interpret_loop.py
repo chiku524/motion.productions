@@ -106,6 +106,12 @@ def run() -> None:
             print("Shutdown requested, exiting")
             break
         cycle += 1
+        if api_base:
+            # Pacing: stay on this container's share of the daily D1 write allowance (sleeps in short chunks; WRITE_PACING=0 disables)
+            from src.knowledge.write_budget import wait_for_pace
+            if wait_for_pace(request_shutdown) > 0 and request_shutdown():
+                print("Shutdown requested, exiting")
+                break
         if api_base and use_buffers:
             # Send what the local buffers hold if it is due and the shared D1 write budget allows (else it stays
             # buffered; interpretation itself is local, so the loop keeps working either way).
