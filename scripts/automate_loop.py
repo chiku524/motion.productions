@@ -388,6 +388,28 @@ def duration_for_run(run_count: int, base: float) -> float:
     return min(base + 8, 30)
 
 
+def run_mission_extras(path, spec, job_id) -> dict:
+    """Opt-in local coverage extras for a creative clip (no D1 writes of their own). Never raises."""
+    out: dict = {}
+    try:
+        from src.knowledge import creative_colors, cross_axis, opacity_plane
+
+        if creative_colors.enabled():
+            out["creative_colors"] = creative_colors.record_clip(path, job_id=str(job_id or ""))
+        if cross_axis.enabled() and spec is not None:
+            out["cross_axis_new"] = cross_axis.CrossAxisTracker().record(spec)
+        layers = getattr(spec, "scene_layers", None) if spec is not None else None
+        if creative_colors.enabled() and layers:
+            ids = opacity_plane.ids_from_layers(layers)
+            if ids:
+                op = opacity_plane.OpacityPlane()
+                out["opacity_declared_new"] = op.mark("declared", ids)
+                op.save()
+    except Exception as e:
+        logger.debug("mission extras skipped: %s", e)
+    return out
+
+
 def run_color_survey_step(api_base: str) -> dict | None:
     """One exact-colour survey burst (LOOP_COLOR_SURVEY=1). Lossless local clips that skip the novelty gate, create no
     /api/jobs row, are never published and write nothing to D1 here (a bounded colour_coverage sync is separate).
@@ -727,6 +749,7 @@ def run() -> None:
             from src.knowledge import extract_from_video
             ext = extract_from_video(path)
             analysis_dict = ext.to_dict()
+            run_mission_extras(path, spec, job_id)
 
             # Extraction → growth → sync (required order for precision):
             # 1. grow_all_from_video extracts per-frame (static) and per-window (dynamic) from the same video.
