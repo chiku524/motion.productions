@@ -144,6 +144,12 @@ RATIO_FLOOR = 0.25
 RATIO_MARGIN = 1.25
 RATIO_MIN_SAMPLES = 20
 RATIO_DECAY = 0.98
+# Hard per-container cap (allowance-hard-cap): admission is checked against a HOLD = worst x max(1, peak real/worst
+# seen on that route), not against the smaller learned reservation, and the hold stays in the ledger until the post
+# is settled, so concurrent / sequential posts can never book more real rows than the allowance. A hold whose process
+# died is dropped after HOLD_TTL_S (longer than any request + retries).
+PEAK_CAP = 4.0
+HOLD_TTL_S = 900.0
 
 
 def route_key(method: str, path: str) -> str:
@@ -345,6 +351,8 @@ class WriteBudget:
         self.path = self.dir / "ledger.json"
         self._lock_path = self.dir / "ledger.lock"
         self._mutex = threading.Lock()
+        self._pending: list[tuple[str, int]] = []  # (hold token, reserved rows) of posts not settled yet
+        self._pending_lock = threading.Lock()
 
     # -- config -------------------------------------------------------------------------------------------
     @property
@@ -392,7 +400,7 @@ class WriteBudget:
             for b in self.weights:
                 if b == cfg["to"]:
                     continue
-                spare = self.allowance(b) * elapsed - self._bucket_used(data, b)
+                spare = self.day_allowance(data, b) * elapsed - self._bucket_committed(data, b, now)
                 give = int(max(0.0, spare) * cfg["fraction"])
                 if give > 0:
                     out["lenders"][b] = give
@@ -404,8 +412,22 @@ class WriteBudget:
             return {"active": False, "lent": 0, "lenders": {}, "to": out.get("to")}
         return out
 
+    def day_allowance(self, data: dict[str, Any], bucket: str) -> int:
+        """The bucket's allowance for this UTC day, pinned at its first assignment: a weight change mid-day (restart
+        with new D1_BUDGET_WEIGHTS) takes effect at the next UTC reset, so rows already used under the old weights can
+        never be judged against a different allowance. If a pinned day is missing (old ledger) the current allowance is
+        pinned, and rows already over it simply count as used (no further posts that day)."""
+        cur = self.allowance(bucket)
+        try:
+            pins = data.setdefault("allowances", {})
+            if bucket not in pins:
+                pins[bucket] = cur
+            return int(pins[bucket])
+        except Exception:
+            return cur
+
     def effective_allowance(self, data: dict[str, Any], bucket: str, now: float) -> int:
-        base = self.allowance(bucket)
+        base = self.day_allowance(data, bucket)
         try:
             det = self.rollover_detail(data, now)
             if det["active"] and det["to"] == bucket:
@@ -474,11 +496,54 @@ class WriteBudget:
     def _total_used(self, data: dict[str, Any]) -> int:
         return sum(int(e.get("used", 0)) for e in data["containers"].values())
 
+    @staticmethod
+    def _live_holds(e: dict[str, Any], now: float) -> list:
+        holds = [h for h in (e.get("holds") or []) if isinstance(h, list) and len(h) >= 3 and now - float(h[0]) < HOLD_TTL_S]
+        e["holds"] = holds
+        return holds
+
+    def _held(self, e: dict[str, Any], now: float) -> int:
+        return sum(int(h[1]) for h in self._live_holds(e, now))
+
+    def _bucket_committed(self, data: dict[str, Any], bucket: str, now: float) -> int:
+        """Real rows booked + open holds (worst-case headroom of posts not settled yet)."""
+        return self._bucket_used(data, bucket) + sum(self._held(e, now) for n, e in data["containers"].items() if self.bucket_of(n) == bucket)
+
+    def _total_committed(self, data: dict[str, Any], now: float) -> int:
+        return sum(int(e.get("used", 0)) + self._held(e, now) for e in data["containers"].values())
+
+    def hold_rows(self, data: dict[str, Any], rows: int, worst: int, route: str | None) -> int:
+        """Worst-case rows a post may really write: worst x the highest real/worst ratio seen on the route (>= 1)."""
+        peak = 1.0
+        try:
+            if route:
+                peak = max(1.0, min(PEAK_CAP, float(((data.get("route_ratio") or {}).get(route) or {}).get("peak") or 1.0)))
+        except Exception:
+            peak = PEAK_CAP
+        return max(int(rows), int(math.ceil(max(int(worst), int(rows)) * peak)))
+
+    def _release_hold(self, data: dict[str, Any], token: str | None) -> None:
+        if not token:
+            return
+        e = self._entry(data)
+        e["holds"] = [h for h in (e.get("holds") or []) if not (isinstance(h, list) and len(h) >= 3 and h[2] == token)]
+
+    def _pop_token(self, reserved: int) -> str | None:
+        with self._pending_lock:
+            for i, (tok, r) in enumerate(self._pending):
+                if r == int(reserved):
+                    del self._pending[i]
+                    return tok
+            if self._pending:
+                return self._pending.pop(0)[0]
+        return None
+
     # -- accounting ---------------------------------------------------------------------------------------
-    def low_cap(self, now: float) -> float:
+    def low_cap(self, now: float, allowance: int | None = None) -> float:
         """Rows (as a share of the allowance) low-priority posts may use right now: paced across the UTC day."""
         frac = min(1.0, seconds_into_utc_day(now) / 86400.0 + self.pace_burst)
-        return self.allowance() * min(1.0, max(0.0, self.low_fraction)) * frac
+        base = self.allowance() if allowance is None else allowance
+        return base * min(1.0, max(0.0, self.low_fraction)) * frac
 
     def scaled_reservation(self, worst: int, route: str | None) -> int:
         """Rows to reserve for a post whose worst case is ``worst``: worst x learned real/worst ratio (with margin,
@@ -496,7 +561,7 @@ class WriteBudget:
         ratio = min(1.0, max(RATIO_FLOOR, (act / est) * RATIO_MARGIN))
         return max(1, min(worst, int(math.ceil(worst * ratio))))
 
-    def reserve(self, rows: int, priority: str = HIGH, worst: int | None = None) -> bool:
+    def reserve(self, rows: int, priority: str = HIGH, worst: int | None = None, route: str | None = None) -> bool:
         """Charge ``rows`` to this container. False (and the refusal is recorded) if it does not fit. ``worst`` (the
         worst-case rows, >= rows) must ALSO fit under the global daily cap, so booking the real rows later can
         never push the project past it."""
@@ -507,12 +572,16 @@ class WriteBudget:
         priority = self.priority_for(priority)
         bucket = self.bucket_of(self.name)
 
+        token = os.urandom(6).hex()
+
         def op(data: dict[str, Any], now: float) -> bool:
             e = self._entry(data)
             allowance_now = self.effective_allowance(data, bucket, now)
-            used_bucket = self._bucket_used(data, bucket)
-            cap = allowance_now if priority == HIGH else min(allowance_now, self.low_cap(now))
-            ok = used_bucket + rows <= cap and self._total_used(data) + worst_rows <= self.daily_budget
+            committed = self._bucket_committed(data, bucket, now)
+            cap = allowance_now if priority == HIGH else min(allowance_now, self.low_cap(now, self.day_allowance(data, bucket)))
+            hold = self.hold_rows(data, rows, worst_rows, route)
+            # Both caps are checked against the worst real cost (hold), counting every open hold, under the file lock.
+            ok = committed + hold <= cap and self._total_committed(data, now) + hold <= self.daily_budget
             if ok and int(data.get("consec_unreported") or 0) >= UNREPORTED_TRIP:
                 # Untrusted estimates: fail closed, let one probe through per PROBE_SECONDS to see if the Worker reports again.
                 if now >= float(data.get("probe_after") or 0.0):
@@ -521,6 +590,8 @@ class WriteBudget:
                     ok = False
             if ok:
                 e["used"] = int(e["used"]) + rows
+                if hold > rows:
+                    e.setdefault("holds", []).append([now, hold - rows, token])
                 e["posts"] = int(e["posts"]) + 1
                 e["first_t"] = e["first_t"] or now
                 e["last_t"] = now
@@ -530,7 +601,11 @@ class WriteBudget:
             return ok
 
         try:
-            return bool(self._mutate(op))
+            ok = bool(self._mutate(op))
+            if ok:
+                with self._pending_lock:
+                    self._pending.append((token, rows))
+            return ok
         except Exception as exc:  # fail closed: keep working locally, retry on the next call
             logger.warning("write budget ledger unavailable (%s); holding writes", exc)
             return False
@@ -540,12 +615,14 @@ class WriteBudget:
         if not self.enabled or actual is None or reserved <= 0:
             return
         delta = int(actual) - int(reserved)
-        if delta == 0:
+        token = self._pop_token(reserved)
+        if delta == 0 and not token:
             return
 
         def op(data: dict[str, Any], now: float) -> None:
             e = self._entry(data)
             e["used"] = max(0, int(e["used"]) + delta)
+            self._release_hold(data, token)
 
         try:
             self._mutate(op)
@@ -558,9 +635,11 @@ class WriteBudget:
         if not self.enabled or reserved <= 0:
             return
         worst_rows = max(int(reserved), int(worst or 0))
+        token = self._pop_token(reserved)
 
         def op(data: dict[str, Any], now: float) -> None:
             e = self._entry(data)
+            self._release_hold(data, token)
             calib = data.setdefault("calib", {})
             if actual is not None:
                 e["used"] = max(0, int(e["used"]) + int(actual) - int(reserved))
@@ -574,6 +653,8 @@ class WriteBudget:
                     rr["n"] = int(rr.get("n", 0)) + 1
                     rr["est"] = float(rr.get("est", 0.0)) * RATIO_DECAY + worst_rows
                     rr["act"] = float(rr.get("act", 0.0)) * RATIO_DECAY + int(actual)
+                    if worst_rows > 0:
+                        rr["peak"] = max(float(rr.get("peak") or 1.0), min(PEAK_CAP, int(actual) / worst_rows))
             else:
                 # Unreported: book the WORST case plus the surcharge (not the learned, smaller reservation).
                 extra = (worst_rows - int(reserved)) + int(math.ceil(worst_rows * UNREPORTED_SURCHARGE))
@@ -626,9 +707,10 @@ class WriteBudget:
         priority = self.priority_for(priority)
         data = self.snapshot()
         now = self.clock()
-        eff = self.effective_allowance(data, self.bucket_of(self.name), now)
-        cap = eff if priority == HIGH else min(eff, self.low_cap(now))
-        return max(0, int(min(cap - self._bucket_used(data, self.bucket_of(self.name)), self.daily_budget - self._total_used(data))))
+        bucket = self.bucket_of(self.name)
+        eff = self.effective_allowance(data, bucket, now)
+        cap = eff if priority == HIGH else min(eff, self.low_cap(now, self.day_allowance(data, bucket)))
+        return max(0, int(min(cap - self._bucket_committed(data, bucket, now), self.daily_budget - self._total_committed(data, now))))
 
     def can_afford(self, rows: int, priority: str = HIGH) -> bool:
         """Read-only check (no charge, no denial record) - for deciding whether a flush is worth attempting."""
