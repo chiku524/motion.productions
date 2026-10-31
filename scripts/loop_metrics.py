@@ -182,7 +182,12 @@ def render_budget(b: dict) -> str:
         ratio = cal.get("estimate_over_actual")
         lines.append(f"  Ledger calibration: {cal['reported_posts']} posts booked at the Worker's real rows_written, "
                      f"{cal['unreported_posts']} without (estimate + {cal['surcharge_rows']} surcharge rows); "
-                     f"estimate/actual on reported posts = {'n/a' if ratio is None else f'{ratio:.2f}'}")
+                     f"reserved/actual on reported posts = {'n/a' if ratio is None else f'{ratio:.2f}'}"
+                     + (f" (worst-case/actual {cal['worst_over_actual']:.2f})" if cal.get("worst_over_actual") else ""))
+        rr = cal.get("route_ratios") or {}
+        if rr:
+            lines.append("  Learned real/worst per route: " + "; ".join(
+                f"{k} {v['real_over_worst']:.2f} (n={v['n']})" for k, v in rr.items() if v.get("real_over_worst") is not None))
     if cal and not cal.get("trusted", True):
         lines.append(f"  LEDGER UNTRUSTED: {cal['consec_unreported']} answers in a row had no rows_written (old Worker?). "
                      "Posting is paused except one probe per 5 min - deploy the Worker that reports rows_written.")

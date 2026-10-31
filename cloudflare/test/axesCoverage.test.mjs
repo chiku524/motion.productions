@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Opacity / cross-axis aggregates (pending migration 0104): allow-list, monotonic max merge, changed-only writes,
  * GET summary and graceful degradation when the table is absent. Local Miniflare D1 only.
  */
@@ -9,7 +9,7 @@ import path from "node:path";
 import { createHarness } from "./helpers/harness.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
-const SQL = fs.readFileSync(path.join(ROOT, "migrations_pending", "0104_axis_coverage.sql"), "utf8");
+const SQL = fs.readFileSync(path.join(ROOT, "migrations", "0025_axis_coverage.sql"), "utf8");
 const SECRET = "test-secret";
 const AUTH = { Authorization: `Bearer ${SECRET}` };
 

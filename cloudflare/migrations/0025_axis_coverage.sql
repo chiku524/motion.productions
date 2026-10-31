@@ -1,4 +1,4 @@
--- 0104_axis_coverage.sql  (PENDING - not applied; needs Nico's approval)
+﻿-- 0025_axis_coverage.sql (planned as 0104; approved by Nico 2026-10-31)
 --
 -- Compact aggregates for the opacity plane and cross-axis pair coverage shown on the site.
 -- ONE ROW PER AGGREGATE KEY, a fixed allow-list of 32 keys (16 opacity levels + opacity total + 15 axis pairs):

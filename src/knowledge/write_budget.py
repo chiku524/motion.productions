@@ -133,6 +133,26 @@ def estimate_discoveries_rows(data: Mapping[str, Any] | None) -> int:
     return total
 
 
+# ---------------------------------------------------------------------------------------------------------
+# Learned reservation: the worst-case model above runs ~3.7x over the Worker's real rows_written (most items are
+# count bumps, not new rows). Each route keeps a decaying sum of worst-case vs real rows; once it has enough
+# samples the reservation is worst x (ratio x margin), never below RATIO_FLOOR x worst and never above worst.
+# The hard daily cap still uses the WORST case (total + worst <= budget) and real rows are booked afterwards,
+# so the global cap can never be overshot by an under-reservation.
+# ---------------------------------------------------------------------------------------------------------
+RATIO_FLOOR = 0.25
+RATIO_MARGIN = 1.25
+RATIO_MIN_SAMPLES = 20
+RATIO_DECAY = 0.98
+
+
+def route_key(method: str, path: str) -> str:
+    """Stable per-route key: ids (segments with a digit, or long tokens) collapse to '*'."""
+    path = (path or "").split("?", 1)[0]
+    segs = ["*" if (re.search(r"\d", x) or len(x) >= 20) else x for x in path.split("/")]
+    return f"{(method or 'GET').upper()} {'/'.join(segs)}"
+
+
 def estimate_rows(method: str, path: str, data: Mapping[str, Any] | None = None) -> tuple[int, str]:
     """(worst-case D1 rows written, priority) for one API call. GETs and KV-only writes cost 0."""
     method = (method or "GET").upper()
@@ -422,6 +442,8 @@ class WriteBudget:
             fresh["backoff_reason"] = str(old.get("backoff_reason") or "")
             fresh["consec_unreported"] = int(old.get("consec_unreported") or 0)  # trust is not reset by the clock
             fresh["probe_after"] = float(old.get("probe_after") or 0.0)
+            if isinstance(old.get("route_ratio"), dict):
+                fresh["route_ratio"] = old["route_ratio"]  # learned ratios survive the UTC reset
         except (OSError, ValueError, TypeError):
             pass
         return fresh
@@ -458,9 +480,28 @@ class WriteBudget:
         frac = min(1.0, seconds_into_utc_day(now) / 86400.0 + self.pace_burst)
         return self.allowance() * min(1.0, max(0.0, self.low_fraction)) * frac
 
-    def reserve(self, rows: int, priority: str = HIGH) -> bool:
-        """Charge ``rows`` (worst case) to this container. False (and the refusal is recorded) if it does not fit."""
+    def scaled_reservation(self, worst: int, route: str | None) -> int:
+        """Rows to reserve for a post whose worst case is ``worst``: worst x learned real/worst ratio (with margin,
+        floored at RATIO_FLOOR), or the worst case itself until the route has RATIO_MIN_SAMPLES reported posts."""
+        worst = max(0, int(worst))
+        if not self.enabled or worst <= 0 or not route:
+            return worst
+        try:
+            r = (self.snapshot().get("route_ratio") or {}).get(route) or {}
+            n, est, act = int(r.get("n", 0)), float(r.get("est", 0.0)), float(r.get("act", 0.0))
+        except Exception:
+            return worst
+        if n < RATIO_MIN_SAMPLES or est <= 0:
+            return worst
+        ratio = min(1.0, max(RATIO_FLOOR, (act / est) * RATIO_MARGIN))
+        return max(1, min(worst, int(math.ceil(worst * ratio))))
+
+    def reserve(self, rows: int, priority: str = HIGH, worst: int | None = None) -> bool:
+        """Charge ``rows`` to this container. False (and the refusal is recorded) if it does not fit. ``worst`` (the
+        worst-case rows, >= rows) must ALSO fit under the global daily cap, so booking the real rows later can
+        never push the project past it."""
         rows = max(0, int(rows))
+        worst_rows = max(rows, int(worst or 0))
         if not self.enabled or rows == 0:
             return True
         priority = self.priority_for(priority)
@@ -471,7 +512,7 @@ class WriteBudget:
             allowance_now = self.effective_allowance(data, bucket, now)
             used_bucket = self._bucket_used(data, bucket)
             cap = allowance_now if priority == HIGH else min(allowance_now, self.low_cap(now))
-            ok = used_bucket + rows <= cap and self._total_used(data) + rows <= self.daily_budget
+            ok = used_bucket + rows <= cap and self._total_used(data) + worst_rows <= self.daily_budget
             if ok and int(data.get("consec_unreported") or 0) >= UNREPORTED_TRIP:
                 # Untrusted estimates: fail closed, let one probe through per PROBE_SECONDS to see if the Worker reports again.
                 if now >= float(data.get("probe_after") or 0.0):
@@ -511,11 +552,12 @@ class WriteBudget:
         except Exception as exc:
             logger.debug("write budget settle skipped: %s", exc)
 
-    def record_response(self, reserved: int, actual: int | None) -> None:
+    def record_response(self, reserved: int, actual: int | None, route: str | None = None, worst: int | None = None) -> None:
         """Book the outcome of a post that reached D1: the Worker's real ``rows_written`` if it sent one, else
         the estimate plus a surcharge, counted as *unreported* (UNREPORTED_TRIP in a row => fail closed)."""
         if not self.enabled or reserved <= 0:
             return
+        worst_rows = max(int(reserved), int(worst or 0))
 
         def op(data: dict[str, Any], now: float) -> None:
             e = self._entry(data)
@@ -525,9 +567,16 @@ class WriteBudget:
                 calib["reported"] = int(calib.get("reported", 0)) + 1
                 calib["est_reported"] = int(calib.get("est_reported", 0)) + int(reserved)
                 calib["act_reported"] = int(calib.get("act_reported", 0)) + int(actual)
+                calib["worst_reported"] = int(calib.get("worst_reported", 0)) + int(worst_rows)
                 data["consec_unreported"] = 0
+                if route:
+                    rr = data.setdefault("route_ratio", {}).setdefault(route, {"n": 0, "est": 0.0, "act": 0.0})
+                    rr["n"] = int(rr.get("n", 0)) + 1
+                    rr["est"] = float(rr.get("est", 0.0)) * RATIO_DECAY + worst_rows
+                    rr["act"] = float(rr.get("act", 0.0)) * RATIO_DECAY + int(actual)
             else:
-                extra = int(math.ceil(reserved * UNREPORTED_SURCHARGE))
+                # Unreported: book the WORST case plus the surcharge (not the learned, smaller reservation).
+                extra = (worst_rows - int(reserved)) + int(math.ceil(worst_rows * UNREPORTED_SURCHARGE))
                 e["used"] = int(e["used"]) + extra
                 calib["unreported"] = int(calib.get("unreported", 0)) + 1
                 calib["surcharge"] = int(calib.get("surcharge", 0)) + extra
@@ -551,6 +600,9 @@ class WriteBudget:
             "reported_posts": int(c.get("reported", 0)), "unreported_posts": int(c.get("unreported", 0)),
             "estimated_rows_of_reported": est, "actual_rows_of_reported": act,
             "estimate_over_actual": round(est / act, 3) if act else None,
+            "worst_over_actual": round(int(c.get("worst_reported", est)) / act, 3) if act else None,
+            "route_ratios": {k: {"n": int(v.get("n", 0)), "real_over_worst": round(float(v["act"]) / float(v["est"]), 3) if float(v.get("est") or 0) else None}
+                             for k, v in sorted((data.get("route_ratio") or {}).items())},
             "surcharge_rows": int(c.get("surcharge", 0)),
         }
 

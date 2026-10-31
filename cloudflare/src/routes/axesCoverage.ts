@@ -1,10 +1,10 @@
-/**
+﻿/**
  * Opacity-plane + cross-axis coverage aggregates (compact: <= 32 rows, one per allow-listed key).
  *
  *   POST /api/coverage/axes   {items:[{key, seen, universe}]}  upsert changed keys only (auth required, global)
  *   GET  /api/coverage/axes   all aggregates (snapshot-cached with stale-on-error, Cache-Control 300 s)
  *
- * Degrades to 200 {available:false} until migrations_pending/0104_axis_coverage.sql is applied.
+ * Degrades to 200 {available:false} until migrations/0025_axis_coverage.sql is applied.
  */
 import type { Env } from "../env";
 import { getDb } from "../db";
@@ -33,7 +33,7 @@ function isMissingTable(e: unknown): boolean {
   return /no such table/i.test(String((e as { message?: string })?.message ?? e));
 }
 function unavailable(extra: Record<string, unknown> = {}): Response {
-  return json({ available: false, reason: "table_missing", migration: "migrations_pending/0104_axis_coverage.sql", ...extra });
+  return json({ available: false, reason: "table_missing", migration: "migrations/0025_axis_coverage.sql", ...extra });
 }
 
 interface Row { id: number; key: string; seen: number; universe: number; updated_at: string | null }
