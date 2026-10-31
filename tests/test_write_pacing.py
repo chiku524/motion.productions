@@ -27,7 +27,12 @@ class Clock:
         self.t += s
 
 
+# Pacing maths is independent of the split; pin the even 30/30 split these numbers were written against.
+EVEN = {"explorer": 30, "balanced": 30, "interpret": 15, "sound": 10, "other": 5}
+
+
 def setup(tmp_path, name="explorer", budget=50000, at=utc(2026, 10, 27, 12), **kw):
+    kw.setdefault("weights", EVEN)
     clock = Clock(at)
     b = wb.WriteBudget(name=name, directory=tmp_path / "ledger", daily_budget=budget, clock=clock, **kw)
     pacer = wb.WritePacer(budget=b, slack=0.03, chunk_s=30.0, enabled=True)
@@ -116,7 +121,7 @@ def test_wait_is_interruptible_by_shutdown(tmp_path):
 
 def test_other_containers_progress_is_not_counted_against_this_one(tmp_path):
     clock, b, pacer = setup(tmp_path)
-    other = wb.WriteBudget(name="balanced", directory=tmp_path / "ledger", daily_budget=50000, clock=clock)
+    other = wb.WriteBudget(name="balanced", directory=tmp_path / "ledger", daily_budget=50000, clock=clock, weights=EVEN)
     assert other.reserve(14000, "high")
     assert pacer.wait_for_pace(sleep=clock.sleep) == 0.0  # explorer has used nothing
 
@@ -219,10 +224,10 @@ def test_loop_metrics_reports_pace_status(tmp_path):
     ledger = tmp_path / "ledger"
     ahead = wb.WriteBudget(name="explorer", directory=ledger, daily_budget=50000, clock=lambda: now)
     ok = wb.WriteBudget(name="sound", directory=ledger, daily_budget=50000, clock=lambda: now)
-    assert ahead.reserve(9000, "high") and ok.reserve(1000, "high")
+    assert ahead.reserve(10000, "high") and ok.reserve(1000, "high")  # explorer allowance 17,500 (35%)
     rep = mod.budget_report(ledger, now=now)
     assert rep["containers"]["explorer"]["pace_state"] == "ahead"
-    assert rep["containers"]["explorer"]["pace_limit"] == pytest.approx(15000 * 0.53)
+    assert rep["containers"]["explorer"]["pace_limit"] == pytest.approx(17500 * 0.53)
     assert rep["containers"]["sound"]["pace_state"] == "on pace"
     text = mod.render_budget(rep)
     assert "pace line" in text and "ahead" in text and "Pacing ON" in text

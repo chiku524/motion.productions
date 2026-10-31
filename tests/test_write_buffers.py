@@ -339,3 +339,73 @@ def test_idle_when_exhausted_is_off_by_default_and_waits_out_backoff_when_enable
     assert wbuf.idle_when_exhausted() == 0.0
     assert b.reserve(b.allowance())
     assert wbuf.idle_when_exhausted() == 300.0
+
+
+# ---------------------------------------------------------------------------------------------------------
+# Count-bump aggregation (DISCOVERY_BUMP_FLUSH_INTERVAL_S)
+# ---------------------------------------------------------------------------------------------------------
+def test_known_identities_are_held_and_aggregated_into_one_bump(monkeypatch):
+    monkeypatch.setenv("DISCOVERY_BUMP_FLUSH_INTERVAL_S", "3600")
+    clock = Clock()
+    s = wbuf.DiscoverySpool("balanced", flush_interval=120, clock=clock)
+    p = Poster()
+    s.add({"static_colors": [color("a")]})
+    clock.t += 121
+    s.flush("http://api", poster=p)  # novel: goes out on the normal interval
+    assert len(p.calls) == 1
+    for _ in range(10):  # ten later clips re-observe "a" plus a new "b"
+        s.add({"static_colors": [color("a")]})
+    s.add({"static_colors": [color("b")]})
+    clock.t += 121
+    assert s.due()
+    s.flush("http://api", poster=p)
+    assert [i["key"] for _, i in posted_items(p)][1:] == ["b"]  # bump for "a" held back
+    assert len(s) == 1 and not s.due()
+    clock.t += 3600
+    assert s.due()
+    s.flush("http://api", poster=p)
+    last = posted_items(p)[-1][1]
+    assert last["key"] == "a" and last["count_delta"] == 10  # every observation kept, one row
+    assert len(s) == 0
+
+
+def test_bump_hold_off_by_default_keeps_old_behaviour(monkeypatch):
+    monkeypatch.delenv("DISCOVERY_BUMP_FLUSH_INTERVAL_S", raising=False)
+    s = wbuf.DiscoverySpool("explorer", flush_interval=0)
+    p = Poster()
+    s.add({"static_colors": [color("a")]})
+    s.flush("http://api", poster=p)
+    s.add({"static_colors": [color("a")]})
+    s.flush("http://api", poster=p)
+    assert len(p.calls) == 2
+
+
+def test_known_set_survives_restart_and_force_flushes_bumps(monkeypatch):
+    monkeypatch.setenv("DISCOVERY_BUMP_FLUSH_INTERVAL_S", "3600")
+    p = Poster()
+    s = wbuf.DiscoverySpool("explorer", flush_interval=0)
+    s.add({"static_colors": [color("a")]})
+    s.flush("http://api", poster=p)
+    s2 = wbuf.DiscoverySpool("explorer", flush_interval=0)
+    assert s2.is_known(next(iter(s2._known)))
+    s2.add({"static_colors": [color("a")]})
+    assert not s2.due()
+    s2.flush("http://api", force=True, poster=p)
+    assert len(p.calls) == 2 and len(s2) == 0
+
+
+def test_failed_bump_flush_keeps_the_counts(monkeypatch):
+    monkeypatch.setenv("DISCOVERY_BUMP_FLUSH_INTERVAL_S", "60")
+    clock = Clock()
+    s = wbuf.DiscoverySpool("explorer", flush_interval=0, clock=clock)
+    p = Poster()
+    s.add({"static_colors": [color("a")]})
+    s.flush("http://api", poster=p)
+    s.add({"static_colors": [color("a", count_delta=3)]})
+    clock.t += 61
+    p.fail = api_client.WriteBudgetSkipped("out", status_code=503, path="/api/knowledge/discoveries")
+    s.flush("http://api", poster=p)
+    assert len(s) == 1
+    p.fail = None
+    s.flush("http://api", poster=p)
+    assert posted_items(p)[-1][1]["count_delta"] == 3

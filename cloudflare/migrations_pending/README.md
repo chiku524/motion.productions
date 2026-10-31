@@ -1,6 +1,6 @@
 ﻿# Pending D1 migrations - NOT APPLIED
 
-Nothing in this folder has been run against the remote `motion-productions-db`, and it is deliberately **outside**
+**`0100_drop_redundant_indexes.sql` was applied on 2026-10-31 and moved to `migrations/0024_drop_redundant_indexes.sql`** (idempotent `DROP INDEX IF EXISTS`). Nothing else in this folder has been run against the remote `motion-productions-db`, and it is deliberately **outside**
 `cloudflare/migrations/` so `wrangler d1 migrations apply`, `npm run db:migrate`, CI and the test harness never pick it up.
 The Worker code works without any of it.
 

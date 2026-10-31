@@ -43,6 +43,18 @@ class DuplicateClipSkipped(Exception):
         self.nearest_id = nearest_id
 
 
+def should_log_loop_job(run_count: int) -> bool:
+    """LOOP_JOB_LOG_EVERY=N (default 1 = every clip): post the per-clip job/complete/learning log rows only for every
+    Nth clip. They are logs (no registry data), ~11 D1 rows per clip; 0 disables them entirely."""
+    try:
+        n = int(os.environ.get("LOOP_JOB_LOG_EVERY", "1") or "1")
+    except ValueError:
+        n = 1
+    if n <= 0:
+        return False
+    return n == 1 or run_count % n == 0
+
+
 def iteration_outcome(*, run_succeeded: bool, rejected: bool, gate) -> str:
     """accepted | rejected | unchecked | error, for the per-container metrics log."""
     if rejected:
@@ -573,11 +585,17 @@ def run() -> None:
         )
 
         try:
-            job = api_request_with_retry(
-                args.api_base, "POST", "/api/jobs",
-                data={"prompt": prompt, "duration_seconds": duration, "workflow_type": workflow_type},
-                timeout=30,
-            )
+            if not should_log_loop_job(state["run_count"]):
+                # LOOP_JOB_LOG_EVERY=N: only every Nth clip gets a job/complete/learning log (11 D1 rows); the rest run
+                # under a local id. Discoveries, registry growth and coverage are posted for every clip as before.
+                import uuid
+                job = {"id": f"local-{uuid.uuid4().hex[:12]}"}
+            else:
+                job = api_request_with_retry(
+                    args.api_base, "POST", "/api/jobs",
+                    data={"prompt": prompt, "duration_seconds": duration, "workflow_type": workflow_type},
+                    timeout=30,
+                )
         except WriteBudgetSkipped as e:
             # Out of write budget: the job row (5 D1 rows) is only a log. Keep rendering/growing locally under a
             # local id; discoveries stay buffered and no job-bound rows (complete/learning) are posted for it.

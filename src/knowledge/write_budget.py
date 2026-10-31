@@ -10,7 +10,8 @@ so the budget is enforced on the client: every container shares one small JSON l
   the gate) is the total for ALL containers; the other 50% is headroom for Worker-side retention, web users and
   estimate error.  Real means index entries included: the Worker reports D1's own ``meta.rows_written`` on every
   write route, and that number (not an estimate) is what the ledger books.
-* It is split by weight (``D1_BUDGET_WEIGHTS``): explorer 30, balanced 30, interpret 15, sound 10, other 5.
+* It is split by weight (``D1_BUDGET_WEIGHTS``): explorer 35, balanced 20, interpret 15, sound 10, survey 5, other 5
+  (``survey`` = colour-coverage chunk posts from any container, booked under the ledger entry ``survey``).
   Any container not listed (webjobs, procedural-render, exploiter, ...) shares the ``other`` pool.
 * A container's name is ``D1_BUDGET_NAME`` (else ``LOOP_METRICS_NAME``, else derived from the start script).
 * ``reserve()`` charges a worst-case estimate before a POST; ``record_response()`` replaces it with the Worker's
@@ -49,7 +50,12 @@ DEFAULT_DAILY_BUDGET = 50000  # real D1 rows/day: a hard 50% cap of the 100k fre
 UNREPORTED_SURCHARGE = 0.25  # extra charge on an estimate nobody confirmed (index writes / retries we cannot see)
 UNREPORTED_TRIP = 10  # consecutive unreported answers after which the ledger stops trusting its estimates
 PROBE_SECONDS = 300.0  # while untrusted, one probe post is let through this often to detect a fixed Worker
-DEFAULT_WEIGHTS: dict[str, float] = {"explorer": 30, "balanced": 30, "interpret": 15, "sound": 10, "other": 5}
+# Discovery-first split (sum 90, the same total as before): explorer finds the most new cells per row, balanced the
+# fewest; ``survey`` is the exact-colour survey's coverage-chunk sync (/api/coverage/color*), booked under its own
+# ledger entry whatever container posts it, so survey progress never competes with creative-clip discoveries.
+DEFAULT_WEIGHTS: dict[str, float] = {"explorer": 35, "balanced": 20, "interpret": 15, "sound": 10, "survey": 5, "other": 5}
+SURVEY = "survey"
+SURVEY_PATH_PREFIX = "/api/coverage/color"
 OTHER = "other"
 DEFAULT_LOW_FRACTION = 0.5
 DEFAULT_PACE_BURST = 0.15
@@ -74,12 +80,12 @@ INSERT_ROWS: dict[str, int] = {
     "learning_runs": 4,        # row + PK + job_id + created_at
     "interpretations": 4,      # row + PK + idx_status + idx_updated_at
     "linguistic_registry": 5,  # row + PK + UNIQUE(span,domain) + domain + canonical
-    "static_colors": 7 + NAME_RESERVE_ROWS,   # row + 6 indexes (7), + the reserved display name
-    "static_sound": 5,
+    "static_colors": 5 + NAME_RESERVE_ROWS,   # row + 4 indexes (0024 dropped _key and _family), + reserved name
+    "static_sound": 4,         # row + PK + UNIQUE(sound_key) + 1 (0024 dropped idx_static_sound_key)
     "learned_blends": 4 + 2 * NAME_RESERVE_ROWS,  # row + 3 indexes; measured 1.7 names reserved per blend
-    "learned_colors": 4 + NAME_RESERVE_ROWS,
-    "learned_profile": 4,      # learned_motion/lighting/... : row + PK + UNIQUE(profile_key) + created_at
-    "narrative": 5,            # row + PK + UNIQUE(aspect, entry_key) + aspect + created_at
+    "learned_colors": 3 + NAME_RESERVE_ROWS,  # row + PK + UNIQUE(color_key) (0024 dropped the _key twin)
+    "learned_profile": 3,      # learned_motion/lighting/... : row + PK + UNIQUE(profile_key) (0024 dropped _key)
+    "narrative": 4,            # row + PK + UNIQUE(aspect, entry_key) + 1 (0024 dropped the aspect_key twin)
     "discovery_runs": 3,
     "color_coverage": 2,       # one row per changed 64 KiB chunk, no secondary index (worst case +1)
     "events": 5,               # row + 4 indexes (the old estimate of 4 under-counted every event)
@@ -718,6 +724,28 @@ def reset_budget(instance: WriteBudget | None = None) -> None:
     global _instance
     with _instance_lock:
         _instance = instance
+
+
+_survey_instances: dict[int, WriteBudget] = {}
+
+
+def budget_for_path(path: str | None, base: WriteBudget | None = None) -> WriteBudget:
+    """The ledger view a write to ``path`` is charged to: colour-coverage posts go to the ``survey`` bucket (when
+    the weights define one), everything else to this container. Same ledger file, same fail-closed rules."""
+    base = base or get_budget()
+    p = (path or "").split("?", 1)[0]
+    if not p.startswith(SURVEY_PATH_PREFIX) or SURVEY not in base.weights or base.name == SURVEY:
+        return base
+    with _instance_lock:
+        inst = _survey_instances.get(id(base))
+        if inst is None or inst.dir != base.dir:
+            inst = WriteBudget(
+                name=SURVEY, directory=base.dir, daily_budget=base.daily_budget, weights=base.weights,
+                low_fraction=base.low_fraction, pace_burst=base.pace_burst, clock=base.clock,
+            )
+            _survey_instances.clear()
+            _survey_instances[id(base)] = inst
+        return inst
 
 
 def budget_gate_enabled() -> bool:

@@ -31,9 +31,10 @@ def make(tmp_path, name="explorer", budget=70000, clock=None, **kw):
 
 
 def test_default_split_matches_weights(tmp_path):
-    allowance = {n: make(tmp_path, n).allowance() for n in ("interpret", "sound", "explorer", "balanced", "webjobs")}
-    assert allowance == {"interpret": 10500, "sound": 7000, "explorer": 21000, "balanced": 21000, "webjobs": 3500}
-    assert sum(make(tmp_path, n).allowance() for n in ("interpret", "sound", "explorer", "balanced", "other")) == 63000  # weights are percents; the 10% not allotted is reserve
+    names = ("interpret", "sound", "explorer", "balanced", "survey", "webjobs")
+    allowance = {n: make(tmp_path, n).allowance() for n in names}
+    assert allowance == {"interpret": 10500, "sound": 7000, "explorer": 24500, "balanced": 14000, "survey": 3500, "webjobs": 3500}
+    assert sum(make(tmp_path, n).allowance() for n in ("interpret", "sound", "explorer", "balanced", "survey", "other")) == 63000  # weights are percents; the 10% not allotted is reserve
 
 
 def test_weights_over_100_are_normalised(tmp_path):
@@ -67,7 +68,7 @@ def test_one_container_cannot_spend_anothers_share(tmp_path):
     explorer = make(tmp_path, "explorer", clock=clock)
     assert sound.reserve(7000)
     assert not sound.reserve(1)
-    assert explorer.reserve(21000)  # untouched by sound exhausting itself
+    assert explorer.reserve(24500)  # untouched by sound exhausting itself
 
 
 def test_other_containers_share_one_pool(tmp_path):
@@ -92,12 +93,12 @@ def test_global_cap_never_exceeds_total_budget(tmp_path):
 
 def test_low_priority_is_capped_and_paced_so_discoveries_are_never_starved(tmp_path):
     clock = Clock(utc(2026, 10, 27, 23, 59, 0))  # end of day: pacing no longer limits
-    b = make(tmp_path, "explorer", clock=clock)  # allowance 21000, low cap 50% = 10500
+    b = make(tmp_path, "explorer", clock=clock)  # allowance 24500, low cap 50% = 12250
     spent = 0
     while b.reserve(100, wb.LOW):
         spent += 100
-    assert 10400 <= spent <= 10500
-    assert b.reserve(10000, wb.HIGH)  # discoveries still have the other half
+    assert 12100 <= spent <= 12250
+    assert b.reserve(12000, wb.HIGH)  # discoveries still have the other half
     assert not b.reserve(1, wb.LOW)
 
 
@@ -107,7 +108,7 @@ def test_low_priority_is_paced_across_the_day(tmp_path):
     early = 0
     while b.reserve(50, wb.LOW):
         early += 50
-    assert early <= 21000 * 0.5 * 0.16  # burst only: ~15% of the low share at 00:00 UTC
+    assert early <= 24500 * 0.5 * 0.16  # burst only: ~15% of the low share at 00:00 UTC
     clock.t = utc(2026, 10, 27, 12)
     assert b.reserve(50, wb.LOW)  # more is released as the day goes on
 
@@ -237,7 +238,8 @@ def test_cost_model_discoveries_dedupes_and_prices_by_table():
     body = {"static_colors": [{"key": "a"}, {"key": "a"}, {"key": "b"}], "static_sound": [{"key": "s"}], "motion": [{"key": "m1"}, {"key": "m2"}], "narrative": {"mood": [{"key": "x"}]}, "job_id": "j"}
     rows, prio = wb.estimate_rows("POST", "/api/knowledge/discoveries", body)
     assert prio == wb.HIGH
-    assert rows == wb.INSERT_ROWS['static_colors'] * 2 + 5 + 4 * 2 + 5 + 3
+    ins = wb.INSERT_ROWS
+    assert rows == ins['static_colors'] * 2 + ins['static_sound'] + ins['learned_profile'] * 2 + ins['narrative'] + ins['discovery_runs']
 
 
 # ---- api_client gate ----------------------------------------------------------------------------------------
@@ -352,3 +354,25 @@ def test_gate_off_when_budget_zero(net, monkeypatch):
 
 
 
+
+
+def test_colour_survey_posts_are_charged_to_the_survey_bucket(tmp_path):
+    clock = Clock(utc(2026, 10, 27, 12))
+    explorer = make(tmp_path, "explorer", clock=clock)
+    survey = wb.budget_for_path("/api/coverage/color/chunks", explorer)
+    assert survey.name == "survey" and survey.allowance() == 3500
+    assert wb.budget_for_path("/api/knowledge/discoveries", explorer) is explorer
+    assert survey.reserve(3500) and not survey.reserve(1)  # fail-closed on its own share
+    assert explorer.reserve(100)  # explorer's discoveries unaffected
+    snap = make(tmp_path).snapshot()["containers"]
+    assert snap["survey"]["used"] == 3500 and snap["explorer"]["used"] == 100
+
+
+def test_survey_bucket_absent_from_weights_falls_back_to_container(tmp_path):
+    b = make(tmp_path, "explorer", weights={"explorer": 50, "other": 10})
+    assert wb.budget_for_path("/api/coverage/color/chunks", b) is b
+
+
+def test_default_weights_keep_the_same_total():
+    assert sum(wb.DEFAULT_WEIGHTS.values()) == 90
+    assert wb.DEFAULT_WEIGHTS["explorer"] > wb.DEFAULT_WEIGHTS["balanced"]
