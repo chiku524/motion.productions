@@ -100,7 +100,7 @@ Never one row per colour. The whole space is 32 chunks of 64 KiB per plane, so t
 - The Worker merge is read-OR-write, not a SQL-atomic OR; two racing syncs can lose an update. Mitigated by the
   shared sync lock, a full resend every 24 h, and the local store being the source of truth.
 - D1 BLOB read-back (`number[]` vs `ArrayBuffer`) is handled defensively but was only tested on local Miniflare.
-- No opacity plane yet (RGB only). Creative clips do not yet record exact colours opportunistically.
+- Opacity, creative-clip extraction and cross-axis tracking: first slice landed (see "Mission phase next" below).
 - Coverage is local per machine until synced; the bitsets live in the mounted `knowledge/` volume (git-ignored).
 
 ## Using the registry from video generation
@@ -115,3 +115,22 @@ RegistryLookup.from_snapshot("registry.mpcs")
 ```
 Remote: `GET /api/coverage/color/cell?id=N | rgb=r,g,b | hex=ff8800 | ids=a,b,c` (at most 64, cacheable 5 min) and
 `GET /api/coverage/color[?chunks=1]` for counts. CLI: `python -m src.knowledge.registry_lookup "#ff8800" --export out.mpcs`.
+
+## Mission phase next (first slice)
+
+All three are local-only and opt-in; none adds D1 writes of its own.
+
+| Piece | Module | Enable | What it does |
+|---|---|---|---|
+| Opacity plane | `src/knowledge/opacity_plane.py` | with `LOOP_CREATIVE_COLORS=1` | Space `color.L1.a4o`: 5-bit RGB x 16 alpha levels = 524,288 cells, one 64 KiB bitset per tier (`declared`, `observed`). Records (colour, opacity) declared by a spec's `scene_layers`. |
+| Creative-clip exact colours | `src/knowledge/creative_colors.py` | `LOOP_CREATIVE_COLORS=1` | Samples `CREATIVE_COLOR_FRAMES` (6) frames of each finished creative clip, keeps flat tiles (tol 4), marks their medians `observed` (never `verified`), max `CREATIVE_COLOR_MAX_NEW` (2,000) new cells/clip. Reaches D1 only via the existing chunked coverage sync (survey write bucket). |
+| Cross-axis coverage | `src/knowledge/cross_axis.py` | `LOOP_CROSS_AXIS=1` | Per clip, pairwise combinations of palette / motion / camera / lighting / audio mood / genre; report = seen vs. product of seen values; `missing_combinations()` lists unmade pairs. |
+
+Hook: `run_mission_extras()` in `scripts/automate_loop.py`, right after video extraction. Tests: `tests/test_mission_phase_next.py`.
+
+### Deferred
+* Opacity **observed** tier: needs the renderer to emit per-layer alpha (or an RGBA intermediate); output MP4 has none.
+* Exact 8-bit RGBA (2^32 cells) - not feasible as a dense bitset; would need a sparse/hierarchical store.
+* Syncing the opacity plane and cross-axis tables to D1 / the API and showing them in the coverage UI (needs a migration + Worker route; write-budget review first).
+* Using `missing_combinations()` to steer creative prompt selection (cross-axis work queue).
+* Opacity/cross-axis docker-compose defaults (left unset = off until reviewed).
