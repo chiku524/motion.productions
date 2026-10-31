@@ -1,4 +1,4 @@
-# Local compute fleet — Docker image fleet on your CPU.
+﻿# Local compute fleet â€” Docker image fleet on your CPU.
 #
 # Quick start (from repo root):
 #   cp .env.example .env          # set MOTION_API_SECRET
@@ -53,8 +53,8 @@ x-d1-budget: &d1-budget
   D1_ROLLOVER: ${D1_ROLLOVER:-1}
   D1_ROLLOVER_HOURS: ${D1_ROLLOVER_HOURS:-4}
   D1_ROLLOVER_TO: ${D1_ROLLOVER_TO:-explorer}
-  # Opacity + cross-axis coverage sync to D1 (migration 0104 must be applied first; 0 = off).
-  LOOP_AXES_SYNC: ${LOOP_AXES_SYNC:-0}
+  # Opacity + cross-axis coverage sync to D1 (table axis_coverage applied 2026-10-31 as migration 0025; 0 = off).
+  LOOP_AXES_SYNC: ${LOOP_AXES_SYNC:-1}
 
 x-python-worker: &python-worker
   build:
