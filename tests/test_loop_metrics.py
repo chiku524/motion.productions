@@ -130,7 +130,7 @@ def test_budget_report_covers_every_container_and_projects_daily_total(tmp_path,
     mod = _load("scripts/loop_metrics.py", "loop_metrics_script_budget")
     now = float(calendar.timegm((2026, 10, 27, 6, 0, 0)))  # 06:00 UTC
     ledger = tmp_path / "ledger"
-    for name, rows in (("interpret", 1000), ("sound", 300), ("explorer", 5000), ("balanced", 20000)):
+    for name, rows in (("interpret", 1000), ("sound", 300), ("explorer", 6000), ("balanced", 12000)):
         b = wb.WriteBudget(name=name, directory=ledger, daily_budget=70000, clock=lambda: now - 3600 * 5)
         assert b.reserve(rows)
         b.clock = lambda: now - 60  # last post a minute ago, so the container counts as still running
@@ -140,10 +140,10 @@ def test_budget_report_covers_every_container_and_projects_daily_total(tmp_path,
     cs = rep["containers"]
     assert set(cs) == {"interpret", "sound", "explorer", "balanced"}
     assert cs["interpret"]["used"] == 1000 and cs["interpret"]["allowance"] == 10500
-    # 5000 rows in ~5 h -> ~24k/day uncapped, capped at the 21k allowance because the gate stops posting there
-    assert cs["explorer"]["projected_rows_per_day"] == 21000 and cs["explorer"]["projected_rows_per_day_uncapped"] > 21000
+    # 6000 rows in ~5 h -> ~29k/day uncapped, capped at the 24.5k allowance (35%) because the gate stops posting there
+    assert cs["explorer"]["projected_rows_per_day"] == 24500 and cs["explorer"]["projected_rows_per_day_uncapped"] > 24500
     assert cs["interpret"]["projected_rows_per_day"] < 10500
-    assert rep["total_projected_rows_per_day"] <= 70000 and rep["total_used"] == 26300
+    assert rep["total_projected_rows_per_day"] <= 70000 and rep["total_used"] == 19300
     text = mod.render_budget(rep)
     assert "interpret" in text and "sound" in text and "ALL containers" in text
 

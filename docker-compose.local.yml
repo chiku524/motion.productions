@@ -23,8 +23,9 @@ name: motion-local
 x-d1-budget: &d1-budget
   # Shared hard cap on REAL D1 rows written per UTC day across ALL containers (index writes included; Cloudflare Free =
   # 100,000/day). 50,000 = 50% of the limit, leaving 50% for Worker-side retention, web users and estimate error.
-  # Ledger lives on the shared ./knowledge volume and resets at 00:00 UTC. Weights (percent): interpret 15, sound 10,
-  # explorer 30, balanced 30, everything else 5 (10% is unallotted reserve). 0 disables the gate. See docs/D1_FREE_TIER.md.
+  # Ledger lives on the shared ./knowledge volume and resets at 00:00 UTC. Weights (percent): explorer 35, balanced 20,
+  # interpret 15, sound 10, survey 5 (colour-coverage chunk sync from any container), everything else 5 (10% is
+  # unallotted reserve). 0 disables the gate. See docs/D1_FREE_TIER.md.
   D1_DAILY_WRITE_BUDGET: ${D1_DAILY_WRITE_BUDGET:-50000}
   WRITE_BUDGET_DIR: /app/knowledge/write_budget
   WRITE_BUFFER_DIR: /app/knowledge/write_buffer
@@ -35,6 +36,11 @@ x-d1-budget: &d1-budget
   # budget is spread over 24 h instead of being burnt in a few hours. 0 turns it off (the hard allowance still applies).
   WRITE_PACING: ${WRITE_PACING:-1}
   WRITE_PACING_SLACK: ${WRITE_PACING_SLACK:-0.03}
+  # Write efficiency: re-observations of a key this container already got into D1 are pure count bumps (1 row each);
+  # hold them this long and post ONE summed count_delta per key (novel keys still go out on the normal interval).
+  DISCOVERY_BUMP_FLUSH_INTERVAL_S: ${DISCOVERY_BUMP_FLUSH_INTERVAL_S:-21600}
+  # Per-clip job/complete/learning rows are logs only (~11 rows); post them for every Nth loop clip (1 = every clip).
+  LOOP_JOB_LOG_EVERY: ${LOOP_JOB_LOG_EVERY:-5}
 
 x-python-worker: &python-worker
   build:

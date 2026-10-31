@@ -9,6 +9,11 @@ and ``api_client`` (which enforces the shared daily budget, see ``write_budget.p
                             (colors, sound, motion, then the rest) on an interval, in chunks, only while the
                             budget allows. Whatever is denied or fails stays in the spool (persisted), so a
                             budget-exhausted container keeps working locally and flushes after the reset.
+                            With ``DISCOVERY_BUMP_FLUSH_INTERVAL_S`` > 0, identities this container already got
+                            acknowledged by the Worker (so the D1 row exists and a repost is a pure count bump,
+                            1 row each) are held much longer and posted as ONE aggregated ``count_delta`` per key
+                            per bump interval; novel identities still flush on the normal interval. Counts are
+                            never dropped, only merged (the Worker clamps a delta to ``MAX_COUNT_DELTA``).
 * ``LinguisticCoalescer`` - ``linguistic_registry`` bumps merged by (domain, span) with summed counts; unseen
                             spans first; one batched POST per interval.
 * ``InterpretationOutbox``- an interpretation is POSTed only if its prompt AND instruction shape are new locally;
@@ -40,6 +45,7 @@ CATEGORY_RANK = {
 }
 _DEFAULT_RANK = 3
 MAX_COUNT_DELTA = 1000  # the Worker clamps to the same value
+KNOWN_MAX = 200_000  # identities remembered as "already in D1" per container (oldest forgotten first)
 
 
 def _env_float(name: str, default: float) -> float:
@@ -136,6 +142,14 @@ class DiscoverySpool:
         if self._last_flush <= 0:
             self._last_flush = self.clock()  # first interval starts now, not at the epoch
         self._seq = int(data.get("seq", 0)) if isinstance(data, dict) else 0
+        self.bump_interval = _env_float("DISCOVERY_BUMP_FLUSH_INTERVAL_S", 0.0)
+        self._last_bump_flush: float = float(data.get("last_bump_flush", 0.0)) if isinstance(data, dict) else 0.0
+        if self._last_bump_flush <= 0:
+            self._last_bump_flush = self.clock()
+        self.known_path = self.path.with_name(f"{self.name}.known.json")
+        known = _load(self.known_path, [])
+        self._known: dict[str, None] = dict.fromkeys(known if isinstance(known, list) else [])
+        self._known_dirty = False
 
     # -- state -------------------------------------------------------------------------------------------
     def __len__(self) -> int:
@@ -143,9 +157,49 @@ class DiscoverySpool:
 
     def _save(self) -> None:
         try:
-            _atomic_write(self.path, {"entries": self._entries, "last_flush": self._last_flush, "seq": self._seq})
+            _atomic_write(self.path, {"entries": self._entries, "last_flush": self._last_flush, "seq": self._seq,
+                                      "last_bump_flush": self._last_bump_flush})
+            if self._known_dirty:
+                _atomic_write(self.known_path, list(self._known))
+                self._known_dirty = False
         except OSError as e:
             logger.warning("discovery spool not persisted: %s", e)
+
+    # -- count-bump aggregation --------------------------------------------------------------------------
+    @property
+    def bumps_enabled(self) -> bool:
+        return self.bump_interval > 0
+
+    def is_known(self, ident: str) -> bool:
+        return ident in self._known
+
+    def _remember(self, idents: list[str]) -> None:
+        if not self.bumps_enabled or not idents:
+            return
+        for ident in idents:
+            self._known.pop(ident, None)
+            self._known[ident] = None
+        over = len(self._known) - KNOWN_MAX
+        if over > 0:
+            for ident in list(self._known)[:over]:
+                self._known.pop(ident, None)
+        self._known_dirty = True
+
+    def _is_bump(self, e: dict[str, Any]) -> bool:
+        return bool(self.bumps_enabled and e.get("known"))
+
+    def _novel_count(self) -> int:
+        return sum(1 for e in self._entries.values() if not self._is_bump(e))
+
+    def bumps_due(self, force: bool = False) -> bool:
+        if not self.bumps_enabled:
+            return True
+        n = len(self._entries) - self._novel_count()
+        if n <= 0:
+            return False
+        if force or n >= max(1, self.max_spool_items // 2):  # flush before the spool would have to trim counts
+            return True
+        return self.clock() - self._last_bump_flush >= self.bump_interval
 
     def add(self, discoveries: dict[str, Any]) -> int:
         """Merge a discoveries payload into the spool (summing ``count_delta`` per identity). Returns items added."""
@@ -163,6 +217,8 @@ class DiscoverySpool:
                     if isinstance(body, dict):
                         body.pop("count_delta", None)
                     self._entries[ident] = {"cat": category, "aspect": aspect, "item": body, "delta": delta, "seq": self._seq}
+                    if self.bumps_enabled and ident in self._known:
+                        self._entries[ident]["known"] = True
                 else:
                     cur["delta"] = _clamp_delta(cur["delta"] + delta)
                     if isinstance(item, dict) and isinstance(cur["item"], dict):
@@ -184,16 +240,23 @@ class DiscoverySpool:
                 self._entries.pop(ident, None)
             logger.warning("discovery spool full: dropped %d lowest-priority items", over)
 
-    def ordered(self) -> list[tuple[str, dict[str, Any]]]:
-        return sorted(self._entries.items(), key=lambda kv: self._rank(kv[1]))
+    def ordered(self, include_bumps: bool = True) -> list[tuple[str, dict[str, Any]]]:
+        """Flush order: novel identities first (by category rank), then held count bumps."""
+        items = [kv for kv in self._entries.items() if include_bumps or not self._is_bump(kv[1])]
+        return sorted(items, key=lambda kv: (1 if self._is_bump(kv[1]) else 0, *self._rank(kv[1])))
 
     # -- flushing ----------------------------------------------------------------------------------------
     def due(self, force: bool = False) -> bool:
         if not self._entries:
             return False
+        if self.bumps_enabled and self.bumps_due(force):
+            return True
+        novel = self._novel_count() if self.bumps_enabled else len(self._entries)
+        if novel <= 0:
+            return False
         if force or self.flush_interval <= 0:
             return True
-        if len(self._entries) >= self.flush_max_items:
+        if novel >= self.flush_max_items:
             return True
         return self.clock() - self._last_flush >= self.flush_interval
 
@@ -237,7 +300,8 @@ class DiscoverySpool:
                 out["skipped"] = "not_due" if self._entries else None
                 return out
             size = chunk_size or _max_items()
-            order = self.ordered()
+            with_bumps = self.bumps_due(force)
+            order = self.ordered(include_bumps=with_bumps)
             sent_all = True
             chunks = 0
             idx = 0
@@ -270,6 +334,7 @@ class DiscoverySpool:
                     sent_all = False
                 for ident, _ in done:
                     self._entries.pop(ident, None)
+                self._remember([ident for ident, _ in done])
                 out["posted"] += len(done)
                 _post_stats["items"] += len(done)
                 _post_stats["requests"] += 1
@@ -281,7 +346,10 @@ class DiscoverySpool:
             if idx < len(order):
                 sent_all = False
             out["chunks"] = chunks
+            if with_bumps and self.bumps_enabled and not any(self._is_bump(e) for e in self._entries.values()):
+                self._last_bump_flush = self.clock()
             out["deferred"] = len(self._entries)
+            out["held_bumps"] = len(self._entries) - self._novel_count() if self.bumps_enabled else 0
             if out["posted"] or not self._entries:
                 self._last_flush = self.clock()
             elif out["skipped"] is None:

@@ -134,11 +134,15 @@ def _server_retry_after(response: object, body: str | None) -> float | None:
     return secs if secs > 0 else None
 
 
-def _budget():
-    """The shared write budget (ledger on the mounted volume), or None when the gate is off / unavailable."""
+def _budget(path: str | None = None):
+    """The shared write budget (ledger on the mounted volume), or None when the gate is off / unavailable.
+    With ``path``, the bucket that write is charged to (colour-coverage posts -> ``survey``)."""
     try:
-        from .knowledge.write_budget import budget_gate_enabled, get_budget
-        return get_budget() if budget_gate_enabled() else None
+        from .knowledge.write_budget import budget_for_path, budget_gate_enabled, get_budget
+        if not budget_gate_enabled():
+            return None
+        base = get_budget()
+        return budget_for_path(path, base) if path else base
     except Exception as e:  # never break a loop over bookkeeping
         logger.debug("write budget unavailable: %s", e)
         return None
@@ -244,7 +248,7 @@ def api_request(
     reserved = 0
     reserved_est = 0
     prio = "high"
-    budget = _budget() if method != "GET" else None
+    budget = _budget(path) if method != "GET" else None
     if budget is not None:
         from .knowledge.write_budget import estimate_rows
         est, prio = estimate_rows(method, path, data)
@@ -439,7 +443,7 @@ def api_post_binary(api_base: str, path: str, body: bytes, content_type: str = "
             f"API POST {path} skipped: write back-off ({free_tier_cooldown_remaining():.0f}s left)",
             status_code=503, path=path, body='{"error":"free_tier_limit","skipped":true}',
         )
-    budget = _budget()
+    budget = _budget(path)
     reserved = 0
     if budget is not None:
         from .knowledge.write_budget import estimate_rows
