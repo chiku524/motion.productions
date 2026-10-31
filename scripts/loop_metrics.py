@@ -158,6 +158,7 @@ def budget_report(directory: Path | None = None, now: float | None = None) -> di
         "backoff_remaining_s": wbud.backoff_remaining(), "backoff_reason": snap.get("backoff_reason") or "",
         "utc_hours_elapsed": elapsed_h,
         "calibration": wbud.trust(),
+        "rollover": wbud.rollover_status(),
     }
 
 
@@ -185,6 +186,15 @@ def render_budget(b: dict) -> str:
     if cal and not cal.get("trusted", True):
         lines.append(f"  LEDGER UNTRUSTED: {cal['consec_unreported']} answers in a row had no rows_written (old Worker?). "
                      "Posting is paused except one probe per 5 min - deploy the Worker that reports rows_written.")
+    ro = b.get("rollover") or {}
+    cfg = ro.get("config") or {}
+    if cfg.get("enabled"):
+        if ro.get("active"):
+            lenders = ", ".join(f"{k} {v:,}" for k, v in (ro.get("lenders") or {}).items()) or "none behind pace"
+            lines.append(f"  Rollover ACTIVE (last {cfg.get('hours', 4):g} h of the UTC day): lending {ro.get('lent', 0):,} rows to "
+                         f"{ro.get('to')} ({lenders}); global cap {b['daily_budget']:,} unchanged.")
+        else:
+            lines.append(f"  Rollover armed: lends to {cfg.get('to')} in the last {cfg.get('hours', 4):g} h of the UTC day.")
     if b["backoff_remaining_s"] > 0:
         lines.append(f"  Worker back-off active: {b['backoff_remaining_s']:.0f}s left ({b['backoff_reason'] or 'degraded'})")
     if b["enabled"] and b["total_projected_rows_per_day"] > b["daily_budget"] * 0.95:

@@ -41,6 +41,20 @@ x-d1-budget: &d1-budget
   DISCOVERY_BUMP_FLUSH_INTERVAL_S: ${DISCOVERY_BUMP_FLUSH_INTERVAL_S:-21600}
   # Per-clip job/complete/learning rows are logs only (~11 rows); post them for every Nth loop clip (1 = every clip).
   LOOP_JOB_LOG_EVERY: ${LOOP_JOB_LOG_EVERY:-5}
+  # mission-next-v2 (all local; no D1 writes of their own - creative colours reach D1 only through the existing
+  # budgeted /api/coverage/color sync, cross-axis/opacity only through the budgeted /api/coverage/axes sync below).
+  LOOP_CREATIVE_COLORS: ${LOOP_CREATIVE_COLORS:-1}
+  LOOP_CROSS_AXIS: ${LOOP_CROSS_AXIS:-1}
+  CROSS_AXIS_DIR: /app/knowledge/cross_axis
+  # Gap-steered prompts: 70% of clips aim at uncovered colour families / never-made axis pairs, 30% stay random.
+  LOOP_GAP_STEER: ${LOOP_GAP_STEER:-1}
+  LOOP_GAP_STEER_P: ${LOOP_GAP_STEER_P:-0.7}
+  # Idle-budget rollover: last 4 h of the UTC day, half of what lagging buckets are behind pace is lent to explorer.
+  D1_ROLLOVER: ${D1_ROLLOVER:-1}
+  D1_ROLLOVER_HOURS: ${D1_ROLLOVER_HOURS:-4}
+  D1_ROLLOVER_TO: ${D1_ROLLOVER_TO:-explorer}
+  # Opacity + cross-axis coverage sync to D1 (migration 0104 must be applied first; 0 = off).
+  LOOP_AXES_SYNC: ${LOOP_AXES_SYNC:-0}
 
 x-python-worker: &python-worker
   build:

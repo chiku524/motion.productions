@@ -156,20 +156,35 @@ def pick_prompt(
         axis = "sound" if secure_random() < 0.5 else "color"
 
     mission = mission_cache if isinstance(mission_cache, dict) else None
+    gap = None
+    try:
+        from src.knowledge import gap_steer
+        from src.knowledge.mission_targets import color_queue_enabled
+
+        if gap_steer.enabled():
+            gap = gap_steer.steer(secure_random, use_queue=color_queue_enabled())
+    except Exception as e:
+        logger.debug("gap steering skipped: %s", e)
+        gap = None
     prompt = generate_mission_prompt(
         kind=pairing_kind,
         focus=axis,
         api_base=api_base_for_mission,
         mission=mission,
         avoid=recent,
+        family=(gap or {}).get("family") if axis == "color" else None,
+        extra_phrases=(gap or {}).get("phrases"),
     )
     if prompt:
         logger.info("Mission prompt: %s", prompt[:70] + ("..." if len(prompt) > 70 else ""))
-        return (prompt, {
+        meta = {
             "source": f"mission_{pairing_kind}_{axis}",
             "authentic": True,
             "use_photoreal": False,
-        })
+        }
+        if gap:
+            meta["gap_steer"] = {"family": gap.get("family"), "pair": gap.get("pair")}
+        return (prompt, meta)
 
     pairing = generate_pixel_pairing_prompt(kind=pairing_kind, knowledge=knowledge, avoid=recent)
     if pairing:

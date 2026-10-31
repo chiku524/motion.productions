@@ -597,9 +597,14 @@ def generate_mission_prompt(
     api_base: str = "",
     mission: dict[str, Any] | None = None,
     avoid: set[str] | None = None,
+    family: str | None = None,
+    extra_phrases: list[str] | None = None,
 ) -> str | None:
     """
     Short internal instruction for the autonomous loop.
+
+    ``family`` / ``extra_phrases`` (gap steering, src/knowledge/gap_steer.py) override the target hue family and
+    append never-made axis values; both default to the previous behaviour.
 
     Names one underfilled color family or sound origin, and declares either a
     still pixel field or a one-second motion window. The creation seed supplies
@@ -616,7 +621,7 @@ def generate_mission_prompt(
     avoid = avoid or set()
     window = (kind or "frame").strip().lower() == "window"
     axis = "sound" if (focus or "").strip().lower() == "sound" else "color"
-    family = pick_target_color_family(api_base, mission) or "blue"
+    family = family or pick_target_color_family(api_base, mission) or "blue"
     lead_sound = pick_target_sound_origin(api_base, mission) or "hum"
     families = [name for name in FAMILY_SUBJECTS if name != family] or ["teal"]
     sounds = [name for name in SOUND_ORIGIN_PRIMITIVES if name not in ("silence", lead_sound)] or ["tone"]
@@ -632,6 +637,9 @@ def generate_mission_prompt(
             window, phrases, lead_sound, other_sound,
             sound_first=(axis == "sound"),
         )
+        extras = [p for p in (extra_phrases or []) if p]
+        if extras:
+            prompt = f"{prompt}, {' and '.join(extras)}"
         if prompt not in avoid and not _is_near_duplicate(prompt, avoid):
             return prompt
     return None

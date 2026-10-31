@@ -336,6 +336,68 @@ class WriteBudget:
         denom = max(sum(self.weights.values()), 100.0)
         return int(self.daily_budget * self.weights.get(b, self.weights.get(OTHER, 0.0)) / denom)
 
+    # -- idle-budget rollover ------------------------------------------------------------------------------
+    def rollover_config(self) -> dict[str, Any]:
+        """``D1_ROLLOVER=1`` turns it on; ``D1_ROLLOVER_HOURS`` (default 4) is the window before UTC midnight,
+        ``D1_ROLLOVER_TO`` (default explorer) the borrower, ``D1_ROLLOVER_FRACTION`` (default 0.5) the share of each
+        lender's unused clock-time allowance that may be lent."""
+        on = (os.environ.get("D1_ROLLOVER") or "").strip().lower() in ("1", "true", "yes")
+        return {
+            "enabled": on,
+            "hours": max(0.0, min(24.0, _float_env("D1_ROLLOVER_HOURS", 4.0))),
+            "to": (os.environ.get("D1_ROLLOVER_TO") or "explorer").strip() or "explorer",
+            "fraction": max(0.0, min(1.0, _float_env("D1_ROLLOVER_FRACTION", 0.5))),
+        }
+
+    def rollover_detail(self, data: dict[str, Any], now: float) -> dict[str, Any]:
+        """Rows other buckets lend the borrower right now (0 outside the window). A lender only lends part of what it
+        is BEHIND its own pace line (allowance x elapsed - used): a container ahead of pace or at its cap lends nothing,
+        so what it may still legitimately use is untouched. The unallotted reserve (weights < 100) is never lent and the
+        global ``daily_budget`` check in ``reserve`` still applies. Any error lends 0 (fail closed)."""
+        out: dict[str, Any] = {"active": False, "lent": 0, "lenders": {}, "to": None}
+        try:
+            cfg = self.rollover_config()
+            out["to"] = cfg["to"]
+            if not (cfg["enabled"] and self.enabled) or cfg["to"] not in self.weights:
+                return out
+            sod = seconds_into_utc_day(now)
+            if sod < 86400.0 - cfg["hours"] * 3600.0:
+                return out
+            elapsed = min(1.0, sod / 86400.0)
+            lent = 0
+            for b in self.weights:
+                if b == cfg["to"]:
+                    continue
+                spare = self.allowance(b) * elapsed - self._bucket_used(data, b)
+                give = int(max(0.0, spare) * cfg["fraction"])
+                if give > 0:
+                    out["lenders"][b] = give
+                    lent += give
+            out["active"] = True
+            out["lent"] = lent
+        except Exception as exc:  # fail closed: no rollover
+            logger.debug("rollover unavailable: %s", exc)
+            return {"active": False, "lent": 0, "lenders": {}, "to": out.get("to")}
+        return out
+
+    def effective_allowance(self, data: dict[str, Any], bucket: str, now: float) -> int:
+        base = self.allowance(bucket)
+        try:
+            det = self.rollover_detail(data, now)
+            if det["active"] and det["to"] == bucket:
+                return base + int(det["lent"])
+        except Exception:
+            pass
+        return base
+
+    def rollover_status(self) -> dict[str, Any]:
+        """For loop_metrics: the current rollover window and loan."""
+        now = self.clock()
+        data = self.snapshot()
+        det = self.rollover_detail(data, now)
+        det["config"] = self.rollover_config()
+        return det
+
     def priority_for(self, default: str) -> str:
         return HIGH if self.bucket_of(self.name) == OTHER and self.name in HIGH_ALWAYS else default
 
@@ -403,8 +465,9 @@ class WriteBudget:
 
         def op(data: dict[str, Any], now: float) -> bool:
             e = self._entry(data)
+            allowance_now = self.effective_allowance(data, bucket, now)
             used_bucket = self._bucket_used(data, bucket)
-            cap = allowance if priority == HIGH else min(allowance, self.low_cap(now))
+            cap = allowance_now if priority == HIGH else min(allowance_now, self.low_cap(now))
             ok = used_bucket + rows <= cap and self._total_used(data) + rows <= self.daily_budget
             if ok and int(data.get("consec_unreported") or 0) >= UNREPORTED_TRIP:
                 # Untrusted estimates: fail closed, let one probe through per PROBE_SECONDS to see if the Worker reports again.
@@ -508,7 +571,8 @@ class WriteBudget:
         priority = self.priority_for(priority)
         data = self.snapshot()
         now = self.clock()
-        cap = self.allowance() if priority == HIGH else min(self.allowance(), self.low_cap(now))
+        eff = self.effective_allowance(data, self.bucket_of(self.name), now)
+        cap = eff if priority == HIGH else min(eff, self.low_cap(now))
         return max(0, int(min(cap - self._bucket_used(data, self.bucket_of(self.name)), self.daily_budget - self._total_used(data))))
 
     def can_afford(self, rows: int, priority: str = HIGH) -> bool:
@@ -617,8 +681,8 @@ class WritePacer:
         b = self.budget
         now = b.clock()
         bucket = b.bucket_of(b.name)
-        allowance = b.allowance(bucket)
         data = b._read(now)
+        allowance = b.effective_allowance(data, bucket, now)
         used = b._bucket_used(data, bucket)
         total = b._total_used(data)
         day, sod = utc_day(now), seconds_into_utc_day(now)
