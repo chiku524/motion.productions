@@ -247,13 +247,17 @@ def api_request(
         )
     reserved = 0
     reserved_est = 0
+    worst = 0
+    route = None
     prio = "high"
     budget = _budget(path) if method != "GET" else None
     if budget is not None:
-        from .knowledge.write_budget import estimate_rows
-        est, prio = estimate_rows(method, path, data)
+        from .knowledge.write_budget import estimate_rows, route_key
+        worst, prio = estimate_rows(method, path, data)
+        route = route_key(method, path)
+        est = budget.scaled_reservation(worst, route) if worst > 0 else 0
         if est > 0:
-            if not budget.reserve(est, prio):
+            if not budget.reserve(est, prio, worst=worst):
                 raise WriteBudgetSkipped(
                     f"API {method} {path} skipped: {budget.name} is out of its daily D1 write budget "
                     f"({budget.used()}/{budget.allowance()} rows used; resets 00:00 UTC)",
@@ -290,7 +294,7 @@ def api_request(
         if attempt > 0 and budget is not None and reserved_est > 0:
             # A retry after a 5xx/timeout may follow an attempt that DID write rows (the Worker can fail after the INSERT):
             # that earlier reservation stays charged and the retry is charged again, instead of re-using one reservation.
-            if not budget.reserve(reserved_est, prio):
+            if not budget.reserve(reserved_est, prio, worst=worst):
                 raise WriteBudgetSkipped(
                     f"API {method} {path} retry skipped: {budget.name} is out of its daily D1 write budget",
                     status_code=503, path=path, body='{"error":"write_budget","skipped":true}',
@@ -302,7 +306,7 @@ def api_request(
             parsed = _parse_json_response(resp)
             _note_degraded_success(method, path, parsed, resp.headers)
             if budget is not None and reserved:
-                _settle_reservation(budget, reserved, parsed)
+                _settle_reservation(budget, reserved, parsed, route=route, worst=worst)
                 reserved = 0
             return parsed
         except requests.exceptions.HTTPError as e:
@@ -395,14 +399,14 @@ def api_request(
     raise APIError(f"API {method} {path} failed", path=path)
 
 
-def _settle_reservation(budget, reserved: int, parsed: object) -> None:
+def _settle_reservation(budget, reserved: int, parsed: object, route: str | None = None, worst: int | None = None) -> None:
     """Book the rows the Worker says it wrote (``rows_written``); no report = estimate + surcharge, counted as unreported."""
     try:
         actual = parsed.get("rows_written") if isinstance(parsed, dict) else None
         if isinstance(actual, (int, float)) and not isinstance(actual, bool) and actual >= 0:
-            budget.record_response(reserved, int(actual))
+            budget.record_response(reserved, int(actual), route=route, worst=worst)
         else:
-            budget.record_response(reserved, None)
+            budget.record_response(reserved, None, route=route, worst=worst)
     except Exception as e:
         logger.debug("write budget settle skipped: %s", e)
 
@@ -446,9 +450,11 @@ def api_post_binary(api_base: str, path: str, body: bytes, content_type: str = "
     budget = _budget(path)
     reserved = 0
     if budget is not None:
-        from .knowledge.write_budget import estimate_rows
-        est, prio = estimate_rows("POST", path)
-        if est > 0 and not budget.reserve(est, prio):
+        from .knowledge.write_budget import estimate_rows, route_key
+        worst, prio = estimate_rows("POST", path)
+        route = route_key("POST", path)
+        est = budget.scaled_reservation(worst, route) if worst > 0 else 0
+        if est > 0 and not budget.reserve(est, prio, worst=worst):
             raise WriteBudgetSkipped(
                 f"API POST {path} skipped: {budget.name} is out of its daily D1 write budget",
                 status_code=503, path=path, body='{"error":"write_budget","skipped":true}',
@@ -463,7 +469,7 @@ def api_post_binary(api_base: str, path: str, body: bytes, content_type: str = "
             parsed = _parse_json_response(resp)
             _note_degraded_success("POST", path, parsed, resp.headers)
         if budget is not None and reserved:
-            _settle_reservation(budget, reserved, parsed)  # previously never settled: the worst-case estimate stood
+            _settle_reservation(budget, reserved, parsed, route=route, worst=worst)  # previously never settled: the worst-case estimate stood
     except requests.exceptions.HTTPError as e:
         status = e.response.status_code if e.response is not None else None
         err_body = e.response.text[:500] if e.response is not None and e.response.text else None

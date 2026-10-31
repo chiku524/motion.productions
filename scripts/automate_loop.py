@@ -156,20 +156,35 @@ def pick_prompt(
         axis = "sound" if secure_random() < 0.5 else "color"
 
     mission = mission_cache if isinstance(mission_cache, dict) else None
+    gap = None
+    try:
+        from src.knowledge import gap_steer
+        from src.knowledge.mission_targets import color_queue_enabled
+
+        if gap_steer.enabled():
+            gap = gap_steer.steer(secure_random, use_queue=color_queue_enabled())
+    except Exception as e:
+        logger.debug("gap steering skipped: %s", e)
+        gap = None
     prompt = generate_mission_prompt(
         kind=pairing_kind,
         focus=axis,
         api_base=api_base_for_mission,
         mission=mission,
         avoid=recent,
+        family=(gap or {}).get("family") if axis == "color" else None,
+        extra_phrases=(gap or {}).get("phrases"),
     )
     if prompt:
         logger.info("Mission prompt: %s", prompt[:70] + ("..." if len(prompt) > 70 else ""))
-        return (prompt, {
+        meta = {
             "source": f"mission_{pairing_kind}_{axis}",
             "authentic": True,
             "use_photoreal": False,
-        })
+        }
+        if gap:
+            meta["gap_steer"] = {"family": gap.get("family"), "pair": gap.get("pair")}
+        return (prompt, meta)
 
     pairing = generate_pixel_pairing_prompt(kind=pairing_kind, knowledge=knowledge, avoid=recent)
     if pairing:
@@ -398,6 +413,35 @@ def duration_for_run(run_count: int, base: float) -> float:
     if run_count < 200:
         return min(base + 6, 20)
     return min(base + 8, 30)
+
+
+def run_mission_extras(path, spec, job_id) -> dict:
+    """Opt-in local coverage extras for a creative clip (no D1 writes of their own). Never raises."""
+    out: dict = {}
+    try:
+        from src.knowledge import creative_colors, cross_axis, opacity_plane
+
+        if creative_colors.enabled():
+            out["creative_colors"] = creative_colors.record_clip(path, job_id=str(job_id or ""))
+        if cross_axis.enabled() and spec is not None:
+            out["cross_axis_new"] = cross_axis.CrossAxisTracker().record(spec)
+        layers = getattr(spec, "scene_layers", None) if spec is not None else None
+        if creative_colors.enabled() and layers:
+            ids = opacity_plane.ids_from_layers(layers)
+            if ids:
+                op = opacity_plane.OpacityPlane()
+                out["opacity_declared_new"] = op.mark("declared", ids)
+                op.save()
+    except Exception as e:
+        logger.debug("mission extras skipped: %s", e)
+    try:
+        from src.knowledge import axes_sync
+
+        if axes_sync.enabled():
+            out["axes_sync"] = axes_sync.maybe_sync(os.environ.get("API_BASE", ""))
+    except Exception as e:
+        logger.debug("axes sync skipped: %s", e)
+    return out
 
 
 def run_color_survey_step(api_base: str) -> dict | None:
@@ -745,6 +789,7 @@ def run() -> None:
             from src.knowledge import extract_from_video
             ext = extract_from_video(path)
             analysis_dict = ext.to_dict()
+            run_mission_extras(path, spec, job_id)
 
             # Extraction → growth → sync (required order for precision):
             # 1. grow_all_from_video extracts per-frame (static) and per-window (dynamic) from the same video.

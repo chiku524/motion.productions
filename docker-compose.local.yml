@@ -41,6 +41,20 @@ x-d1-budget: &d1-budget
   DISCOVERY_BUMP_FLUSH_INTERVAL_S: ${DISCOVERY_BUMP_FLUSH_INTERVAL_S:-21600}
   # Per-clip job/complete/learning rows are logs only (~11 rows); post them for every Nth loop clip (1 = every clip).
   LOOP_JOB_LOG_EVERY: ${LOOP_JOB_LOG_EVERY:-5}
+  # mission-next-v2 (all local; no D1 writes of their own - creative colours reach D1 only through the existing
+  # budgeted /api/coverage/color sync, cross-axis/opacity only through the budgeted /api/coverage/axes sync below).
+  LOOP_CREATIVE_COLORS: ${LOOP_CREATIVE_COLORS:-1}
+  LOOP_CROSS_AXIS: ${LOOP_CROSS_AXIS:-1}
+  CROSS_AXIS_DIR: /app/knowledge/cross_axis
+  # Gap-steered prompts: 70% of clips aim at uncovered colour families / never-made axis pairs, 30% stay random.
+  LOOP_GAP_STEER: ${LOOP_GAP_STEER:-1}
+  LOOP_GAP_STEER_P: ${LOOP_GAP_STEER_P:-0.7}
+  # Idle-budget rollover: last 4 h of the UTC day, half of what lagging buckets are behind pace is lent to explorer.
+  D1_ROLLOVER: ${D1_ROLLOVER:-1}
+  D1_ROLLOVER_HOURS: ${D1_ROLLOVER_HOURS:-4}
+  D1_ROLLOVER_TO: ${D1_ROLLOVER_TO:-explorer}
+  # Opacity + cross-axis coverage sync to D1 (migration 0104 must be applied first; 0 = off).
+  LOOP_AXES_SYNC: ${LOOP_AXES_SYNC:-0}
 
 x-python-worker: &python-worker
   build:
@@ -90,7 +104,32 @@ services:
       retries: 3
       start_period: 40s
 
-  # Video AI engine=procedural → POST /render → MP4
+  # One-time 0103 stale-job retire (replaces Windows tasks motion-0103-retire / -2). OFF by default: only starts with
+  # `--profile retire` AND RETIRE_0103_ENABLED=1. Guards + cutover: docs/RETIRE_0103.md. Writes nothing to the loops' ledger.
+  retire-0103:
+    <<: *python-worker
+    profiles: ["retire"]
+    command: ["python", "scripts/retire_stale_jobs.py", "--loop"]
+    environment:
+      PYTHONUNBUFFERED: "1"
+      KNOWLEDGE_DIR: /app/knowledge
+      RETIRE_0103_ENABLED: ${RETIRE_0103_ENABLED:-0}
+      RETIRE_RUN_HOURS_UTC: ${RETIRE_RUN_HOURS_UTC:-00:30,12:30}
+      RETIRE_MAX_BATCHES: ${RETIRE_MAX_BATCHES:-2}
+      RETIRE_DAILY_CAP: ${RETIRE_DAILY_CAP:-10000}
+      D1_DAILY_WRITE_BUDGET: ${D1_DAILY_WRITE_BUDGET:-50000}
+      CLOUDFLARE_ACCOUNT_ID: ${CLOUDFLARE_ACCOUNT_ID:-}
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_D1_TOKEN:-}
+      D1_DATABASE_ID: ${D1_DATABASE_ID:-}
+    volumes:
+      - ./src:/app/src
+      - ./scripts:/app/scripts
+      - ./knowledge:/app/knowledge
+      - ./cloudflare/migrations_pending:/app/cloudflare/migrations_pending:ro
+    healthcheck:
+      disable: true
+
+  # Video AI engine=procedural
   procedural-render:
     <<: *python-worker
     environment:
