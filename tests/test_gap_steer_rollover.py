@@ -139,7 +139,8 @@ def test_rollover_fails_closed(tmp_path, monkeypatch):
 
 def test_loop_metrics_shows_rollover(tmp_path, monkeypatch):
     monkeypatch.setenv("D1_ROLLOVER", "1")
-    import importlib, sys
+    import importlib
+    import sys
     sys.path.insert(0, "scripts")
     lm = importlib.import_module("loop_metrics")
     t = DAY0 + 22 * 3600

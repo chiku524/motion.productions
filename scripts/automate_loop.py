@@ -434,6 +434,13 @@ def run_mission_extras(path, spec, job_id) -> dict:
                 op.save()
     except Exception as e:
         logger.debug("mission extras skipped: %s", e)
+    try:
+        from src.knowledge import axes_sync
+
+        if axes_sync.enabled():
+            out["axes_sync"] = axes_sync.maybe_sync(os.environ.get("API_BASE", ""))
+    except Exception as e:
+        logger.debug("axes sync skipped: %s", e)
     return out
 
 

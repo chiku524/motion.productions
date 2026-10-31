@@ -56,6 +56,7 @@ PROBE_SECONDS = 300.0  # while untrusted, one probe post is let through this oft
 DEFAULT_WEIGHTS: dict[str, float] = {"explorer": 35, "balanced": 20, "interpret": 15, "sound": 10, "survey": 5, "other": 5}
 SURVEY = "survey"
 SURVEY_PATH_PREFIX = "/api/coverage/color"
+AXES_PATH = "/api/coverage/axes"  # opacity / cross-axis aggregate counts (migration 0104), also booked to survey
 OTHER = "other"
 DEFAULT_LOW_FRACTION = 0.5
 DEFAULT_PACE_BURST = 0.15
@@ -140,6 +141,9 @@ def estimate_rows(method: str, path: str, data: Mapping[str, Any] | None = None)
         return 0, HIGH
     if path.startswith("/api/knowledge/discoveries"):
         return estimate_discoveries_rows(data), HIGH
+    if path.startswith(AXES_PATH):
+        n = len((data or {}).get("items") or []) if isinstance(data, Mapping) else 0
+        return min(max(n, 1), 32), HIGH  # one rowid row per changed key
     if path.startswith("/api/coverage/color"):
         n = len((data or {}).get("chunks") or (data or {}).get("rows") or []) if isinstance(data, Mapping) else 0
         return INSERT_ROWS["color_coverage"] * min(max(n, 1), 32), HIGH
@@ -461,7 +465,6 @@ class WriteBudget:
             return True
         priority = self.priority_for(priority)
         bucket = self.bucket_of(self.name)
-        allowance = self.allowance(bucket)
 
         def op(data: dict[str, Any], now: float) -> bool:
             e = self._entry(data)
@@ -798,7 +801,7 @@ def budget_for_path(path: str | None, base: WriteBudget | None = None) -> WriteB
     the weights define one), everything else to this container. Same ledger file, same fail-closed rules."""
     base = base or get_budget()
     p = (path or "").split("?", 1)[0]
-    if not p.startswith(SURVEY_PATH_PREFIX) or SURVEY not in base.weights or base.name == SURVEY:
+    if not (p.startswith(SURVEY_PATH_PREFIX) or p.startswith(AXES_PATH)) or SURVEY not in base.weights or base.name == SURVEY:
         return base
     with _instance_lock:
         inst = _survey_instances.get(id(base))
