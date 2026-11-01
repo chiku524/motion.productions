@@ -834,6 +834,7 @@ class WritePacer:
         self.enabled = pacing_enabled() if enabled is None else bool(enabled)
         self._anchor: tuple[str, float, float] | None = None  # (utc day, seconds into day, bucket rows used)
         self._last_log: float | None = None
+        self._pinned_once = False
         self.total_waited_s = 0.0
 
     @property
@@ -871,6 +872,15 @@ class WritePacer:
         b = self.budget
         if not (self.enabled and b.enabled):
             return 0.0
+        if not self._pinned_once:
+            # Persist today's pins up front. ``status`` only reads a computed copy, so a container that starts ahead of
+            # its pace line (e.g. restarted mid-day after a front-loaded morning) slept without ever writing the new
+            # day_budget / allowances; the ledger kept stale legacy pins until the first post (2026-10-31 restart).
+            self._pinned_once = True
+            try:
+                b._mutate(lambda data, now: b._pin_day(data))
+            except Exception as exc:
+                logger.debug("write pacing: could not persist day pins (%s)", exc)
         slept = 0.0
         while True:
             if should_stop is not None and should_stop():

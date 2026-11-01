@@ -110,7 +110,7 @@ if (path === "/api/interpret/backfill-prompts" && request.method === "GET") {
     const backfillSnap = await getSnapshot<string>(
       env,
       backfillCacheKey,
-      { softTtlSec: 900, hardTtlSec: 86400 },
+      { softTtlSec: 21600, hardTtlSec: 86400 } /* 6h: each rebuild scans every 'done' row per 40-prompt chunk (no prompt index); 900s cost ~1.5M reads/day */,
       async () => {
     const scan = Math.min(Math.max(limit * 4, 40), 200);
     const recent = await db
