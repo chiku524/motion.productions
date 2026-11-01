@@ -79,7 +79,7 @@ NAME_RESERVE_ROWS = 3  # name_reserve: row + PK autoindex, ~1.3 reserved per nam
 INSERT_ROWS: dict[str, int] = {
     "jobs": 5,                 # row + PK + idx_status + idx_created_at + idx_workflow_type
     "learning_runs": 4,        # row + PK + job_id + created_at
-    "interpretations": 4,      # row + PK + idx_status + idx_updated_at
+    "interpretations": 5,      # row + PK + idx_status + idx_updated_at + idx_prompt (0026)
     "linguistic_registry": 5,  # row + PK + UNIQUE(span,domain) + domain + canonical
     "static_colors": 5 + NAME_RESERVE_ROWS,   # row + 4 indexes (0024 dropped _key and _family), + reserved name
     "static_sound": 4,         # row + PK + UNIQUE(sound_key) + 1 (0024 dropped idx_static_sound_key)

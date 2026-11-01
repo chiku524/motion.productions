@@ -1,4 +1,4 @@
-﻿"""Shared daily D1 write budget: accounting, UTC reset, concurrency on one ledger file, exhaustion, back-off."""
+"""Shared daily D1 write budget: accounting, UTC reset, concurrency on one ledger file, exhaustion, back-off."""
 import calendar
 import json
 import subprocess
@@ -229,7 +229,7 @@ def test_cost_model_known_endpoints():
     assert wb.estimate_rows("POST", "/api/jobs") == (5, wb.LOW)
     assert wb.estimate_rows("POST", "/api/jobs/ab-12/complete") == (2, wb.LOW)
     assert wb.estimate_rows("POST", "/api/learning") == (4, wb.LOW)
-    assert wb.estimate_rows("POST", "/api/interpretations") == (4, wb.LOW)
+    assert wb.estimate_rows("POST", "/api/interpretations") == (5, wb.LOW)
     assert wb.estimate_rows("POST", "/api/loop/state") == (0, wb.LOW)
     assert wb.estimate_rows("POST", "/api/linguistic-registry/batch", {"items": [{}] * 10})[0] == 50
 

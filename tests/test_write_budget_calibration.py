@@ -70,7 +70,7 @@ def test_measured_costs_from_the_worker_harness():
     measured = {
         ("POST", "/api/jobs", None): 5, ("POST", "/api/jobs/ab-12/complete", None): 2, ("POST", "/api/learning", None): 4,
         ("POST", "/api/events", None): 5, ("POST", "/api/interpret/queue", None): 4, ("PATCH", "/api/interpret/ab12-cd", None): 3,
-        ("POST", "/api/interpretations", None): 4,
+        ("POST", "/api/interpretations", None): 5,
     }
     for (m, p, d), real in measured.items():
         est, _ = wb.estimate_rows(m, p, d)
