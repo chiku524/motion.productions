@@ -135,7 +135,7 @@ if (path === "/api/interpret/backfill-prompts" && request.method === "GET") {
       const placeholders = chunk.map(() => "?").join(",");
       const rows = await db
         .prepare(
-          `SELECT prompt FROM interpretations WHERE status = 'done' AND prompt IN (${placeholders})`,
+          `SELECT prompt FROM interpretations WHERE +status = 'done' AND prompt IN (${placeholders})`,
         )
         .bind(...chunk)
         .all<{ prompt: string }>();
