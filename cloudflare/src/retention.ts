@@ -26,6 +26,8 @@ export interface RetentionConfig {
   disabled: boolean;
   /** Min seconds between marker checks per isolate (default 1800; 0 = check on every write, used by tests). */
   checkIntervalSec: number;
+  /** jobs only: never walk rows older than this many days (bounds the scan; default 14). */
+  jobsLookbackDays: number;
 }
 
 function num(v: unknown, dflt: number, lo: number, hi: number): number {
@@ -42,6 +44,7 @@ export function retentionConfig(env: Env): RetentionConfig {
     writeBudget: num(e.RETENTION_WRITE_BUDGET, 6000, 100, 50000),
     disabled: e.RETENTION_DISABLED === "1",
     checkIntervalSec: num(e.RETENTION_CHECK_INTERVAL_SEC, 1800, 0, DAY_SEC),
+    jobsLookbackDays: num(e.RETENTION_JOBS_LOOKBACK_DAYS, 14, 2, 36500),
   };
 }
 
@@ -59,6 +62,7 @@ export const RETENTION_TABLES: Array<{ table: string; sql: string }> = [
     sql: `DELETE FROM jobs WHERE id IN (
       SELECT j.id FROM jobs j
       WHERE j.created_at < datetime('now', ?)
+        AND j.created_at >= datetime('now', ?)
         AND j.status IN ('completed', 'failed', 'error', 'abandoned')
         AND (j.r2_key IS NULL OR j.r2_key LIKE 'skipped:%' OR j.r2_key LIKE 'expired:%')
         AND NOT EXISTS (SELECT 1 FROM learning_runs x WHERE x.job_id = j.id)
@@ -131,7 +135,11 @@ export async function maybeRunRetention(env: Env, opts: { nowSec?: number; force
         // assuming <= 5 written rows per deleted row (row + up to 4 index entries).
         const remaining = cfg.writeBudget - report.rowsWritten;
         const limit = Math.max(1, Math.min(cfg.batchRows, Math.floor(remaining / 5)));
-        const res = await db.prepare(t.sql).bind(modifier, limit).run();
+        // jobs: bounded (age, lookback) window so a batch walks only recent-ish rows, not the whole old tail. The
+        // unbounded walk read ~280k rows per batch (2.26M rows/day on 2026-10-31, the top D1 read source).
+        const lookback = `-${Math.max(cfg.jobsLookbackDays, cfg.days + 1)} days`;
+        const stmt = t.table === "jobs" ? db.prepare(t.sql).bind(modifier, lookback, limit) : db.prepare(t.sql).bind(modifier, limit);
+        const res = await stmt.run();
         const meta = (res.meta || {}) as { changes?: number; rows_written?: number };
         const changes = meta.changes ?? 0;
         const written = meta.rows_written ?? changes;

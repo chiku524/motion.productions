@@ -73,7 +73,7 @@ describe("opportunistic retention", () => {
   const deletes = (m, table) => m.sqls.filter((s) => new RegExp("^DELETE FROM " + table, "i").test(s.sql.trim()));
 
   before(async () => {
-    h = await createHarness({ bindings: { RETENTION_CHECK_INTERVAL_SEC: "0", RETENTION_BATCH_ROWS: "100", RETENTION_MAX_BATCHES: "2", RETENTION_DAYS: "3" } });
+    h = await createHarness({ bindings: { RETENTION_CHECK_INTERVAL_SEC: "0", RETENTION_BATCH_ROWS: "100", RETENTION_MAX_BATCHES: "2", RETENTION_DAYS: "3", RETENTION_JOBS_LOOKBACK_DAYS: "36500" } });
     const stmts = [];
     const job = (id, status, r2, created) => stmts.push(created
       ? h.db.prepare("INSERT INTO jobs (id, prompt, status, r2_key, created_at, updated_at) VALUES (?, 'p', ?, ?, ?, ?)").bind(id, status, r2, created, created)
