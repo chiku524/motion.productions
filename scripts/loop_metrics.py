@@ -150,10 +150,10 @@ def budget_report(directory: Path | None = None, now: float | None = None) -> di
     total_used = sum(c["used"] for c in containers.values())
     projected = sum(c["projected_rows_per_day"] for c in containers.values())
     return {
-        "day": snap.get("day"), "daily_budget": wbud.daily_budget, "d1_daily_limit": D1_DAILY_WRITE_LIMIT,
+        "day": snap.get("day"), "daily_budget": wbud.day_budget(snap), "env_daily_budget": wbud.daily_budget, "d1_daily_limit": D1_DAILY_WRITE_LIMIT,
         "enabled": wbud.enabled, "containers": containers,
         "pacing_enabled": pacing_enabled(), "pacing_slack": pacing_slack_from_env(),
-        "total_used": total_used, "total_projected_rows_per_day": min(projected, float(wbud.daily_budget)) if wbud.enabled else projected,
+        "total_used": total_used, "total_projected_rows_per_day": min(projected, float(wbud.day_budget(snap))) if wbud.enabled else projected,
         "total_projected_uncapped": sum(c["projected_rows_per_day_uncapped"] for c in containers.values()),
         "backoff_remaining_s": wbud.backoff_remaining(), "backoff_reason": snap.get("backoff_reason") or "",
         "utc_hours_elapsed": elapsed_h,
