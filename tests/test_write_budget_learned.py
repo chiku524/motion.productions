@@ -36,7 +36,7 @@ def test_ratio_floor_and_ceiling(tmp_path):
 
 
 def test_hard_cap_uses_worst_case_and_real_rows(tmp_path):
-    b = _b(tmp_path, budget=10000, name="explorer")
+    b = wb.WriteBudget(name="explorer", directory=tmp_path, daily_budget=10000, weights={"explorer": 100})
     assert b.reserve(30, worst=100)
     b.record_response(30, 95, route="POST /a", worst=100)
     assert b.used() == 95  # real rows booked, not the reservation

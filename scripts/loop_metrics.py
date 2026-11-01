@@ -130,7 +130,7 @@ def budget_report(directory: Path | None = None, now: float | None = None) -> di
     containers: dict[str, dict] = {}
     for name, e in sorted((snap.get("containers") or {}).items()):
         used = int(e.get("used") or 0)
-        allowance = wbud.allowance(wbud.bucket_of(name))
+        allowance = wbud.day_allowance(snap, wbud.bucket_of(name))  # pinned for the UTC day
         first_t, last_t = float(e.get("first_t") or 0), float(e.get("last_t") or 0)
         span_h = max(MIN_SPAN_HOURS, (last_t - first_t) / 3600.0) if first_t else elapsed_h
         # A container that stopped posting hours ago must not be extrapolated as if it were still running.

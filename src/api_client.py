@@ -257,7 +257,7 @@ def api_request(
         route = route_key(method, path)
         est = budget.scaled_reservation(worst, route) if worst > 0 else 0
         if est > 0:
-            if not budget.reserve(est, prio, worst=worst):
+            if not budget.reserve(est, prio, worst=worst, route=route):
                 raise WriteBudgetSkipped(
                     f"API {method} {path} skipped: {budget.name} is out of its daily D1 write budget "
                     f"({budget.used()}/{budget.allowance()} rows used; resets 00:00 UTC)",
@@ -294,7 +294,7 @@ def api_request(
         if attempt > 0 and budget is not None and reserved_est > 0:
             # A retry after a 5xx/timeout may follow an attempt that DID write rows (the Worker can fail after the INSERT):
             # that earlier reservation stays charged and the retry is charged again, instead of re-using one reservation.
-            if not budget.reserve(reserved_est, prio, worst=worst):
+            if not budget.reserve(reserved_est, prio, worst=worst, route=route):
                 raise WriteBudgetSkipped(
                     f"API {method} {path} retry skipped: {budget.name} is out of its daily D1 write budget",
                     status_code=503, path=path, body='{"error":"write_budget","skipped":true}',
@@ -454,7 +454,7 @@ def api_post_binary(api_base: str, path: str, body: bytes, content_type: str = "
         worst, prio = estimate_rows("POST", path)
         route = route_key("POST", path)
         est = budget.scaled_reservation(worst, route) if worst > 0 else 0
-        if est > 0 and not budget.reserve(est, prio, worst=worst):
+        if est > 0 and not budget.reserve(est, prio, worst=worst, route=route):
             raise WriteBudgetSkipped(
                 f"API POST {path} skipped: {budget.name} is out of its daily D1 write budget",
                 status_code=503, path=path, body='{"error":"write_budget","skipped":true}',
