@@ -412,26 +412,53 @@ class WriteBudget:
             return {"active": False, "lent": 0, "lenders": {}, "to": out.get("to")}
         return out
 
-    def day_allowance(self, data: dict[str, Any], bucket: str) -> int:
-        """The bucket's allowance for this UTC day, pinned at its first assignment: a weight change mid-day (restart
-        with new D1_BUDGET_WEIGHTS) takes effect at the next UTC reset, so rows already used under the old weights can
-        never be judged against a different allowance. If a pinned day is missing (old ledger) the current allowance is
-        pinned, and rows already over it simply count as used (no further posts that day)."""
-        cur = self.allowance(bucket)
+    def _pin_day(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Pin the UTC day's budget and EVERY bucket's allowance together, once, in the shared ledger (callers hold the
+        file lock via ``_mutate``; read-only callers get a computed copy). All containers then see the same numbers.
+
+        * ``day_budget`` is the global cap for the day. A process whose ``D1_DAILY_WRITE_BUDGET`` is LOWER than the pin
+          re-pins everything down (lowering is always safe); a higher env never raises today's cap (next UTC reset).
+        * Allowances are computed from ``day_budget`` and the weights in one pass, normalised so they sum to <= it.
+        * A ledger pinned by older code (per-bucket pins, no ``day_budget``) is re-pinned with correct values; rows
+          already used stay booked, so a bucket over its new allowance simply posts nothing more today."""
+        pin = data.get("day_budget")
+        pins = data.get("allowances")
+        ok = isinstance(pin, int) and pin > 0 and isinstance(pins, dict) and set(pins) >= set(self.weights)
+        if ok and self.daily_budget >= pin and sum(int(v) for v in pins.values()) <= pin:
+            return pins
+        budget = self.daily_budget if not ok else min(int(pin), self.daily_budget)
+        denom = max(sum(self.weights.values()), 100.0)
+        new = {b: int(budget * w / denom) for b, w in self.weights.items()}
+        data["day_budget"] = int(budget)
+        data["allowances"] = new
+        return new
+
+    def day_budget(self, data: dict[str, Any]) -> int:
+        """Today's pinned global cap (never above this process's own env budget)."""
         try:
-            pins = data.setdefault("allowances", {})
-            if bucket not in pins:
-                pins[bucket] = cur
-            return int(pins[bucket])
+            self._pin_day(data)
+            return min(int(data["day_budget"]), self.daily_budget)
         except Exception:
-            return cur
+            return self.daily_budget
+
+    def day_allowance(self, data: dict[str, Any], bucket: str) -> int:
+        """The bucket's allowance for this UTC day, pinned together with all other buckets (see ``_pin_day``)."""
+        try:
+            pins = self._pin_day(data)
+            return int(pins.get(bucket, pins.get(OTHER, 0)))
+        except Exception:
+            return self.allowance(bucket)
 
     def effective_allowance(self, data: dict[str, Any], bucket: str, now: float) -> int:
+        """Pinned allowance plus today's rollover loan (borrower only). Loans are recorded separately in
+        ``data["loans"]`` and never change the pins; the loan only comes out of lenders' unused
+        pinned rows, and the global ``day_budget`` check in ``reserve`` still applies to every post."""
         base = self.day_allowance(data, bucket)
         try:
             det = self.rollover_detail(data, now)
+            data["loans"] = {"to": det.get("to"), "lent": int(det["lent"]), "lenders": dict(det["lenders"])} if det["active"] else {}
             if det["active"] and det["to"] == bucket:
-                return base + int(det["lent"])
+                return base + max(0, int(det["lent"]))
         except Exception:
             pass
         return base
@@ -581,7 +608,7 @@ class WriteBudget:
             cap = allowance_now if priority == HIGH else min(allowance_now, self.low_cap(now, self.day_allowance(data, bucket)))
             hold = self.hold_rows(data, rows, worst_rows, route)
             # Both caps are checked against the worst real cost (hold), counting every open hold, under the file lock.
-            ok = committed + hold <= cap and self._total_committed(data, now) + hold <= self.daily_budget
+            ok = committed + hold <= cap and self._total_committed(data, now) + hold <= self.day_budget(data)
             if ok and int(data.get("consec_unreported") or 0) >= UNREPORTED_TRIP:
                 # Untrusted estimates: fail closed, let one probe through per PROBE_SECONDS to see if the Worker reports again.
                 if now >= float(data.get("probe_after") or 0.0):
@@ -710,7 +737,7 @@ class WriteBudget:
         bucket = self.bucket_of(self.name)
         eff = self.effective_allowance(data, bucket, now)
         cap = eff if priority == HIGH else min(eff, self.low_cap(now, self.day_allowance(data, bucket)))
-        return max(0, int(min(cap - self._bucket_committed(data, bucket, now), self.daily_budget - self._total_committed(data, now))))
+        return max(0, int(min(cap - self._bucket_committed(data, bucket, now), self.day_budget(data) - self._total_committed(data, now))))
 
     def can_afford(self, rows: int, priority: str = HIGH) -> bool:
         """Read-only check (no charge, no denial record) - for deciding whether a flush is worth attempting."""
